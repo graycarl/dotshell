@@ -4,6 +4,7 @@ export ZSH=$DOTSHELL/oh-my-zsh
 source $DOTSHELL/base.sh
 
 plugins=(git)
+ZSH_THEME="robbyrussell"
 test -e $DOTSHELL/omzrc.sh && source $DOTSHELL/omzrc.sh
 source $ZSH/oh-my-zsh.sh
 
