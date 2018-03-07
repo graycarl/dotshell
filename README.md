@@ -1,0 +1,21 @@
+# My Shell Setup Script
+
+Including bash / zsh basic setup and some common functions.
+
+## Usage
+
+Basic setup for bash:
+
+```bash
+git clone https://github.com/graycarl/dotshell.git ~/.shell
+ln -s ~/.shell/bashrc ~/.bashrc
+```
+
+Basic setup for zsh (using oh-my-zsh):
+
+```bash
+git clone https://github.com/graycarl/dotshell.git ~/.shell
+git submodules update --init oh-my-zsh
+ln -s ~/.shell/zshrc ~/.zshrc
+chsh -s /bin/zsh
+```
