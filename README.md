@@ -8,7 +8,7 @@ Basic setup for bash:
 
 ```bash
 git clone https://github.com/graycarl/dotshell.git ~/.shell
-ln -s ~/.shell/bashrc ~/.bashrc
+ln -s ~/.shell/bashrc.sh ~/.bashrc
 ```
 
 Basic setup for zsh (using oh-my-zsh):
@@ -16,6 +16,6 @@ Basic setup for zsh (using oh-my-zsh):
 ```bash
 git clone https://github.com/graycarl/dotshell.git ~/.shell
 git submodules update --init oh-my-zsh
-ln -s ~/.shell/zshrc ~/.zshrc
+ln -s ~/.shell/zshrc.sh ~/.zshrc
 chsh -s /bin/zsh
 ```
