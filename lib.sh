@@ -40,23 +40,14 @@ function init-nvm() {
     source "$(brew --prefix nvm)/nvm.sh"
 }
 
-# Polipo
-function polipo-start() {
-    if `pgrep -q polipo`; then
-        echo 'Polipo is running.'
-        pgrep -fl polipo
-    else
-        nohup polipo socksParentProxy=localhost:1080 >> /tmp/polipo.log &
-        disown
-        echo "Polipo is started, Ctrl-C to detach."
-        tail -f /tmp/polipo.log
-    fi
+# List software installed
+function list-installed-apps() {
+    CMDS=('mas list' 'brew list' 'brew cask list' 'cd /Applications/Setapp && ls -d *.app')
+    echo "Generate on $(hostname) at $(date '+%Y-%m-%d %H:%M:%S')"
+    echo
+    for cmd in $CMDS; do
+        echo "# $cmd"
+        eval $cmd
+        echo
+    done
 }
-function polipo-stop() {
-    if `pkill polipo`; then
-        echo 'Polipo stopped.'
-    else
-        echo 'Nothing found.'
-    fi
-}
-
