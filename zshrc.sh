@@ -1,6 +1,9 @@
 export DOTSHELL=$HOME/.shell
 export ZSH=$DOTSHELL/oh-my-zsh
 
+# For Emacs Tramp
+[[ $TERM = "dumb" ]] && unsetopt zle && PS1='$ ' && return
+
 source $DOTSHELL/base.sh
 
 plugins=(git)
