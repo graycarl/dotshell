@@ -2,6 +2,7 @@ export DOTSHELL=$HOME/.shell
 export ZSH=$DOTSHELL/oh-my-zsh
 
 # For Emacs Tramp
+# See: http://tinyurl.com/yaucgamv
 [[ $TERM = "dumb" ]] && unsetopt zle && PS1='$ ' && return
 
 source $DOTSHELL/base.sh
