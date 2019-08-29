@@ -14,7 +14,11 @@ YS_VCS_PROMPT_CLEAN=" %{$fg[green]%}o"
 
 # Git info
 local git_info='$(git_prompt_info)'
-ZSH_THEME_GIT_PROMPT_PREFIX="${YS_VCS_PROMPT_PREFIX1}git${YS_VCS_PROMPT_PREFIX2}"
+
+# hide git prefix
+# ZSH_THEME_GIT_PROMPT_PREFIX="${YS_VCS_PROMPT_PREFIX1}git${YS_VCS_PROMPT_PREFIX2}"
+ZSH_THEME_GIT_PROMPT_PREFIX="${YS_VCS_PROMPT_PREFIX1}%{$fg[cyan]%}"
+
 ZSH_THEME_GIT_PROMPT_SUFFIX="$YS_VCS_PROMPT_SUFFIX"
 ZSH_THEME_GIT_PROMPT_DIRTY="$YS_VCS_PROMPT_DIRTY"
 ZSH_THEME_GIT_PROMPT_CLEAN="$YS_VCS_PROMPT_CLEAN"
@@ -38,7 +42,7 @@ ys_hg_prompt_info() {
 # Python virtualenv
 local venv_info='$(virtualenv_info)'
 virtualenv_info() {
-    [ $VIRTUAL_ENV ] && echo -n '[ '`basename $VIRTUAL_ENV`' ]'
+    [ $VIRTUAL_ENV ] && echo -n '& '`basename $VIRTUAL_ENV`
 }
 
 local exit_code="%(?,,C:%{$fg[red]%}%?%{$reset_color%})"
