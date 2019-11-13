@@ -13,5 +13,8 @@ DISABLE_AUTO_UPDATE="true"
 test -e $DOTSHELL/omzrc.sh && source $DOTSHELL/omzrc.sh
 source $ZSH/oh-my-zsh.sh
 
+# I do want to share history
+unsetopt share_history
+
 source $DOTSHELL/lib.sh
 test -e $HOME/.shlocal && source $HOME/.shlocal
