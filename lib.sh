@@ -56,3 +56,21 @@ function backup-intalled-list() {
     list-installed-apps > $fn
     echo "Installed apps list saved to $fn"
 }
+
+# Python
+# See: https://stackoverflow.com/a/25947333
+function brew-fix-venv() {
+    local venv=~/.virtualenvs/$1
+    # decide python version
+    if [[ -e $venv/bin/python3 ]]; then
+        local p=python3
+    elif [[ -e $venv/bin/python2 ]]; then
+        local p=python2
+    fi
+    echo "Backup to /tmp"
+    rm -r /tmp/$1 && cp -a $venv /tmp
+    echo "Remove broken links"
+    find $venv -type l -delete
+    echo "Recreate virtualenv using $p"
+    virtualenv -p $p $venv
+}
