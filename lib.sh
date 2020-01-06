@@ -42,7 +42,7 @@ function init-nvm() {
 
 # List software installed
 function list-installed-apps() {
-    CMDS=('mas list' 'brew list' 'brew cask list' 'cd /Applications/Setapp && ls -d *.app')
+    CMDS=('mas list' 'brew list' 'brew cask list' 'ls -d /Applications/Setapp/*.app')
     echo "Generate on $(hostname) at $(date '+%Y-%m-%d %H:%M:%S')"
     echo
     for cmd in $CMDS; do
@@ -52,7 +52,7 @@ function list-installed-apps() {
     done
 }
 function backup-intalled-list() {
-    fn="$HOME/iCloud/Backups/InstalledApps/$(hostname).$(date +%Y-%m-%d).installedapps"
+    fn="$HOME/iCloud/Backups/InstalledApps/$(hostname).$(date +%Y-%m-%d).installedapps.txt"
     list-installed-apps > $fn
     echo "Installed apps list saved to $fn"
 }
