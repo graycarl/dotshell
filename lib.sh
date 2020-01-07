@@ -74,3 +74,7 @@ function brew-fix-venv() {
     echo "Recreate virtualenv using $p"
     virtualenv -p $p $venv
 }
+
+# Markp: Convert markdown to presentation in html / pdf
+# See: https://hub.docker.com/r/marpteam/marp-cli/
+alias markp='docker run --rm --init -v $PWD:/home/marp/app/ -e LANG=$LANG marpteam/marp-cli'
