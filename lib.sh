@@ -51,7 +51,7 @@ function list-installed-apps() {
         echo
     done
 }
-function backup-intalled-list() {
+function backup-installed-list() {
     fn="$HOME/iCloud/Backups/InstalledApps/$(hostname).$(date +%Y-%m-%d).installedapps.txt"
     list-installed-apps > $fn
     echo "Installed apps list saved to $fn"
