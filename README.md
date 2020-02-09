@@ -19,3 +19,9 @@ git submodules update --init oh-my-zsh
 ln -s ~/.shell/zshrc.sh ~/.zshrc
 chsh -s /bin/zsh
 ```
+
+## Apps
+
+```bash
+$ ln -s ~/.shell/apps/cheat/sheets ~/.cheat
+```
