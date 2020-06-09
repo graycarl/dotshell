@@ -507,6 +507,7 @@ key_bindings:
   # 部分解决中文输入时删除键的问题
   # see: https://github.com/alacritty/alacritty/issues/1606#issuecomment-579754834
   - { key: Back, action: ReceiveChar }
+  - { key: N, mods: Command, command: { program: "open", args: ["-n", "/Applications/Alacritty.app"] } }
   # (Windows, Linux, and BSD only)
   #- { key: V,        mods: Control|Shift, action: Paste            }
   #- { key: C,        mods: Control|Shift, action: Copy             }
