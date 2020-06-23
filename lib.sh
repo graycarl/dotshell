@@ -10,14 +10,6 @@ function notify() {
     osascript -e "display notification \"$1\" with title \"$title\""
 }
 
-# Use NeoVim
-if type nvim > /dev/null 2>&1; then
-    alias vi='nvim'
-    alias vim='nvim'
-    alias view='nvim -R'
-    alias vimdiff='nvim -d'
-fi
-
 # rbenv init
 function init-rbenv() {
     eval "$(rbenv init -)"
