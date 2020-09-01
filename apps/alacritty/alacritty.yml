@@ -507,7 +507,10 @@ key_bindings:
   # 部分解决中文输入时删除键的问题
   # see: https://github.com/alacritty/alacritty/issues/1606#issuecomment-579754834
   - { key: Back, action: ReceiveChar }
-  - { key: N, mods: Command, command: { program: "open", args: ["-n", "/Applications/Alacritty.app"] } }
+
+  # 5.0 之后已经默认支持了 Cmd-N 打开新窗口了，所以这个自定义 Hotkey 不再需要了
+  # - { key: N, mods: Command, command: { program: "open", args: ["-n", "/Applications/Alacritty.app"] } }
+  
   # (Windows, Linux, and BSD only)
   #- { key: V,        mods: Control|Shift, action: Paste            }
   #- { key: C,        mods: Control|Shift, action: Copy             }
