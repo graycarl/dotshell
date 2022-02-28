@@ -66,6 +66,13 @@ function brew-fix-venv() {
     echo "Recreate virtualenv using $p"
     virtualenv -p $p $venv
 }
+# https://github.com/pypa/virtualenv/issues/2023#issuecomment-748636276
+function fix-py2-venv-for-m1() {
+    pushd $1/bin
+    mkdir bk; cp python bk; mv -f bk/python .;rmdir bk
+    codesign -s - --preserve-metadata=identifier,entitlements,flags,runtime -f python
+    popd
+}
 
 # Markp: Convert markdown to presentation in html / pdf
 # See: https://hub.docker.com/r/marpteam/marp-cli/
