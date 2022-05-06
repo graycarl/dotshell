@@ -10,6 +10,15 @@
 function virtualenv_info {
     [ $VIRTUAL_ENV ] && echo 'workon '$fg[cyan]`basename $VIRTUAL_ENV`%{$reset_color%}
 }
+function container_info {
+    if [[ $TERM_PROGRAM = "vscode" ]]; then
+        echo "VSCode"
+    fi
+    if [[ -n $VIM ]]; then
+        echo "Vim"
+    fi
+}
+
 PR_GIT_UPDATE=1
 
 setopt prompt_subst
@@ -86,5 +95,5 @@ function steeef_precmd {
 add-zsh-hook precmd steeef_precmd
 
 PROMPT=$'
-%{$purple%}InCode%{$reset_color%} %{$limegreen%}%~%{$reset_color%} $vcs_info_msg_0_$(virtualenv_info)%{$reset_color%}
+%{$purple%}[$(container_info)]%{$reset_color%} %{$limegreen%}%~%{$reset_color%} $vcs_info_msg_0_$(virtualenv_info)%{$reset_color%}
 $ '
