@@ -1,0 +1,7 @@
+packages:
+  - ubuntu-desktop
+  - xrdp
+
+users:
+  - name: ubuntu
+    plain_text_passwd: commonpassword
