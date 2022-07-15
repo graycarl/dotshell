@@ -40,6 +40,15 @@ for file in $REPODIR/*.static; do
     echo "--$name | shell=$TMPDIR/copy-static.sh | param1=$name"
 done
 
+echo "Open"
+/opt/homebrew/bin/docker container ls --format '{{.Names}} {{.Ports}}' | while read line; do
+    if [[ $line =~ .*127\.0\.0\.1.* ]]; then
+        addr="http://$(echo $line | egrep -o '127.0.0.1:\d+')"
+        echo "--$line | shell=/usr/bin/open | param1=$addr"
+    else
+        continue
+    fi
+done
 
 # Keep awake
 if pgrep -q caffeinate; then
