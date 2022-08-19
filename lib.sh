@@ -96,6 +96,7 @@ function tmux-init() {
                 tmux new-window -n $name -c "${wd/#\~/$HOME}"
             fi
         done < $file
+        tmux select-window -t :=1
         unset session_created
     done
 }
