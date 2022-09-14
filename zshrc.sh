@@ -16,6 +16,14 @@ test -e $HOME/.shlocal && source $HOME/.shlocal
 
 source $ZSH/oh-my-zsh.sh
 
+# Use NeoVim
+if [[ $(basename $EDITOR) = "nvim" ]]; then
+    alias vi='nvim'
+    alias vim='nvim'
+    alias view='nvim -R'
+    alias vimdiff='nvim -d'
+fi
+
 # I don't want to share history
 unsetopt share_history
 
