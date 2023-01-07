@@ -50,6 +50,11 @@ echo "Open"
     fi
 done
 
+echo "Sync Notes"
+SN_LOG=/tmp/sync-notes.log
+$HOME/.virtualenvs/N/bin/hbkit fs sync $HOME/Documents/Notes --notify > $SN_LOG 2>&1
+sed -E 's/^/--/' $SN_LOG
+
 # Keep awake
 if pgrep -q caffeinate; then
     echo "Cancel Keep Awake | refresh=true | shell=$TMPDIR/keep-awake.sh | param1=stop"
