@@ -11,6 +11,8 @@ TMPDIR=/tmp/xbar/hammer
 mkdir -p $TMPDIR
 REPODIR=$HOME/.copy
 
+echo "Start at: $(date)" >> $TMPDIR/log
+
 # Create copy script
 cat > $TMPDIR/copy-static.sh << END
 #!/usr/bin/env bash -x
@@ -61,3 +63,5 @@ if pgrep -q caffeinate; then
 else
     echo "Keep Awake | refresh=true | shell=$TMPDIR/keep-awake.sh | param1=start"
 fi
+
+echo "End at  : $(date)" >> $TMPDIR/log
