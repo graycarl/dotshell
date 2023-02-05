@@ -54,7 +54,7 @@ done
 
 echo "Sync Notes"
 SN_LOG=/tmp/sync-notes.log
-$HOME/.virtualenvs/N/bin/hbkit fs sync $HOME/Documents/Notes --notify > $SN_LOG 2>&1
+$HOME/.shell/tools/git-sync.sh $HOME/Documents/Notes > $SN_LOG 2>&1
 sed -E 's/^/--/' $SN_LOG
 
 # Keep awake

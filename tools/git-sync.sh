@@ -28,7 +28,11 @@ function is_conflict() {
     fi
 }
 
-debug "Script start"
+debug "Script start: $1"
+if [[ -n $1 ]]; then
+    cd $1
+fi
+
 if is_conflict; then
     warn "The repository is in conflict state, abort!"
     exit
