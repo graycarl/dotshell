@@ -68,3 +68,9 @@ ${git_info}\
  \
 %{$fg[white]%}$venv_info $exit_code
 %{$terminfo[bold]$fg[red]%}$ %{$reset_color%}"
+
+local _lineup=$'\e[1A'
+local _linedown=$'\e[1B'
+RPROMPT="%{${_lineup}%} \
+%{$fg[cyan]%}%D{%y/%m/%f}%@%{$reset_color%} \
+%{${_linedown}%}"
