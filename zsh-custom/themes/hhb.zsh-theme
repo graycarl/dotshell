@@ -100,5 +100,5 @@ $ '
 local _lineup=$'\e[1A'
 local _linedown=$'\e[1B'
 RPROMPT="%{${_lineup}%} \
-%{$fg[cyan]%}%D{%y/%m/%f}%@%{$reset_color%} \
+%{$fg[cyan]%}%D{%y/%m/%f} %@%{$reset_color%} \
 %{${_linedown}%}"
