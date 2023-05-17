@@ -45,8 +45,10 @@ done
 echo "Open"
 /opt/homebrew/bin/docker container ls --format '{{.Names}} {{.Ports}}' | while read line; do
     if [[ $line =~ .*127\.0\.0\.1.* ]]; then
-        addr="http://$(echo $line | egrep -o '127.0.0.1:\d+')"
-        echo "--$line | shell=/usr/bin/open | param1=$addr"
+        words=($line)
+        for host in $(echo $line | egrep -o '127.0.0.1:\d+'); do
+            echo "--${words[0]} -> $host | shell=/usr/bin/open | param1=http://$host"
+        done
     else
         continue
     fi
