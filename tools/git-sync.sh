@@ -28,6 +28,22 @@ function is_conflict() {
     fi
 }
 
+function need_fetch() {
+    local hash=$(pwd | md5 | head -c 6)
+    local fn="/tmp/git-sync-fetch-$hash"
+    local now=$(date +%s)
+    if [[ -f $fn ]]; then
+        debug "Read last time from $fn"
+        local last=$(cat $fn)
+        if [[ $((now-last)) -lt 600 ]]; then
+            return 1
+        fi
+    fi
+    debug "Write last time to $fn"
+    date +%s > $fn
+    return 0
+}
+
 function main() {
 
     debug "Script start: $1"
@@ -46,6 +62,12 @@ function main() {
         git commit -qm "Updated on $(hostname)"
     else
         log "No local new commit"
+        if need_fetch; then
+            log "Need fetch remote"
+        else
+            log "Ignore remote fetch"
+            return 0
+        fi
     fi
 
     debug "Fetch remote"
@@ -82,4 +104,4 @@ function main() {
 
 }
 
-main
+main $@
