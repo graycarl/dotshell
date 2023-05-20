@@ -56,8 +56,8 @@ done
 
 echo "Sync Notes"
 SN_LOG=/tmp/sync-notes.log
-$HOME/.shell/tools/git-sync.sh $HOME/Documents/Notes > $SN_LOG 2>&1
-sed -E 's/^/--/' $SN_LOG
+$HOME/.shell/tools/git-sync.sh $HOME/Documents/Notes >> $SN_LOG 2>&1
+tail -r -n 10 $SN_LOG | sed -E 's/^/--/'
 
 # Keep awake
 if pgrep -q caffeinate; then
