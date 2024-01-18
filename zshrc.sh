@@ -24,6 +24,7 @@ if [[ $(basename $EDITOR) = "nvim" ]]; then
     alias vimdiff='nvim -d'
 fi
 
-# I don't want to share history
+# I don't want to share history, that will be a mess
 unsetopt share_history
-
+# save to history immediately, not after logout
+setopt inc_append_history
