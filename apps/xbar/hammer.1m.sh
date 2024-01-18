@@ -32,7 +32,7 @@ END
 
 chmod +x $TMPDIR/*.sh
 
-echo 〄
+echo Hm
 echo ---
 echo "Refresh | refresh=true"
 
