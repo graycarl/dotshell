@@ -37,5 +37,5 @@ $exit_code\
 
 RPROMPT="\
 %{$fg[green]%}%~\
-%{$fg[white]%}$venv_info%{$reset_color%}\
+%{$fg[magenta]%}$venv_info%{$reset_color%}\
 %{$fg[cyan]%} %@%{$reset_color%}"
