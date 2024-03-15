@@ -8,6 +8,7 @@
 #  <xbar.desc>Hammer is here.</xbar.desc>
 
 TMPDIR=/tmp/xbar/hammer
+TOOLSDIR=$HOME/.shell/tools
 mkdir -p $TMPDIR
 REPODIR=$HOME/.copy
 
@@ -17,6 +18,11 @@ echo "Start at: $(date)" >> $TMPDIR/log
 cat > $TMPDIR/copy-static.sh << END
 #!/usr/bin/env bash -x
 cat $REPODIR/\$1.static | tr -d '\n' | pbcopy
+END
+cat > $TMPDIR/copy-totp.sh << END
+#!/usr/bin/env bash -x
+key=\$(cat $REPODIR/\$1.totp)
+$TOOLSDIR/totp.py \$key | tr -d '\n' | pbcopy
 END
 
 # Keep awake script
@@ -39,7 +45,12 @@ echo "Refresh | refresh=true"
 echo "Copy"
 for file in $REPODIR/*.static; do
     name=$(basename $file .static)
-    echo "--$name | shell=$TMPDIR/copy-static.sh | param1=$name"
+    echo "--$name (static) | color=blue | shell=$TMPDIR/copy-static.sh | param1=$name"
+done
+for file in $REPODIR/*.totp; do
+    name=$(basename $file .totp)
+    key=$(cat $file)
+    echo "--$name (totp) | color=green | shell=$TMPDIR/copy-totp.sh | param1=$name"
 done
 
 echo "Open"
