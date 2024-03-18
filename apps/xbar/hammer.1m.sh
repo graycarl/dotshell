@@ -10,7 +10,7 @@
 TMPDIR=/tmp/xbar/hammer
 TOOLSDIR=$HOME/.shell/tools
 mkdir -p $TMPDIR
-REPODIR=$HOME/.copy
+REPODIR=$HOME/.shell/local/copy
 
 echo "Start at: $(date)" >> $TMPDIR/log
 
