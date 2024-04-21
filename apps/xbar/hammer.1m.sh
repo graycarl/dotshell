@@ -77,4 +77,16 @@ else
     echo "Keep Awake | refresh=true | shell=$TMPDIR/keep-awake.sh | param1=start"
 fi
 
+echo "Brew update"
+BU_LOG=/tmp/brew-update/$(date +%Y-%m-%d).log
+mkdir -p $(dirname $BU_LOG)
+if [ -f $BU_LOG ]; then
+    echo "--Updated at $(stat -f %Sm $BU_LOG) | color=green"
+    tail -n 10 $BU_LOG | sed -E 's/^/--/'
+else
+    touch $BU_LOG
+    echo "--Updating..."
+    /opt/homebrew/bin/brew update >> $BU_LOG 2>&1 &
+fi
+
 echo "End at  : $(date)" >> $TMPDIR/log
