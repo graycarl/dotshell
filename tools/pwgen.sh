@@ -4,8 +4,8 @@ main() {
     part1=$(pick)
     part2=$(pick)
     part3=$(pick)
-    part1a=$(echo "$part1" | tr 'aeiost' '431057' | tr '[:lower:]' '[:upper:]')
-    part2a=$(echo "$part2" | tr 'aceist' '@(&!$+')
+    part1a=$(echo "$part1" | tr 'aeios' '43105' | tr '[:lower:]' '[:upper:]')
+    part2a=$(echo "$part2" | tr 'acist' '@(!$+')
     echo "$part1a-$part2a-$part3"
     # echo "$part1 $part2 $part3"
 }

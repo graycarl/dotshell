@@ -24,6 +24,10 @@ cat > $TMPDIR/copy-totp.sh << END
 key=\$(cat $REPODIR/\$1.totp)
 $TOOLSDIR/totp.py \$key | tr -d '\n' | pbcopy
 END
+cat > $TMPDIR/copy-pwgen.sh << END
+#!/usr/bin/env bash -x
+$TOOLSDIR/pwgen.sh | tr -d '\n' | pbcopy
+END
 
 # Keep awake script
 cat > $TMPDIR/keep-awake.sh << 'END'
@@ -52,6 +56,7 @@ for file in $REPODIR/*.totp; do
     key=$(cat $file)
     echo "--$name (totp) | color=green | shell=$TMPDIR/copy-totp.sh | param1=$name"
 done
+echo "--PWGen | color=red | shell=$TMPDIR/copy-pwgen.sh"
 
 echo "Open"
 /opt/homebrew/bin/docker container ls --format '{{.Names}} {{.Ports}}' | while read line; do
