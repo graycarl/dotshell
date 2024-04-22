@@ -92,3 +92,39 @@ function gui-prompt() {
     end tell
 EOT
 }
+
+# Init pyenv
+# 当进入一个 Git 目录后，如果 pyenv virtualenv 中存在同名的 virtualenv, 自动在
+# pyenv 中切换到对应的 virtualenv 环境
+function pyenv-auto() {
+    local prj_name=$(basename "$(git rev-parse --show-toplevel 2>/dev/null)")
+    local venv_name=$PYENV_VERSION
+
+    if [[ -n $CD_PYENV_VENV && $prj_name != $CD_PYENV_VENV ]]; then
+        if [[ -n $venv_name ]]; then
+            pyenv deactivate
+        fi
+        unset CD_PYENV_VENV
+    fi
+
+    if [[ "$prj_name" != "" && "$prj_name" != "$venv_name" ]]; then
+        if [[ -n $venv_name ]]; then
+            pyenv deactivate
+        fi
+        # Virtualenv exists in versions dir as a symlink
+        if [[ -L ${PYENV_ROOT:-$HOME/.pyenv}/versions/$prj_name ]]; then
+            pyenv activate $prj_name
+            export CD_PYENV_VENV=$prj_name
+        fi
+    fi
+}
+
+function init-pyenv() {
+    eval "$(pyenv init -)"
+    # pyenv-virtualenv init script will slow down every command, because
+    # of the hook function. And don't get the usage of this hook function.
+    # It was still working without this hook function.
+    # eval "$(pyenv virtualenv-init -)"
+    autoload -U add-zsh-hook
+    add-zsh-hook chpwd pyenv-auto
+}

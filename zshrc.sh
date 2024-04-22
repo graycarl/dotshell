@@ -25,6 +25,11 @@ if [[ $(basename $EDITOR) = "nvim" ]]; then
     alias vimdiff='nvim -d'
 fi
 
+# Use pyenv
+if command -v pyenv 1>/dev/null 2>&1; then
+    init-pyenv
+fi
+
 # I don't want to share history, that will be a mess
 unsetopt share_history
 # save to history immediately, not after logout
