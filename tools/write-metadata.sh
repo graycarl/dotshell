@@ -48,5 +48,8 @@ for file in *.mp4; do
 
     # Write metadata for the mp4 file using exiftool
     echo "Writing metadata for: $file | $tv_show_name | $season_number | $episode_number | $episode_title"
-    exiftool -Title="$episode_title" -TVShow="$tv_show_name" -TVSeason="$season_number" -TVEpisode="$episode_number" "$file"
+    exiftool -MediaType="TV Show" -Title="$episode_title" \
+        -Series="$tv_show_name" -SeasonNumber="$season_number" -EpisodeNumber="$episode_number" \
+        -TVShow="$tv_show_name" -TVSeason="$season_number" -TVEpisode="$episode_number" \
+        "$file"
 done
