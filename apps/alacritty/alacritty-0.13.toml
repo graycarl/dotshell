@@ -1,0 +1,12 @@
+# Alacritty configuration toml file
+[window]
+dimensions = { columns = 160, lines = 40 }
+padding = { x = 5, y = 2 }
+decorations = "buttonless"
+
+[font]
+normal = { family = "M+1Code Nerd Font Mono", style = "Regular" }
+size = 16.0
+
+[colors]
+primary = { background = "#262626", foreground = "#dddddd" }
