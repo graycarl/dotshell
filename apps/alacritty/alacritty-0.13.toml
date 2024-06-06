@@ -10,3 +10,10 @@ size = 16.0
 
 [colors]
 primary = { background = "#262626", foreground = "#dddddd" }
+
+[keyboard]
+bindings = [
+    { key = "Key0", mods = "Command", action = "ResetFontSize" },
+    { key = "Equals", mods = "Command", action = "IncreaseFontSize" },
+    { key = "Minus", mods = "Command", action = "DecreaseFontSize" },
+]
