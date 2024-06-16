@@ -62,3 +62,5 @@ Because of steamos is a readonly OS, we need to initialize dev env without `sudo
 12. Setup clipboard hotkey for konsole
   - Open konsole settings;
   - Set `CMD + V` to Paste;
+13. Fix vim-vault
+  - change openssl argument: `-salt` -> `-iter 10`
