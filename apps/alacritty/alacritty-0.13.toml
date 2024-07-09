@@ -2,7 +2,7 @@
 [window]
 dimensions = { columns = 160, lines = 40 }
 padding = { x = 5, y = 2 }
-decorations = "buttonless"
+decorations = "Full"
 
 [font]
 normal = { family = "M+1Code Nerd Font Mono", style = "Regular" }
