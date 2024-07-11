@@ -128,3 +128,8 @@ function init-pyenv() {
     autoload -U add-zsh-hook
     add-zsh-hook chpwd pyenv-auto
 }
+
+# Unlock keychain when ssh to mac
+function unlock-keychain() {
+    security unlock-keychain $HOME/Library/Keychains/login.keychain
+}
