@@ -108,7 +108,7 @@ function pyenv-auto() {
     fi
 
     if [[ "$prj_name" != "" && "$prj_name" != "$venv_name" ]]; then
-        if [[ -n $venv_name ]]; then
+        if [[ -n $venv_name && -n $VIRTUAL_ENV ]]; then
             pyenv deactivate
         fi
         # Virtualenv exists in versions dir as a symlink
