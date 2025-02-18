@@ -1,5 +1,6 @@
 export DOTSHELL=$HOME/.shell
 export ZSH=$DOTSHELL/oh-my-zsh
+export ZSH_CUSTOM=$DOTSHELL/zsh-custom
 
 # For Emacs Tramp
 # See: http://tinyurl.com/yaucgamv

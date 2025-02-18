@@ -11,8 +11,6 @@ Because of steamos is a readonly OS, we need to initialize dev env without `sudo
    $ cd .shell
    $ git submodule update --init
    $ ln -s ~/.shell/zshrc ~/.zshrc
-   $ cd oh-my-zsh/custom/themes
-   $ ln -s ~/.shell/zsh-custom/themes/* .
    $ chsh -s /bin/zsh
    # then restart steamos
    ```
