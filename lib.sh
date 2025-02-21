@@ -129,6 +129,14 @@ function init-pyenv() {
     add-zsh-hook chpwd pyenv-auto
 }
 
+function try-init-rye() {
+    # RYE_HOME default to ~/.rye
+    export RYE_HOME=${RYE_HOME:-$HOME/.rye}
+    if [[ -d $RYE_HOME ]]; then
+        source $RYE_HOME/env
+    fi
+}
+
 # Unlock keychain when ssh to mac
 function unlock-keychain() {
     security unlock-keychain $HOME/Library/Keychains/login.keychain
