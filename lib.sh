@@ -94,27 +94,29 @@ EOT
 }
 
 # Init pyenv
-# 当进入一个 Git 目录后，如果 pyenv virtualenv 中存在同名的 virtualenv, 自动在
+# 当进入一个 Git 目录后，如果 virtualenv 中存在同名的 virtualenv, 自动在
 # pyenv 中切换到对应的 virtualenv 环境
-function pyenv-auto() {
+function py-venv-auto() {
     local prj_name=$(basename "$(git rev-parse --show-toplevel 2>/dev/null)")
-    local venv_name=$PYENV_VERSION
+    if [[ -n $VIRTUAL_ENV ]]; then
+        local venv_name=$(basename $VIRTUAL_ENV)
+    fi
 
-    if [[ -n $CD_PYENV_VENV && $prj_name != $CD_PYENV_VENV ]]; then
+    if [[ -n $CD_PY_VENV && $prj_name != $CD_PY_VENV ]]; then
         if [[ -n $venv_name ]]; then
-            pyenv deactivate
+            deactivate
         fi
-        unset CD_PYENV_VENV
+        unset CD_PY_VENV
     fi
 
     if [[ "$prj_name" != "" && "$prj_name" != "$venv_name" ]]; then
-        if [[ -n $venv_name && -n $VIRTUAL_ENV ]]; then
-            pyenv deactivate
+        if [[ -n $venv_name ]]; then
+            deactivate
         fi
-        # Virtualenv exists in versions dir as a symlink
-        if [[ -L ${PYENV_ROOT:-$HOME/.pyenv}/versions/$prj_name ]]; then
-            pyenv activate $prj_name
-            export CD_PYENV_VENV=$prj_name
+        # Virtualenv exists in $PYTHON_VENVS_HOME as dir
+        if [[ -d $PYTHON_VENVS_HOME/$prj_name ]]; then
+            workon $prj_name
+            export CD_PY_VENV=$prj_name
         fi
     fi
 }
@@ -153,6 +155,34 @@ function try-init-neovim() {
         alias view='nvim -R'
         alias vimdiff='nvim -d'
     fi
+}
+
+function try-init-uv() {
+    if ! command -v uv 1>/dev/null 2>&1; then
+        return 0
+    fi
+
+    mkdir -p $PYTHON_VENVS_HOME 
+    function mk-venv() {
+        if [[ -z $1 ]]; then
+            echo "Usage: mk-venv <name>"
+            return 1
+        fi
+        if [[ -d $PYTHON_VENVS_HOME/$1 ]]; then
+            echo "Virtualenv $1 already exists"
+            return 1
+        fi
+        uv venv $PYTHON_VENVS_HOME/$1
+        source $PYTHON_VENVS_HOME/$1/bin/activate
+    }
+    function ls-venv() {
+        ls $PYTHON_VENVS_HOME
+    }
+    function workon() {
+        source $PYTHON_VENVS_HOME/$1/bin/activate
+    }
+    autoload -U add-zsh-hook
+    add-zsh-hook chpwd py-venv-auto
 }
 
 # Unlock keychain when ssh to mac
