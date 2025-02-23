@@ -119,14 +119,16 @@ function pyenv-auto() {
     fi
 }
 
-function init-pyenv() {
-    eval "$(pyenv init -)"
-    # pyenv-virtualenv init script will slow down every command, because
-    # of the hook function. And don't get the usage of this hook function.
-    # It was still working without this hook function.
-    # eval "$(pyenv virtualenv-init -)"
-    autoload -U add-zsh-hook
-    add-zsh-hook chpwd pyenv-auto
+function try-init-pyenv() {
+    if command -v pyenv 1>/dev/null 2>&1; then
+        eval "$(pyenv init -)"
+        # pyenv-virtualenv init script will slow down every command, because
+        # of the hook function. And don't get the usage of this hook function.
+        # It was still working without this hook function.
+        # eval "$(pyenv virtualenv-init -)"
+        autoload -U add-zsh-hook
+        add-zsh-hook chpwd pyenv-auto
+    fi
 }
 
 function try-init-rye() {
@@ -134,6 +136,22 @@ function try-init-rye() {
     export RYE_HOME=${RYE_HOME:-$HOME/.rye}
     if [[ -d $RYE_HOME ]]; then
         source $RYE_HOME/env
+    fi
+}
+
+function try-init-rust() {
+    if [[ -f "$HOME/.cargo/env" && -z $RUST_INITED ]]; then
+        export RUST_INITED=1
+        source "$HOME/.cargo/env"
+    fi
+}
+
+function try-init-neovim() {
+    if [[ $(basename $EDITOR) = "nvim" ]]; then
+        alias vi='nvim'
+        alias vim='nvim'
+        alias view='nvim -R'
+        alias vimdiff='nvim -d'
     fi
 }
 
