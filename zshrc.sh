@@ -19,9 +19,8 @@ source $ZSH/oh-my-zsh.sh
 
 try-init-rust
 try-init-neovim
-# try-init-pyenv
-try-init-rye
 try-init-uv
+try-init-rye
 
 # I don't want to share history, that will be a mess
 unsetopt share_history

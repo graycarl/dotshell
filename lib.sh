@@ -93,9 +93,8 @@ function gui-prompt() {
 EOT
 }
 
-# Init pyenv
-# 当进入一个 Git 目录后，如果 virtualenv 中存在同名的 virtualenv, 自动在
-# pyenv 中切换到对应的 virtualenv 环境
+# 当进入一个 Git 目录后，如果 virtualenvs 中存在同名的 virtualenv, 自动切换
+# 到对应的 virtualenv 环境
 function py-venv-auto() {
     local prj_name=$(basename "$(git rev-parse --show-toplevel 2>/dev/null)")
     if [[ -n $VIRTUAL_ENV ]]; then
@@ -118,18 +117,6 @@ function py-venv-auto() {
             workon $prj_name
             export CD_PY_VENV=$prj_name
         fi
-    fi
-}
-
-function try-init-pyenv() {
-    if command -v pyenv 1>/dev/null 2>&1; then
-        eval "$(pyenv init -)"
-        # pyenv-virtualenv init script will slow down every command, because
-        # of the hook function. And don't get the usage of this hook function.
-        # It was still working without this hook function.
-        # eval "$(pyenv virtualenv-init -)"
-        autoload -U add-zsh-hook
-        add-zsh-hook chpwd pyenv-auto
     fi
 }
 
@@ -161,26 +148,51 @@ function try-init-uv() {
     if ! command -v uv 1>/dev/null 2>&1; then
         return 0
     fi
+    eval "$(uv generate-shell-completion zsh)"
 
     mkdir -p $PYTHON_VENVS_HOME 
     function mk-venv() {
         if [[ -z $1 ]]; then
-            echo "Usage: mk-venv <name>"
+            echo "Usage: mk-venv <version> <name>"
             return 1
         fi
         if [[ -d $PYTHON_VENVS_HOME/$1 ]]; then
             echo "Virtualenv $1 already exists"
             return 1
         fi
-        uv venv $PYTHON_VENVS_HOME/$1
-        source $PYTHON_VENVS_HOME/$1/bin/activate
+        uv venv --no-project -p $1 $PYTHON_VENVS_HOME/$2
+        # source $PYTHON_VENVS_HOME/$1/bin/activate
     }
     function ls-venv() {
-        ls $PYTHON_VENVS_HOME
+        # find pyvenv.cfg in subdirs in $PYTHON_VENVS_HOME
+        # print the dir name and version info from pyvenv.cfg
+        find $PYTHON_VENVS_HOME -name pyvenv.cfg -exec grep -H 'version' {} \; \
+            | sed -E 's/.*\/(.*)\/pyvenv.cfg:version_info = (.*)/\1 -> \2/'
     }
     function workon() {
         source $PYTHON_VENVS_HOME/$1/bin/activate
     }
+    function rm-venv() {
+        if [[ -z $1 ]]; then
+            echo "Usage: rm-venv <name>"
+            return 1
+        fi
+        if [[ -d $PYTHON_VENVS_HOME/$1 ]]; then
+            rm -r $PYTHON_VENVS_HOME/$1
+        else
+            echo "Virtualenv $1 not exists"
+            return 1
+        fi
+    }
+
+    _list_venvs() {
+        local names=($(ls-venv | awk '{print $1}'))
+        _describe 'all virtualenvs' names
+    }
+    compdef _list_venvs workon
+    compdef _list_venvs rm-venv
+
+    # 进入目录时自动切换 virtualenv
     autoload -U add-zsh-hook
     add-zsh-hook chpwd py-venv-auto
 }
