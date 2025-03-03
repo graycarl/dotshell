@@ -97,6 +97,10 @@ EOT
 # 到对应的 virtualenv 环境
 function py-venv-auto() {
     local prj_name=$(basename "$(git rev-parse --show-toplevel 2>/dev/null)")
+    local super_name=$(basename "$(git rev-parse --show-superproject-working-tree 2>/dev/null)")
+    if [[ -n $super_name ]]; then
+        prj_name=$super_name
+    fi
     if [[ -n $VIRTUAL_ENV ]]; then
         local venv_name=$(basename $VIRTUAL_ENV)
     fi
@@ -106,6 +110,7 @@ function py-venv-auto() {
             deactivate
         fi
         unset CD_PY_VENV
+        unset venv_name
     fi
 
     if [[ "$prj_name" != "" && "$prj_name" != "$venv_name" ]]; then
