@@ -45,7 +45,7 @@ function fix-py2-venv-for-m1() {
 # debug ~/Sources/ChinaSFA
 TMUX_INIT_CONFIG=$HOME/.config/tmux-init
 function tmux-init() {
-    set -e
+    # set -e
     local name
     local wd
     local session_envs
@@ -77,7 +77,7 @@ function tmux-init() {
 }
 
 function tmux-clean() {
-    set -e
+    # set -e
     for file in $TMUX_INIT_CONFIG/*.session; do
         session_name=$(basename $file .session)
         tmux kill-session -t $session_name
