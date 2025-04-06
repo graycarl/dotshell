@@ -11,6 +11,26 @@ function notify() {
     osascript -e "display notification \"$1\" with title \"$title\""
 }
 
+function add-to-path() {
+    # usage: add-to-path <path> prefix|suffix
+    if [[ ":$PATH:" == *":$1:"* ]]; then
+        return 0
+    fi
+    if [[ -d $1 ]]; then
+        if [[ $2 == "prefix" ]]; then
+            export PATH="$1:$PATH"
+        elif [[ $2 == "suffix" ]]; then
+            export PATH="$PATH:$1"
+        else
+            echo "Usage: add-to-path <path> prefix|suffix"
+            return 1
+        fi
+    else
+        echo "$1 is not a directory"
+        return 1
+    fi
+}
+
 # Python
 # See: https://stackoverflow.com/a/25947333
 function brew-fix-venv() {
@@ -150,9 +170,10 @@ function try-init-neovim() {
 }
 
 function try-init-uv() {
-    if ! command -v uv 1>/dev/null 2>&1; then
+    if [[ ! -f $HOME/.local/bin/uv ]]; then
         return 0
     fi
+    add-to-path $HOME/.local/bin prefix
     eval "$(uv generate-shell-completion zsh)"
 
     mkdir -p $PYTHON_VENVS_HOME 
