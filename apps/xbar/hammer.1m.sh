@@ -60,9 +60,9 @@ echo "--PWGen | color=red | shell=$TMPDIR/copy-pwgen.sh"
 
 echo "Open"
 /opt/homebrew/bin/docker container ls --format '{{.Names}} {{.Ports}}' | while read line; do
-    if [[ $line =~ .*127\.0\.0\.1.* ]]; then
+    if [[ $line =~ .*(127\.0\.0\.1|0\.0\.0\.0).* ]]; then
         words=($line)
-        for host in $(echo $line | egrep -o '127.0.0.1:\d+'); do
+        for host in $(echo $line | egrep -o '(127.0.0.1|0.0.0.0):\d+'); do
             echo "--${words[0]} -> $host | shell=/usr/bin/open | param1=http://$host"
         done
     else
