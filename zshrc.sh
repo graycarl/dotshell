@@ -26,3 +26,6 @@ try-init-rye
 unsetopt share_history
 # save to history immediately, not after logout
 setopt inc_append_history
+
+# aliases
+alias transvideo='uv run $DOTSHELL/tools/transvideo.py --soft'

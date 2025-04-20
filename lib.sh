@@ -31,32 +31,6 @@ function add-to-path() {
     fi
 }
 
-# Python
-# See: https://stackoverflow.com/a/25947333
-function brew-fix-venv() {
-    local venv=~/.virtualenvs/$1
-    # decide python version
-    if [[ -e $venv/bin/python3 ]]; then
-        local p=python3
-    elif [[ -e $venv/bin/python2 ]]; then
-        local p=python2
-    fi
-    echo "Backup to /tmp"
-    rm -r /tmp/$1 && cp -a $venv /tmp
-    echo "Remove broken links"
-    find $venv -type l -delete
-    echo "Recreate virtualenv using $p"
-    virtualenv -p $p $venv
-}
-
-# https://github.com/pypa/virtualenv/issues/2023#issuecomment-748636276
-function fix-py2-venv-for-m1() {
-    pushd $1/bin
-    mkdir bk; cp python bk; mv -f bk/python .;rmdir bk
-    codesign -s - --preserve-metadata=identifier,entitlements,flags,runtime -f python
-    popd
-}
-
 # Put xxx.session in CONFIG_DIR
 # eg.
 # cat xxx.session
@@ -175,6 +149,15 @@ function try-init-uv() {
     fi
     add-to-path $HOME/.local/bin prefix
     eval "$(uv generate-shell-completion zsh)"
+    # fix uv completion, see: https://github.com/astral-sh/uv/issues/8432#issuecomment-2453494736
+    _uv_run_mod() {
+        if [[ "$words[2]" == "run" && "$words[CURRENT]" != -* ]]; then
+            _arguments '*:filename:_files'
+        else
+            _uv "$@"
+        fi
+    }
+    compdef _uv_run_mod uv
 
     mkdir -p $PYTHON_VENVS_HOME 
     function mk-venv() {
