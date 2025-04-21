@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # /// script
-# requires-python = ">=3.13"
+# requires-python = ">=3.9"
 # dependencies = [
 #     "traceback-with-variables",
 #     "translators",
@@ -15,8 +15,9 @@ import translators
 import whisper
 
 logging.basicConfig(level=logging.INFO)
-# tiny, base, small, medium, large, turbo
-whisper_model = "base"
+# See: <https://github.com/openai/whisper?tab=readme-ov-file#available-models-and-languages>
+whisper_model = "small.en"
+# See: <https://pypi.org/project/translators/>
 trans_service = "bing"
 
 class Transvideo:
@@ -40,7 +41,7 @@ class Transvideo:
 
         if not os.path.exists(self.whisper_original_file):
             # tiny, base, small, medium, large, turbo
-            model = whisper.load_model("small")
+            model = whisper.load_model(whisper_model)
             audio = whisper.load_audio(self.audio_file)
 
             # mel = whisper.log_mel_spectrogram(whisper.pad_or_trim(audio)).to(model.device)
@@ -52,7 +53,7 @@ class Transvideo:
                 audio=audio,
                 language='en',
                 fp16=False,
-                word_timestamps=True,
+                # word_timestamps=True,
             )
 
             content = []
