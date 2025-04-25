@@ -179,7 +179,16 @@ function try-init-uv() {
             | sed -E 's/.*\/(.*)\/pyvenv.cfg:version_info = (.*)/\1 -> \2/'
     }
     function workon() {
-        source $PYTHON_VENVS_HOME/$1/bin/activate
+        if [[ -z $1 ]]; then
+            if [[ -d .venv ]]; then
+                source .venv/bin/activate
+            else
+                echo "Usage: workon <name>"
+                return 1
+            fi
+        else
+            source $PYTHON_VENVS_HOME/$1/bin/activate
+        fi
     }
     function rm-venv() {
         if [[ -z $1 ]]; then
