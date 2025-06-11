@@ -119,14 +119,6 @@ function py-venv-auto() {
     fi
 }
 
-function try-init-rye() {
-    # RYE_HOME default to ~/.rye
-    export RYE_HOME=${RYE_HOME:-$HOME/.rye}
-    if [[ -d $RYE_HOME ]]; then
-        source $RYE_HOME/env
-    fi
-}
-
 function try-init-rust() {
     if [[ -f "$HOME/.cargo/env" && -z $RUST_INITED ]]; then
         export RUST_INITED=1
