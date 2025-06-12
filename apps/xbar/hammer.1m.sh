@@ -62,9 +62,8 @@ echo "--PWGen | color=red | shell=$TMPDIR/copy-pwgen.sh"
 echo "Snippets"
 for file in $SNIPREPO/*.txt; do
     name=$(basename $file .txt)
-    echo "--$name"
     for line in $(cat $file); do
-        echo "----$line | length=30 | ansi=false | shell=/bin/bash | param1='-c' | param2='echo \"$line\" | LANG=zh_CN.UTF-8 pbcopy' | terminal=false"
+        echo "--[${name}] > $line | length=30 | ansi=false | shell=/bin/bash | param1='-c' | param2='echo \"$line\" | LANG=zh_CN.UTF-8 pbcopy' | terminal=false"
     done
 done
 
