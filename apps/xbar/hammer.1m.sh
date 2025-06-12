@@ -59,7 +59,7 @@ for file in $COPYREPO/*.totp; do
 done
 echo "--PWGen | color=red | shell=$TMPDIR/copy-pwgen.sh"
 
-echo "Copy Snippets"
+echo "Snippets"
 for file in $SNIPREPO/*.txt; do
     name=$(basename $file .txt)
     echo "--$name"
