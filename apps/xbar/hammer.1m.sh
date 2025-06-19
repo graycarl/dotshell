@@ -10,18 +10,19 @@
 TMPDIR=/tmp/xbar/hammer
 TOOLSDIR=$HOME/.shell/tools
 mkdir -p $TMPDIR
-REPODIR=$HOME/.shell/local/copy
+COPYREPO=$HOME/.shell/local/copy
+SNIPREPO=$HOME/.shell/local/snippets
 
 echo "Start at: $(date)" >> $TMPDIR/log
 
 # Create copy script
 cat > $TMPDIR/copy-static.sh << END
 #!/usr/bin/env bash -x
-cat $REPODIR/\$1.static | tr -d '\n' | pbcopy
+cat $COPYREPO/\$1.static | tr -d '\n' | pbcopy
 END
 cat > $TMPDIR/copy-totp.sh << END
 #!/usr/bin/env bash -x
-key=\$(cat $REPODIR/\$1.totp)
+key=\$(cat $COPYREPO/\$1.totp)
 $TOOLSDIR/totp.py \$key | tr -d '\n' | pbcopy
 END
 cat > $TMPDIR/copy-pwgen.sh << END
@@ -47,16 +48,24 @@ echo ---
 echo "Refresh | refresh=true"
 
 echo "Copy"
-for file in $REPODIR/*.static; do
+for file in $COPYREPO/*.static; do
     name=$(basename $file .static)
     echo "--$name (static) | color=blue | shell=$TMPDIR/copy-static.sh | param1=$name"
 done
-for file in $REPODIR/*.totp; do
+for file in $COPYREPO/*.totp; do
     name=$(basename $file .totp)
     key=$(cat $file)
     echo "--$name (totp) | color=green | shell=$TMPDIR/copy-totp.sh | param1=$name"
 done
 echo "--PWGen | color=red | shell=$TMPDIR/copy-pwgen.sh"
+
+echo "Snippets"
+for file in $SNIPREPO/*.txt; do
+    name=$(basename $file .txt)
+    for line in $(cat $file); do
+        echo "--[${name}] > $line | length=30 | ansi=false | shell=/bin/bash | param1='-c' | param2='echo \"$line\" | LANG=zh_CN.UTF-8 pbcopy' | terminal=false"
+    done
+done
 
 echo "Open"
 /opt/homebrew/bin/docker container ls --format '{{.Names}} {{.Ports}}' | while read line; do
