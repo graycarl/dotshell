@@ -29,6 +29,10 @@ cat > $TMPDIR/copy-pwgen.sh << END
 #!/usr/bin/env bash -x
 $TOOLSDIR/pwgen.sh | tr -d '\n' | pbcopy
 END
+cat > $TMPDIR/send-to-phone.sh << END
+#!/usr/bin/env bash -x
+LANG=zh_CN.UTF-8 pbpaste | /usr/bin/curl -X POST -H "Content-Type: text/plain" --data-binary @- https://api.chuckfang.com/carl/Hammer/
+END
 
 # Keep awake script
 cat > $TMPDIR/keep-awake.sh << 'END'
@@ -58,6 +62,7 @@ for file in $COPYREPO/*.totp; do
     echo "--$name (totp) | color=green bash=$TMPDIR/copy-totp.sh param1=$name terminal=false"
 done
 echo "--PWGen | color=red bash=$TMPDIR/copy-pwgen.sh terminal=false"
+echo "--Send to Phone | color=blue bash=$TMPDIR/send-to-phone.sh terminal=false"
 
 echo "Snippets"
 for file in $SNIPREPO/*.txt; do
