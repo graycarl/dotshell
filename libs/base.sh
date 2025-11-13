@@ -20,3 +20,7 @@ function add-to-path() {
     fi
 }
 
+function load-shrc() {
+    test -e $DOTSHELL/local/shrc && source $DOTSHELL/local/shrc
+    test -e $HOME/.shlocal && echo 'Please move .shlocal to .shell/local/shrc'
+}
