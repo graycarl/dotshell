@@ -28,4 +28,13 @@ if [ -d "$SCRIPT_DIR/agent/prompts" ]; then
     echo "✓ Linked prompts -> $PI_AGENT_DIR/prompts"
 fi
 
+# Link APPEND_SYSTEM.md file
+if [ -L "$PI_AGENT_DIR/APPEND_SYSTEM.md" ]; then
+    rm "$PI_AGENT_DIR/APPEND_SYSTEM.md"
+fi
+if [ -f "$SCRIPT_DIR/agent/APPEND_SYSTEM.md" ]; then
+    ln -s "$SCRIPT_DIR/agent/APPEND_SYSTEM.md" "$PI_AGENT_DIR/APPEND_SYSTEM.md"
+    echo "✓ Linked APPEND_SYSTEM.md -> $PI_AGENT_DIR/APPEND_SYSTEM.md"
+fi
+
 echo "Setup complete!"
