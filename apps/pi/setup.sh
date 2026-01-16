@@ -1,6 +1,31 @@
 #!/bin/bash
 
-# Make link from ~/.pi/agent/skills to agent/skills
+# Setup pi agent configuration
+# Links skills and prompts to ~/.pi/agent/
 
-mkdir -p ~/.pi/agent
-ln -s $(pwd)/agent/skills ~/.pi/agent/skills
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PI_AGENT_DIR="$HOME/.pi/agent"
+
+mkdir -p "$PI_AGENT_DIR"
+
+# Link skills directory
+if [ -L "$PI_AGENT_DIR/skills" ]; then
+    rm "$PI_AGENT_DIR/skills"
+fi
+if [ -d "$SCRIPT_DIR/agent/skills" ]; then
+    ln -s "$SCRIPT_DIR/agent/skills" "$PI_AGENT_DIR/skills"
+    echo "✓ Linked skills -> $PI_AGENT_DIR/skills"
+fi
+
+# Link prompts directory
+if [ -L "$PI_AGENT_DIR/prompts" ]; then
+    rm "$PI_AGENT_DIR/prompts"
+fi
+if [ -d "$SCRIPT_DIR/agent/prompts" ]; then
+    ln -s "$SCRIPT_DIR/agent/prompts" "$PI_AGENT_DIR/prompts"
+    echo "✓ Linked prompts -> $PI_AGENT_DIR/prompts"
+fi
+
+echo "Setup complete!"
