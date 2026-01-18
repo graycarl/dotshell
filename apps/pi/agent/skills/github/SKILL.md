@@ -28,6 +28,7 @@ Create a new PR from the current branch.
 ```
 
 - `BaseBranch` is optional (defaults to repository default, usually `main` or `master`).
+- Note: Use single quotes around the title and body if they contain special characters.
 
 ### 2. Check Status
 
