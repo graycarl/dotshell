@@ -37,4 +37,13 @@ if [ -f "$SCRIPT_DIR/agent/APPEND_SYSTEM.md" ]; then
     echo "✓ Linked APPEND_SYSTEM.md -> $PI_AGENT_DIR/APPEND_SYSTEM.md"
 fi
 
+# Link keybinddings.json file
+if [ -L "$PI_AGENT_DIR/keybindings.json" ]; then
+    rm "$PI_AGENT_DIR/keybindings.json"
+fi
+if [ -f "$SCRIPT_DIR/agent/keybindings.json" ]; then
+    ln -s "$SCRIPT_DIR/agent/keybindings.json" "$PI_AGENT_DIR/keybindings.json"
+    echo "✓ Linked keybindings.json -> $PI_AGENT_DIR/keybindings.json"
+fi
+
 echo "Setup complete!"
