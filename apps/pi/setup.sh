@@ -28,6 +28,15 @@ if [ -d "$SCRIPT_DIR/agent/prompts" ]; then
     echo "✓ Linked prompts -> $PI_AGENT_DIR/prompts"
 fi
 
+# Link extensions directory
+if [ -L "$PI_AGENT_DIR/extensions" ]; then
+    rm "$PI_AGENT_DIR/extensions"
+fi
+if [ -d "$SCRIPT_DIR/agent/extensions" ]; then
+    ln -s "$SCRIPT_DIR/agent/extensions" "$PI_AGENT_DIR/extensions"
+    echo "✓ Linked extensions -> $PI_AGENT_DIR/extensions"
+fi
+
 # Link APPEND_SYSTEM.md file
 if [ -L "$PI_AGENT_DIR/APPEND_SYSTEM.md" ]; then
     rm "$PI_AGENT_DIR/APPEND_SYSTEM.md"
