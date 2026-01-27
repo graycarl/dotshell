@@ -1,70 +1,29 @@
 ---
 name: github
-description: Manage GitHub Pull Requests using GitHub CLI (gh). Create, merge, view status, and comment on PRs. Use this skill when the user wants to interact with GitHub repositories.
+description: Manage GitHub Repository using GitHub CLI (gh). Use this skill when the user wants to interact with GitHub repositories.
 ---
 
 # GitHub Skill
 
-This skill provides a set of tools to manage GitHub Pull Requests directly from the agent. It wraps the `gh` CLI to provide simplified workflows for creating, merging, and reviewing PRs.
+This skill allows you to manage GitHub repositories using the GitHub CLI (`gh`). You can perform various actions such as creating repositories, managing issues, pull requests, and more.
 
 ## Prerequisites
 
-- **GitHub CLI (`gh`)**: Must be installed and authenticated.
-  ```bash
-  gh auth login
-  ```
-- **jq**: Required for parsing JSON responses in `view-comments.sh`.
+- Ensure you have the GitHub CLI (`gh`) installed on your system. You can download it from [here](https://cli.github.com/).
+- You must be authenticated with GitHub CLI. You can authenticate by running `gh auth login` in your terminal.
 
-## Usage
+## Available Commands
 
-**Important Convention**: When creating a PR or adding a comment, always append the signature `-- From Agent PI` to the body text.
+### Pull Requests
 
-### 1. Create a Pull Request
+- `gh pr create --title "Title" --body "Description"`: Create a new pull request.
+- `gh pr list`: List all pull requests in the repository.
+- `gh pr view <pr-number>`: View details of a specific pull request.
+- `gh pr view <pr-number> --comments`: View all general comments on a pull request.
+- `gh api repos/{owner}/{repo}/pulls/<pr-number>/comments --jq '.[] | {author: .user.login, diff_hunk: .diff_hunk, file: .path, line: .line, body: .body, createdAt: .created_at}'`: Format inline comments for better readability.
+- `gh pr merge <pr-number>`: Merge a specific pull request.
+- `gh pr comment <pr-number> --body "Comment"`: Add a comment to a specific pull request.
 
-Create a new PR from the current branch.
+### Other Commands
 
-```bash
-./scripts/create-pr.sh "<Title>" "<Body>" ["<BaseBranch>"]
-```
-
-- `BaseBranch` is optional (defaults to repository default, usually `main` or `master`).
-- Note: Use single quotes around the title and body if they contain special characters.
-
-### 2. Check Status
-
-View the status of relevant PRs or details of a specific one.
-```bash
-# Overview of current branch PRs and review requests
-./scripts/check-status.sh
-
-# Detailed view of a specific PR
-./scripts/check-status.sh <pr-number>
-```
-
-### 3. Merge a Pull Request
-
-Merge a PR using the **merge commit** strategy (preserves commit history).
-```bash
-./scripts/merge-pr.sh <pr-number>
-```
-
-### 4. View Comments (Conversation + Code Reviews)
-
-Fetch and display all comments, including general discussion and specific code review comments (line comments), sorted chronologically.
-```bash
-./scripts/view-comments.sh <pr-number>
-```
-
-### 5. Add a Comment
-
-Post a new comment to the PR discussion.
-```bash
-./scripts/add-comment.sh <pr-number> "<Comment Text>"
-```
-
-## Workflow Example
-
-1.  **Check Status**: ` ./scripts/check-status.sh` to see if there's an open PR.
-2.  **View Comments**: ` ./scripts/view-comments.sh 123` to read feedback.
-3.  **Add Comment**: ` ./scripts/add-comment.sh 123 "Fixed the typo."`
-4.  **Merge**: ` ./scripts/merge-pr.sh 123` once approved.
+You can explore more commands and functionalities of the GitHub CLI by running `gh help` and `gh <command> --help` for specific commands.
