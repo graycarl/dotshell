@@ -55,4 +55,13 @@ if [ -f "$SCRIPT_DIR/agent/keybindings.json" ]; then
     echo "✓ Linked keybindings.json -> $PI_AGENT_DIR/keybindings.json"
 fi
 
+# Link subagents directory
+if [ -L "$PI_AGENT_DIR/agents" ]; then
+    rm "$PI_AGENT_DIR/agents"
+fi
+if [ -d "$SCRIPT_DIR/agent/agents" ]; then
+    ln -s "$SCRIPT_DIR/agent/agents" "$PI_AGENT_DIR/agents"
+    echo "✓ Linked agents -> $PI_AGENT_DIR/agents"
+fi
+
 echo "Setup complete!"
