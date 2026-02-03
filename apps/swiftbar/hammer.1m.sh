@@ -45,6 +45,12 @@ fi
 sleep 1
 END
 
+# Restart input method script
+cat > $TMPDIR/reset-input-method.sh << 'END'
+#!/usr/bin/env bash
+pgrep -f "/System/Library/Input Methods/SCIM.app/Contents/PlugIns" | xargs kill -HUP
+END
+
 chmod +x $TMPDIR/*.sh
 
 echo Hm
@@ -84,27 +90,30 @@ echo "Open"
     fi
 done
 
-echo "Sync Notes"
+echo "Reset Input Method | bash=$TMPDIR/reset-input-method.sh terminal=false"
+
+echo "Utils"
+echo "--Sync Notes"
 SN_LOG=/tmp/sync-notes.log
 $HOME/.shell/tools/git-sync.sh $HOME/Documents/Notes >> $SN_LOG 2>&1
-tail -r -n 10 $SN_LOG | sed -E 's/^/--/'
+tail -r -n 10 $SN_LOG | sed -E 's/^/----/'
 
 # Keep awake
 if pgrep -q caffeinate; then
-    echo "Cancel Keep Awake | refresh=true bash=$TMPDIR/keep-awake.sh param1=stop terminal=false"
+    echo "--Cancel Keep Awake | refresh=true bash=$TMPDIR/keep-awake.sh param1=stop terminal=false"
 else
-    echo "Keep Awake | refresh=true bash=$TMPDIR/keep-awake.sh param1=start terminal=false"
+    echo "--Keep Awake | refresh=true bash=$TMPDIR/keep-awake.sh param1=start terminal=false"
 fi
 
-echo "Brew update"
+echo "--Brew update"
 BU_LOG=/tmp/brew-update/$(date +%Y-%m-%d).log
 mkdir -p $(dirname $BU_LOG)
 if [ -f $BU_LOG ]; then
-    echo "--Updated at $(stat -f %Sm $BU_LOG) | color=green"
-    tail -n 10 $BU_LOG | sed -E 's/^/--/'
+    echo "----Updated at $(stat -f %Sm $BU_LOG) | color=green"
+    tail -n 10 $BU_LOG | sed -E 's/^/----/'
 else
     touch $BU_LOG
-    echo "--Updating..."
+    echo "----Updating..."
     /opt/homebrew/bin/brew update >> $BU_LOG 2>&1 &
 fi
 
