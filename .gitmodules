@@ -4,6 +4,3 @@
 [submodule "apps/pi/badlogic-skills"]
 	path = apps/pi/badlogic-skills
 	url = https://github.com/badlogic/pi-skills.git
-[submodule "apps/pi/pi-mono"]
-	path = apps/pi/pi-mono
-	url = https://github.com/badlogic/pi-mono.git
