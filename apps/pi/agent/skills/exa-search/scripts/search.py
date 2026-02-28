@@ -269,8 +269,10 @@ def call_exa(path: str, payload: Dict[str, Any], api_key: str, timeout: int) -> 
         url,
         data=data,
         headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
+            "accept": "application/json",
+            "content-type": "application/json",
+            "x-api-key": api_key,
+            "user-agent": "Mozilla/5.0 (compatible; ExaSearchSkill/1.0)",
         },
         method="POST",
     )
