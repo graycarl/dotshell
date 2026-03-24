@@ -14,8 +14,8 @@ mkdir -p "$PI_AGENT_DIR"
 if [ -L "$PI_AGENT_DIR/skills" ]; then
     rm "$PI_AGENT_DIR/skills"
 fi
-if [ -d "$SCRIPT_DIR/agent/skills" ]; then
-    ln -s "$SCRIPT_DIR/agent/skills" "$PI_AGENT_DIR/skills"
+if [ -d "$DOTSHELL/apps/agents/skills" ]; then
+    ln -s "$DOTSHELL/app/agents/skills" "$PI_AGENT_DIR/skills"
     echo "✓ Linked skills -> $PI_AGENT_DIR/skills"
 fi
 
