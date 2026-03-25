@@ -15,7 +15,7 @@ if [ -L "$PI_AGENT_DIR/skills" ]; then
     rm "$PI_AGENT_DIR/skills"
 fi
 if [ -d "$DOTSHELL/apps/agents/skills" ]; then
-    ln -s "$DOTSHELL/app/agents/skills" "$PI_AGENT_DIR/skills"
+    ln -s "$DOTSHELL/apps/agents/skills" "$PI_AGENT_DIR/skills"
     echo "✓ Linked skills -> $PI_AGENT_DIR/skills"
 fi
 
