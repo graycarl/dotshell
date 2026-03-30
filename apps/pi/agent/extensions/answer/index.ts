@@ -30,6 +30,7 @@ import {
 interface ExtractedQuestion {
 	question: string;
 	context?: string;
+	options?: string[];  // Optional list of predefined choices
 }
 
 interface ExtractionResult {
@@ -43,7 +44,8 @@ Output a JSON object with this structure:
   "questions": [
     {
       "question": "The question text",
-      "context": "Optional context that helps answer the question"
+      "context": "Optional context that helps answer the question",
+      "options": ["option1", "option2", "..."]  // Optional array of choices
     }
   ]
 }
@@ -53,6 +55,8 @@ Rules:
 - Keep questions in the order they appeared
 - Be concise with question text
 - Include context only when it provides essential information for answering
+- If the question presents specific choices/options, extract them into the "options" array
+- Options should be extracted even if presented in different formats (bullet points, "or" separated, numbered list, etc.)
 - If no questions are found, return {"questions": []}
 
 Example output:
@@ -60,10 +64,15 @@ Example output:
   "questions": [
     {
       "question": "What is your preferred database?",
-      "context": "We can only configure MySQL and PostgreSQL because of what is implemented."
+      "context": "We can only configure MySQL and PostgreSQL because of what is implemented.",
+      "options": ["MySQL", "PostgreSQL"]
     },
     {
-      "question": "Should we use TypeScript or JavaScript?"
+      "question": "Should we use TypeScript or JavaScript?",
+      "options": ["TypeScript", "JavaScript"]
+    },
+    {
+      "question": "What should we name this project?"
     }
   ]
 }`;
@@ -137,6 +146,10 @@ class QnAComponent implements Component {
 	private tui: TUI;
 	private onDone: (result: string | null) => void;
 	private showingConfirmation: boolean = false;
+	
+	// Input mode: 'select' for options, 'text' for free-form input
+	private inputMode: ('select' | 'text')[] = [];
+	private selectedOptionIndex: number[] = [];
 
 	// Cache
 	private cachedWidth?: number;
@@ -149,6 +162,7 @@ class QnAComponent implements Component {
 	private green = (s: string) => `\x1b[32m${s}\x1b[0m`;
 	private yellow = (s: string) => `\x1b[33m${s}\x1b[0m`;
 	private gray = (s: string) => `\x1b[90m${s}\x1b[0m`;
+	private blue = (s: string) => `\x1b[34m${s}\x1b[0m`;
 
 	constructor(
 		questions: ExtractedQuestion[],
@@ -159,6 +173,13 @@ class QnAComponent implements Component {
 		this.answers = questions.map(() => "");
 		this.tui = tui;
 		this.onDone = onDone;
+
+		// Initialize input modes and selected indices
+		for (let i = 0; i < questions.length; i++) {
+			const hasOptions = questions[i].options && questions[i].options!.length > 0;
+			this.inputMode[i] = hasOptions ? 'select' : 'text';
+			this.selectedOptionIndex[i] = 0;
+		}
 
 		// Create a minimal theme for the editor
 		const editorTheme: EditorTheme = {
@@ -186,14 +207,57 @@ class QnAComponent implements Component {
 	}
 
 	private saveCurrentAnswer(): void {
-		this.answers[this.currentIndex] = this.editor.getText();
+		const mode = this.inputMode[this.currentIndex];
+		const question = this.questions[this.currentIndex];
+		
+		if (mode === 'select' && question.options) {
+			const selectedIdx = this.selectedOptionIndex[this.currentIndex];
+			this.answers[this.currentIndex] = question.options[selectedIdx] || "";
+		} else {
+			this.answers[this.currentIndex] = this.editor.getText();
+		}
 	}
 
 	private navigateTo(index: number): void {
 		if (index < 0 || index >= this.questions.length) return;
 		this.saveCurrentAnswer();
 		this.currentIndex = index;
-		this.editor.setText(this.answers[index] || "");
+		
+		// Load answer into editor only if in text mode
+		const mode = this.inputMode[index];
+		if (mode === 'text') {
+			this.editor.setText(this.answers[index] || "");
+		} else {
+			this.editor.setText("");
+		}
+		
+		this.invalidate();
+	}
+	
+	private switchToTextMode(): void {
+		const question = this.questions[this.currentIndex];
+		// Only allow switching if there are options
+		if (!question.options || question.options.length === 0) return;
+		
+		this.inputMode[this.currentIndex] = 'text';
+		// Load existing answer (might be a selected option) into editor
+		this.editor.setText(this.answers[this.currentIndex] || "");
+		this.invalidate();
+	}
+	
+	private switchToSelectMode(): void {
+		const question = this.questions[this.currentIndex];
+		// Only allow switching if there are options
+		if (!question.options || question.options.length === 0) return;
+		
+		this.inputMode[this.currentIndex] = 'select';
+		// Try to find current answer in options
+		const currentAnswer = this.editor.getText().trim();
+		const optionIndex = question.options.findIndex(opt => opt === currentAnswer);
+		if (optionIndex >= 0) {
+			this.selectedOptionIndex[this.currentIndex] = optionIndex;
+		}
+		this.editor.setText("");
 		this.invalidate();
 	}
 
@@ -247,7 +311,11 @@ class QnAComponent implements Component {
 			return;
 		}
 
-		// Tab / Shift+Tab for navigation
+		const mode = this.inputMode[this.currentIndex];
+		const question = this.questions[this.currentIndex];
+		const hasOptions = question.options && question.options.length > 0;
+
+		// Tab / Shift+Tab for navigation between questions
 		if (matchesKey(data, Key.tab)) {
 			if (this.currentIndex < this.questions.length - 1) {
 				this.navigateTo(this.currentIndex + 1);
@@ -263,8 +331,74 @@ class QnAComponent implements Component {
 			return;
 		}
 
+		// Toggle between select and text mode with 't' or 'e' key
+		if (hasOptions && (data === 't' || data === 'e' || data === 'T' || data === 'E')) {
+			if (mode === 'select') {
+				this.switchToTextMode();
+			} else {
+				this.switchToSelectMode();
+			}
+			this.tui.requestRender();
+			return;
+		}
+
+		// Handle select mode
+		if (mode === 'select' && hasOptions) {
+			const options = question.options!;
+			
+			// Arrow up/down for option selection
+			if (matchesKey(data, Key.up)) {
+				this.selectedOptionIndex[this.currentIndex] = 
+					(this.selectedOptionIndex[this.currentIndex] - 1 + options.length) % options.length;
+				this.invalidate();
+				this.tui.requestRender();
+				return;
+			}
+			if (matchesKey(data, Key.down)) {
+				this.selectedOptionIndex[this.currentIndex] = 
+					(this.selectedOptionIndex[this.currentIndex] + 1) % options.length;
+				this.invalidate();
+				this.tui.requestRender();
+				return;
+			}
+			
+			// Enter to confirm selection and move to next question
+			if (matchesKey(data, Key.enter)) {
+				this.saveCurrentAnswer();
+				if (this.currentIndex < this.questions.length - 1) {
+					this.navigateTo(this.currentIndex + 1);
+				} else {
+					// On last question - show confirmation
+					this.showingConfirmation = true;
+				}
+				this.invalidate();
+				this.tui.requestRender();
+				return;
+			}
+			
+			// Number keys for quick selection (1-9)
+			if (/^[1-9]$/.test(data)) {
+				const num = parseInt(data, 10) - 1;
+				if (num < options.length) {
+					this.selectedOptionIndex[this.currentIndex] = num;
+					this.saveCurrentAnswer();
+					if (this.currentIndex < this.questions.length - 1) {
+						this.navigateTo(this.currentIndex + 1);
+					} else {
+						this.showingConfirmation = true;
+					}
+					this.invalidate();
+					this.tui.requestRender();
+				}
+				return;
+			}
+			
+			return; // Ignore other input in select mode
+		}
+
+		// Handle text mode (original behavior)
+		
 		// Arrow up/down for question navigation when editor is empty
-		// (Editor handles its own cursor navigation when there's content)
 		if (matchesKey(data, Key.up) && this.editor.getText() === "") {
 			if (this.currentIndex > 0) {
 				this.navigateTo(this.currentIndex - 1);
@@ -355,6 +489,9 @@ class QnAComponent implements Component {
 
 		// Current question
 		const q = this.questions[this.currentIndex];
+		const mode = this.inputMode[this.currentIndex];
+		const hasOptions = q.options && q.options.length > 0;
+		
 		const questionText = `${this.bold("Q:")} ${q.question}`;
 		const wrappedQuestion = wrapTextWithAnsi(questionText, contentWidth);
 		for (const line of wrappedQuestion) {
@@ -373,18 +510,50 @@ class QnAComponent implements Component {
 
 		lines.push(padToWidth(emptyBoxLine()));
 
-		// Render the editor component (multi-line input) with padding
-		// Skip the first and last lines (editor's own border lines)
-		const answerPrefix = this.bold("A: ");
-		const editorWidth = contentWidth - 4 - 3; // Extra padding + space for "A: "
-		const editorLines = this.editor.render(editorWidth);
-		for (let i = 1; i < editorLines.length - 1; i++) {
-			if (i === 1) {
-				// First content line gets the "A: " prefix
-				lines.push(padToWidth(boxLine(answerPrefix + editorLines[i])));
-			} else {
-				// Subsequent lines get padding to align with the first line
-				lines.push(padToWidth(boxLine("   " + editorLines[i])));
+		// Answer section - either options or text editor
+		if (mode === 'select' && hasOptions) {
+			// Render options list
+			const options = q.options!;
+			const selectedIdx = this.selectedOptionIndex[this.currentIndex];
+			
+			const answerPrefix = this.bold("A: ");
+			lines.push(padToWidth(boxLine(answerPrefix + this.gray("(Select an option)"))));
+			lines.push(padToWidth(emptyBoxLine()));
+			
+			for (let i = 0; i < options.length; i++) {
+				const isSelected = i === selectedIdx;
+				const number = this.dim(`${i + 1}. `);
+				const marker = isSelected ? this.cyan("❯ ") : "  ";
+				const optionText = isSelected 
+					? this.bold(this.cyan(options[i]))
+					: options[i];
+				const fullOption = marker + number + optionText;
+				
+				lines.push(padToWidth(boxLine(fullOption, 4)));
+			}
+			
+			lines.push(padToWidth(emptyBoxLine()));
+			const modeSwitchHint = this.gray(`Press 't' to switch to text input`);
+			lines.push(padToWidth(boxLine(modeSwitchHint, 4)));
+		} else {
+			// Render text editor (original behavior)
+			const answerPrefix = this.bold("A: ");
+			const editorWidth = contentWidth - 4 - 3; // Extra padding + space for "A: "
+			const editorLines = this.editor.render(editorWidth);
+			for (let i = 1; i < editorLines.length - 1; i++) {
+				if (i === 1) {
+					// First content line gets the "A: " prefix
+					lines.push(padToWidth(boxLine(answerPrefix + editorLines[i])));
+				} else {
+					// Subsequent lines get padding to align with the first line
+					lines.push(padToWidth(boxLine("   " + editorLines[i])));
+				}
+			}
+			
+			if (hasOptions) {
+				lines.push(padToWidth(emptyBoxLine()));
+				const modeSwitchHint = this.gray(`Press 't' to switch to option selection`);
+				lines.push(padToWidth(boxLine(modeSwitchHint, 4)));
 			}
 		}
 
@@ -397,7 +566,14 @@ class QnAComponent implements Component {
 			lines.push(padToWidth(boxLine(truncateToWidth(confirmMsg, contentWidth))));
 		} else {
 			lines.push(padToWidth(this.dim("├" + horizontalLine(boxWidth - 2) + "┤")));
-			const controls = `${this.dim("Tab/Enter")} next · ${this.dim("Shift+Tab")} prev · ${this.dim("Shift+Enter")} newline · ${this.dim("Esc")} cancel`;
+			
+			let controls: string;
+			if (mode === 'select' && hasOptions) {
+				controls = `${this.dim("↑↓")} select · ${this.dim("1-9")} quick select · ${this.dim("Enter")} confirm · ${this.dim("Tab")} next · ${this.dim("Esc")} cancel`;
+			} else {
+				controls = `${this.dim("Tab/Enter")} next · ${this.dim("Shift+Tab")} prev · ${this.dim("Shift+Enter")} newline · ${this.dim("Esc")} cancel`;
+			}
+			
 			lines.push(padToWidth(boxLine(truncateToWidth(controls, contentWidth))));
 		}
 		lines.push(padToWidth(this.dim("╰" + horizontalLine(boxWidth - 2) + "╯")));
