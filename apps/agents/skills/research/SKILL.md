@@ -7,6 +7,8 @@ description: 当用户需要研究某个问题时（或者用户消息以 resear
 
 进入研究模式。**禁止使用 write/edit 工具**，只做问题分析和方案设计。
 
+你可以使用 bash、read 等工具来探索本地代码库，或者使用 context7 Skill 查询文档，使用 github Skill 查询 GitHub 仓库;
+
 ## 目标
 
 1) 理解用户提出的问题，如果有不确定点，跟用户确认细节；
