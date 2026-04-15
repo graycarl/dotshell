@@ -1,5 +1,43 @@
 # Answer Extension 优化总结
 
+## 2026-04-10: 快捷键优化 - 避免误触发
+
+### 问题
+原有的 `t` / `e` 单字母快捷键容易在输入文字时被误触发（如输入 "project", "create" 等单词）。
+
+### 解决方案
+实施了"分层 Esc"方案，优化了模式切换逻辑：
+
+#### 快捷键变更
+1. **移除**: 删除了 `t` 作为模式切换键
+2. **保留**: `e` 键仅在选项选择模式下可用，用于切换到文本输入
+3. **新增**: 分层 Esc 逻辑
+   - 在文本输入模式（有选项时）按 `Esc` → 返回选项选择模式
+   - 在选项选择模式按 `Esc` → 取消整个 Q&A 流程
+   - `Ctrl+C` → 始终强制取消整个流程
+
+#### 代码修改
+- 重构了 `handleInput()` 方法中的 Esc 处理逻辑
+- 在选项选择模式下单独处理 `e` 键
+- 更新了 UI 提示文本，清晰说明各模式下的快捷键
+
+#### UI 提示更新
+- **选项选择模式**: `↑↓ select · 1-9 quick select · e text input · Enter confirm · Esc cancel`
+- **文本输入模式（有选项）**: `Tab/Enter next · Shift+Tab prev · Shift+Enter newline · Esc back/cancel`
+- **文本输入模式（无选项）**: `Tab/Enter next · Shift+Tab prev · Shift+Enter newline · Esc cancel`
+
+#### 文档更新
+- 更新了 `answer-README.md` 中的功能说明和快捷键表格
+- 添加了"分层退出"特性说明
+
+### 优势
+✅ **避免误触发**: 在文本输入时不会意外切换模式  
+✅ **符合直觉**: Esc 逐层退出，符合常见 UI 交互习惯  
+✅ **保留便捷性**: `e` 键快速切换到文本输入（仅在需要时可用）  
+✅ **紧急退出**: `Ctrl+C` 作为强制退出选项  
+
+---
+
 ## 改动概览
 
 对 `~/.pi/agent/extensions/answer.ts` 进行了功能增强，添加了选项列表支持，使问答体验更加流畅。

@@ -305,15 +305,28 @@ class QnAComponent implements Component {
 			return;
 		}
 
-		// Global navigation and commands
-		if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
+		const mode = this.inputMode[this.currentIndex];
+		const question = this.questions[this.currentIndex];
+		const hasOptions = question.options && question.options.length > 0;
+
+		// Handle Esc - layered behavior
+		if (matchesKey(data, Key.escape)) {
+			// If in text mode and question has options, switch back to select mode (layer 1)
+			if (mode === 'text' && hasOptions) {
+				this.switchToSelectMode();
+				this.tui.requestRender();
+				return;
+			}
+			// Otherwise, cancel the entire Q&A (layer 2)
 			this.cancel();
 			return;
 		}
 
-		const mode = this.inputMode[this.currentIndex];
-		const question = this.questions[this.currentIndex];
-		const hasOptions = question.options && question.options.length > 0;
+		// Ctrl+C always cancels immediately
+		if (matchesKey(data, Key.ctrl("c"))) {
+			this.cancel();
+			return;
+		}
 
 		// Tab / Shift+Tab for navigation between questions
 		if (matchesKey(data, Key.tab)) {
@@ -328,17 +341,6 @@ class QnAComponent implements Component {
 				this.navigateTo(this.currentIndex - 1);
 				this.tui.requestRender();
 			}
-			return;
-		}
-
-		// Toggle between select and text mode with 't' or 'e' key
-		if (hasOptions && (data === 't' || data === 'e' || data === 'T' || data === 'E')) {
-			if (mode === 'select') {
-				this.switchToTextMode();
-			} else {
-				this.switchToSelectMode();
-			}
-			this.tui.requestRender();
 			return;
 		}
 
@@ -390,6 +392,13 @@ class QnAComponent implements Component {
 					this.invalidate();
 					this.tui.requestRender();
 				}
+				return;
+			}
+			
+			// 'e' key to switch to text input mode
+			if (data === 'e' || data === 'E') {
+				this.switchToTextMode();
+				this.tui.requestRender();
 				return;
 			}
 			
@@ -533,7 +542,7 @@ class QnAComponent implements Component {
 			}
 			
 			lines.push(padToWidth(emptyBoxLine()));
-			const modeSwitchHint = this.gray(`Press 't' to switch to text input`);
+			const modeSwitchHint = this.gray(`Press 'e' to switch to text input`);
 			lines.push(padToWidth(boxLine(modeSwitchHint, 4)));
 		} else {
 			// Render text editor (original behavior)
@@ -552,7 +561,7 @@ class QnAComponent implements Component {
 			
 			if (hasOptions) {
 				lines.push(padToWidth(emptyBoxLine()));
-				const modeSwitchHint = this.gray(`Press 't' to switch to option selection`);
+				const modeSwitchHint = this.gray(`Press 'Esc' to return to option selection`);
 				lines.push(padToWidth(boxLine(modeSwitchHint, 4)));
 			}
 		}
@@ -569,7 +578,9 @@ class QnAComponent implements Component {
 			
 			let controls: string;
 			if (mode === 'select' && hasOptions) {
-				controls = `${this.dim("↑↓")} select · ${this.dim("1-9")} quick select · ${this.dim("Enter")} confirm · ${this.dim("Tab")} next · ${this.dim("Esc")} cancel`;
+				controls = `${this.dim("↑↓")} select · ${this.dim("1-9")} quick select · ${this.dim("e")} text input · ${this.dim("Enter")} confirm · ${this.dim("Esc")} cancel`;
+			} else if (mode === 'text' && hasOptions) {
+				controls = `${this.dim("Tab/Enter")} next · ${this.dim("Shift+Tab")} prev · ${this.dim("Shift+Enter")} newline · ${this.dim("Esc")} back/cancel`;
 			} else {
 				controls = `${this.dim("Tab/Enter")} next · ${this.dim("Shift+Tab")} prev · ${this.dim("Shift+Enter")} newline · ${this.dim("Esc")} cancel`;
 			}
