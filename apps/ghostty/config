@@ -4,4 +4,3 @@ font-style-bold-italic = false
 
 # see: <https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent#terminal-setup>
 keybind = alt+backspace=text:\x1b\x7f
-keybind = shift+enter=text:\n
