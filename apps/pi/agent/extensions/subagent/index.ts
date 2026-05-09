@@ -414,6 +414,9 @@ export default function (pi: ExtensionAPI) {
 			'Default agent scope is "user" (from ~/.pi/agent/agents).',
 			'To enable project-local agents in .pi/agents, set agentScope: "both" (or "project").',
 		].join(" "),
+		promptGuidelines: [
+			"When delegating to a subagent, always specify the exact agent name. If you are unsure which agents are available, first call list_agents to discover available subagents and their descriptions.",
+		],
 		parameters: SubagentParams,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
@@ -958,6 +961,109 @@ export default function (pi: ExtensionAPI) {
 
 			const text = result.content[0];
 			return new Text(text?.type === "text" ? text.text : "(no output)", 0, 0);
+		},
+	});
+
+	// ── list_agents tool ─────────────────────────────────────────────────────
+
+	pi.registerTool({
+		name: "list_agents",
+		label: "List Agents",
+		description: [
+			"Discover available subagents and their descriptions.",
+			"Use this to find the correct agent name before calling subagent.",
+			"Scans user agents (~/.pi/agent/agents/) and optionally project agents (.pi/agents/).",
+		].join(" "),
+		promptSnippet: "Discover available subagents and their descriptions",
+		promptGuidelines: [
+			"Call list_agents first when you need to delegate work to a subagent but are unsure which agent name to use.",
+			"Review the returned agent names and descriptions, then use the correct name with the subagent tool.",
+		],
+		parameters: Type.Object({
+			agentScope: Type.Optional(AgentScopeSchema),
+		}),
+
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const agentScope: AgentScope = params.agentScope ?? "user";
+			const discovery = discoverAgents(ctx.cwd, agentScope);
+			const agents = discovery.agents;
+
+			if (agents.length === 0) {
+				return {
+					content: [{ type: "text", text: "No subagents found." }],
+					details: { count: 0, agentScope, projectAgentsDir: discovery.projectAgentsDir },
+				};
+			}
+
+			const lines: string[] = [];
+			lines.push(`Found ${agents.length} subagent(s) (scope: ${agentScope}):`);
+			lines.push("");
+
+			for (const agent of agents) {
+				lines.push(`  ${agent.name}`);
+				lines.push(`    Description: ${agent.description}`);
+				lines.push(`    Source: ${agent.source}`);
+				if (agent.tools && agent.tools.length > 0) {
+					lines.push(`    Tools: ${agent.tools.join(", ")}`);
+				}
+				lines.push("");
+			}
+
+			if (discovery.projectAgentsDir) {
+				lines.push(`Project agents directory: ${discovery.projectAgentsDir}`);
+			}
+
+			return {
+				content: [{ type: "text", text: lines.join("\n").trim() }],
+				details: {
+					count: agents.length,
+					agentScope,
+					projectAgentsDir: discovery.projectAgentsDir,
+					agents: agents.map((a) => ({
+						name: a.name,
+						description: a.description,
+						source: a.source,
+						tools: a.tools ?? [],
+						model: a.model ?? null,
+					})),
+				},
+			};
+		},
+	});
+
+	// ── /list-agents command ──────────────────────────────────────────────────
+
+	pi.registerCommand("list-agents", {
+		description: "List all available subagents and their descriptions",
+		handler: async (_args, ctx) => {
+			const agentScope: AgentScope = "both";
+			const discovery = discoverAgents(ctx.cwd, agentScope);
+			const agents = discovery.agents;
+
+			if (agents.length === 0) {
+				ctx.ui.notify("No subagents found.", "info");
+				return;
+			}
+
+			const lines: string[] = [];
+			lines.push(`Available subagents (${agents.length} total):`);
+			lines.push("");
+
+			for (const agent of agents) {
+				lines.push(`  ${agent.name}`);
+				lines.push(`    ${agent.description}`);
+				lines.push(`    Source: ${agent.source}`);
+				if (agent.tools && agent.tools.length > 0) {
+					lines.push(`    Allowed tools: ${agent.tools.join(", ")}`);
+				}
+				lines.push("");
+			}
+
+			if (discovery.projectAgentsDir) {
+				lines.push(`Project agents directory: ${discovery.projectAgentsDir}`);
+			}
+
+			ctx.ui.notify(lines.join("\n").trim(), "info");
 		},
 	});
 }
