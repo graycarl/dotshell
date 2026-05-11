@@ -331,7 +331,8 @@ def print_search_results(results: Dict[str, Any], limit: Optional[int]) -> None:
             highlights = row["highlights"]
             if isinstance(highlights, list):
                 preview = " \n".join(
-                    h.get("snippet", "").strip() for h in highlights[:2]
+                    h.strip() if isinstance(h, str) else h.get("snippet", "").strip()
+                    for h in highlights[:2]
                 )
             else:
                 preview = str(highlights)[:280]
