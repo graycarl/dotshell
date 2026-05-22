@@ -12,7 +12,7 @@
  * Uses JSON mode to capture structured output from subagents.
  */
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -151,6 +151,7 @@ interface SingleResult {
 	stopReason?: string;
 	errorMessage?: string;
 	step?: number;
+	htmlReportPath?: string;
 }
 
 interface SubagentDetails {
@@ -243,12 +244,12 @@ async function runSingleAgent(
 		};
 	}
 
-	const args: string[] = ["--mode", "json", "-p", "--no-session"];
+	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
+	let tmpPromptPath: string | null = null;
+
+	const args: string[] = ["--mode", "json", "-p", "--session-dir", tmpDir];
 	if (agent.model) args.push("--model", agent.model);
 	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
-
-	let tmpPromptDir: string | null = null;
-	let tmpPromptPath: string | null = null;
 
 	const currentResult: SingleResult = {
 		agent: agentName,
@@ -273,9 +274,9 @@ async function runSingleAgent(
 
 	try {
 		if (agent.systemPrompt.trim()) {
-			const tmp = writePromptToTempFile(agent.name, agent.systemPrompt);
-			tmpPromptDir = tmp.dir;
-			tmpPromptPath = tmp.filePath;
+			const safeName = agentName.replace(/[^\w.-]+/g, "_");
+			tmpPromptPath = path.join(tmpDir, `prompt-${safeName}.md`);
+			fs.writeFileSync(tmpPromptPath, agent.systemPrompt, { encoding: "utf-8", mode: 0o600 });
 			args.push("--append-system-prompt", tmpPromptPath);
 		}
 
@@ -358,20 +359,33 @@ async function runSingleAgent(
 
 		currentResult.exitCode = exitCode;
 		if (wasAborted) throw new Error("Subagent was aborted");
+
+		// Generate HTML report from the saved session file
+		try {
+			const sessionFiles = fs.readdirSync(tmpDir).filter((f) => f.endsWith(".jsonl"));
+			if (sessionFiles.length > 0) {
+				const sessionFile = path.join(tmpDir, sessionFiles[0]);
+				const safeName = agentName.replace(/[^\w.-]+/g, "_");
+				const htmlPath = path.join(os.tmpdir(), `pi-subagent-${safeName}-${Date.now()}.html`);
+				const exportResult = spawnSync("pi", ["--export", sessionFile, htmlPath], { timeout: 15000 });
+				if (exportResult.status === 0) {
+					currentResult.htmlReportPath = htmlPath;
+				}
+			}
+		} catch {
+			/* export failure is non-fatal */
+		}
+
 		return currentResult;
 	} finally {
-		if (tmpPromptPath)
-			try {
-				fs.unlinkSync(tmpPromptPath);
-			} catch {
-				/* ignore */
+		// Clean up tmpDir (prompt file + session files)
+		try {
+			const entries = fs.readdirSync(tmpDir);
+			for (const entry of entries) {
+				try { fs.unlinkSync(path.join(tmpDir, entry)); } catch { /* ignore */ }
 			}
-		if (tmpPromptDir)
-			try {
-				fs.rmdirSync(tmpPromptDir);
-			} catch {
-				/* ignore */
-			}
+			fs.rmdirSync(tmpDir);
+		} catch { /* ignore */ }
 	}
 }
 
@@ -759,6 +773,9 @@ export default function (pi: ExtensionAPI) {
 						container.addChild(new Spacer(1));
 						container.addChild(new Text(theme.fg("dim", usageStr), 0, 0));
 					}
+					if (r.htmlReportPath) {
+						container.addChild(new Text(theme.fg("muted", "Report: ") + theme.fg("accent", r.htmlReportPath), 0, 0));
+					}
 					return container;
 				}
 
@@ -772,6 +789,7 @@ export default function (pi: ExtensionAPI) {
 				}
 				const usageStr = formatUsageStats(r.usage, r.model);
 				if (usageStr) text += `\n${theme.fg("dim", usageStr)}`;
+				if (r.htmlReportPath) text += `\n${theme.fg("muted", "Report: ")}${theme.fg("accent", r.htmlReportPath)}`;
 				return new Text(text, 0, 0);
 			}
 
@@ -841,6 +859,9 @@ export default function (pi: ExtensionAPI) {
 
 						const stepUsage = formatUsageStats(r.usage, r.model);
 						if (stepUsage) container.addChild(new Text(theme.fg("dim", stepUsage), 0, 0));
+						if (r.htmlReportPath) {
+							container.addChild(new Text(theme.fg("muted", "Report: ") + theme.fg("accent", r.htmlReportPath), 0, 0));
+						}
 					}
 
 					const usageStr = formatUsageStats(aggregateUsage(details.results));
@@ -926,6 +947,9 @@ export default function (pi: ExtensionAPI) {
 
 						const taskUsage = formatUsageStats(r.usage, r.model);
 						if (taskUsage) container.addChild(new Text(theme.fg("dim", taskUsage), 0, 0));
+						if (r.htmlReportPath) {
+							container.addChild(new Text(theme.fg("muted", "Report: ") + theme.fg("accent", r.htmlReportPath), 0, 0));
+						}
 					}
 
 					const usageStr = formatUsageStats(aggregateUsage(details.results));
