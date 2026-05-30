@@ -297,7 +297,7 @@ function getQwenBaseUrl(resourceUrl?: string): string {
 export default function (pi: ExtensionAPI) {
 	pi.registerProvider("qwen-cli", {
 		baseUrl: QWEN_DEFAULT_BASE_URL,
-		apiKey: "QWEN_CLI_API_KEY",
+		apiKey: "$QWEN_CLI_API_KEY",
 		api: "openai-completions",
 
 		models: [

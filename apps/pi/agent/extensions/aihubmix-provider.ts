@@ -3,7 +3,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 const PROVIDER_ID = "aihubmix";
 const PROVIDER_NAME = "AIHubMix";
 const BASE_URL = "https://aihubmix.com/v1";
-const API_KEY_ENV = "AIHUBMIX_API_KEY";
+const API_KEY_ENV = "$AIHUBMIX_API_KEY";
 
 /**
  * Static model config to avoid remote API calls on every /reload.
