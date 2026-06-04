@@ -109,7 +109,7 @@ const TodoParams = Type.Object({
 		Type.String({ description: "Todo id (TODO-<hex> or raw hex filename)" }),
 	),
 	title: Type.Optional(Type.String({ description: "Short summary shown in lists" })),
-	status: Type.Optional(Type.String({ description: "Todo status" })),
+	status: Type.Optional(StringEnum(["open", "closed", "done"] as const)),
 	tags: Type.Optional(Type.Array(Type.String({ description: "Todo tag" }))),
 	body: Type.Optional(
 		Type.String({ description: "Long-form details (markdown). Update replaces; append adds." }),
@@ -176,8 +176,23 @@ function displayTodoId(id: string): string {
 	return formatTodoId(normalizeTodoId(id));
 }
 
+const CLOSED_STATUSES = ["closed", "done", "completed"];
+const CANONICAL_STATUSES = ["open", "closed", "done"];
+
 function isTodoClosed(status: string): boolean {
-	return ["closed", "done"].includes(status.toLowerCase());
+	return CLOSED_STATUSES.includes(status.toLowerCase());
+}
+
+/**
+ * Normalize a status value to a canonical form.
+ * Maps non-standard variants like "completed" → "closed".
+ * Preserves canonical values (open, closed, done) as-is.
+ */
+function normalizeStatus(status: string): string {
+	const lower = status.toLowerCase();
+	if (CANONICAL_STATUSES.includes(lower)) return lower;
+	if (CLOSED_STATUSES.includes(lower)) return "closed";
+	return lower;
 }
 
 function clearAssignmentIfClosed(todo: TodoFrontMatter): void {
@@ -1446,8 +1461,18 @@ export default function todosExtension(pi: ExtensionAPI) {
 			`Manage file-based todos in ${todosDirLabel} (list, list-all, get, create, update, append, delete, claim, release). ` +
 			"Title is the short summary; body is long-form markdown notes (update replaces, append adds). " +
 			"Todo ids are shown as TODO-<hex>; id parameters accept TODO-<hex> or the raw hex filename. " +
-			"Claim tasks before working on them to avoid conflicts, and close them when complete.", 
+			"Claim tasks before working on them to avoid conflicts, and close them when complete." + 
+			" Valid statuses: open, closed, done.", 
 		parameters: TodoParams,
+		prepareArguments(args) {
+			if (typeof args.status === "string") {
+				const normalized = normalizeStatus(args.status);
+				if (normalized !== args.status) {
+					return { ...args, status: normalized };
+				}
+			}
+			return args;
+		},
 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const todosDir = getTodosDir(ctx.cwd);
@@ -1518,7 +1543,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 						id,
 						title: params.title,
 						tags: params.tags ?? [],
-						status: params.status ?? "open",
+						status: params.status ? normalizeStatus(params.status) : "open",
 						created_at: new Date().toISOString(),
 						body: params.body ?? "",
 					};
@@ -1570,7 +1595,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 
 						existing.id = normalizedId;
 						if (params.title !== undefined) existing.title = params.title;
-						if (params.status !== undefined) existing.status = params.status;
+						if (params.status !== undefined) existing.status = normalizeStatus(params.status);
 						if (params.tags !== undefined) existing.tags = params.tags;
 						if (params.body !== undefined) existing.body = params.body;
 						if (!existing.created_at) existing.created_at = new Date().toISOString();
