@@ -10,8 +10,8 @@
 
 set -euo pipefail
 
-IN="${1:-tmp/db_backup.sql.gz}"
-OUT="${2:-tmp/db_backup.slim.sql.gz}"
+IN="${1:-db_backup.sql.gz}"
+OUT="${2:-db_backup.slim.sql.gz}"
 
 # 要清空数据（仅删 INSERT 行）的表，空格分隔（单行，兼容 BSD awk）。
 STRIP_TABLES="silk_sqlquery silk_response network_subscription_details jobs data_event data_event_old axes_accesslog django_session operation_audit_trails admin_audit_trails publicapi_audit_trails record_tags"
