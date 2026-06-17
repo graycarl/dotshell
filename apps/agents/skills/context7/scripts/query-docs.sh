@@ -1,9 +1,23 @@
 #!/bin/bash
 set -euo pipefail
 
+SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+AUTH_FILE="$SKILL_DIR/auth.json"
+
+if [ ! -f "$AUTH_FILE" ]; then
+  echo "Error: auth.json not found at $AUTH_FILE" >&2
+  echo "Copy auth.json.tpl to auth.json and fill in your API key from https://context7.ai/dashboard" >&2
+  exit 1
+fi
+
+if command -v jq &>/dev/null; then
+  CONTEXT7_API_KEY=$(jq -r '.api_key // empty' "$AUTH_FILE")
+else
+  CONTEXT7_API_KEY=$(python3 -c "import json,sys; d=json.load(open('$AUTH_FILE')); print(d.get('api_key',''))" 2>/dev/null)
+fi
+
 if [ -z "${CONTEXT7_API_KEY:-}" ]; then
-  echo "Error: CONTEXT7_API_KEY environment variable is not set." >&2
-  echo "Get an API key from https://context7.ai/dashboard and export it before running this script." >&2
+  echo "Error: api_key is missing or empty in $AUTH_FILE" >&2
   exit 1
 fi
 
