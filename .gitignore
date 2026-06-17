@@ -1,2 +1,2 @@
 local/
-apps/agents/skills/*/auth.json
+**/auth.json
