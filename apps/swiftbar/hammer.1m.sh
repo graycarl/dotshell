@@ -73,9 +73,10 @@ echo "--Send to Phone | color=blue bash=$TMPDIR/send-to-phone.sh terminal=false"
 echo "Snippets"
 for file in $SNIPREPO/*.txt; do
     name=$(basename $file .txt)
-    for line in $(cat $file); do
+    while IFS= read -r line || [ -n "$line" ]; do
+        [ -z "$line" ] && continue
         echo "--[${name}] > $line | length=30 ansi=false bash=/bin/bash param1='-c' param2='echo \"$line\" | LANG=zh_CN.UTF-8 pbcopy' terminal=false"
-    done
+    done < "$file"
 done
 
 echo "Open"
