@@ -6,6 +6,7 @@
  *   - deepseek       ✅ 余额查询（人民币）
  *   - github-copilot ✅ 配额查询（Premium Requests / 月）
  *   - kimi-coding    ✅ 配额查询（Kimi Code /usage）
+ *   - zai-coding-cn  ✅ 余额查询（ZAI Coding 中国版 / BigModel）
  *   - ...            🔲 待实现
  *
  * 安装位置: ~/.pi/agent/extensions/quota.ts
@@ -442,6 +443,108 @@ const fetchKimiCodeQuota: QuotaFetcher = async (apiKey: string) => {
 };
 
 // ===================================================================
+//  ZAI Coding 中国版 (BigModel) 余额查询
+// ===================================================================
+
+const ZAI_CODING_CN_BALANCE_URL =
+  "https://open.bigmodel.cn/api/biz/account/query-customer-account-report";
+
+interface ZaiCodingCnAccountResponse {
+  code: number;
+  msg: string;
+  data: {
+    balance: number;
+    rechargeAmount: number;
+    giveAmount: number;
+    totalSpendAmount: number;
+    todaySpendAmount?: number | null;
+    availableBalance: number;
+    frozenBalance: number;
+    creditBalance?: number | null;
+    availableCreditBalance?: number | null;
+    creditStatus?: string;
+    isKA?: boolean;
+  };
+  success: boolean;
+}
+
+const fetchZaiCodingCnQuota: QuotaFetcher = async (apiKey: string) => {
+  if (!apiKey) {
+    throw new Error(
+      "未找到 ZAI Coding 中国版 API key，请先运行 /login 并选择 zai-coding-cn",
+    );
+  }
+
+  const res = await fetch(ZAI_CODING_CN_BALANCE_URL, {
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      Accept: "application/json",
+      "User-Agent": "pi-quota-extension/1.0",
+    },
+  });
+
+  if (res.status === 401) {
+    throw new Error(
+      "ZAI Coding 中国版 API key 无效或已过期，请重新运行 /login",
+    );
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`HTTP ${res.status}: ${text}`);
+  }
+
+  const json = (await res.json()) as ZaiCodingCnAccountResponse;
+
+  if (!json.success || json.code !== 200) {
+    throw new Error(json.msg || "ZAI Coding 中国版余额查询失败");
+  }
+
+  const d = json.data;
+  const balances: BalanceItem[] = [
+    {
+      currency: "可用余额",
+      totalBalance: `¥${d.availableBalance.toFixed(2)}`,
+    },
+    {
+      currency: "总充值",
+      totalBalance: `¥${d.rechargeAmount.toFixed(2)}`,
+    },
+    {
+      currency: "总消费",
+      totalBalance: `¥${d.totalSpendAmount.toFixed(2)}`,
+    },
+  ];
+
+  if (d.giveAmount) {
+    balances.push({
+      currency: "赠送金",
+      totalBalance: `¥${d.giveAmount.toFixed(2)}`,
+    });
+  }
+
+  if (d.frozenBalance) {
+    balances.push({
+      currency: "冻结金额",
+      totalBalance: `¥${d.frozenBalance.toFixed(2)}`,
+    });
+  }
+
+  if (d.todaySpendAmount != null) {
+    balances.push({
+      currency: "今日消费",
+      totalBalance: `¥${d.todaySpendAmount.toFixed(2)}`,
+    });
+  }
+
+  return {
+    provider: "zai-coding-cn",
+    label: "ZAI Coding (China)",
+    available: true,
+    balances,
+  };
+};
+
+// ===================================================================
 //  Anthropic 订阅 Extra Usage 查询
 // ===================================================================
 //
@@ -709,6 +812,13 @@ const PROVIDERS: ProviderConfig[] = [
     authType: "api_key",
     fetcher: fetchKimiCodeQuota,
   },
+  {
+    key: "zai-coding-cn",
+    label: "ZAI Coding (China)",
+    authKey: "zai-coding-cn",
+    authType: "api_key",
+    fetcher: fetchZaiCodingCnQuota,
+  },
 ];
 
 // ===================================================================
@@ -816,7 +926,7 @@ function formatBalances(result: QuotaResult): string[] {
 
 export default function (pi: ExtensionAPI) {
   pi.registerCommand("quota", {
-    description: "查询 AI 提供商账户余额/配额（支持: anthropic, deepseek, github-copilot, kimi-coding）",
+    description: "查询 AI 提供商账户余额/配额（支持: anthropic, deepseek, github-copilot, kimi-coding, zai-coding-cn）",
     handler: async (_args, ctx) => {
       const allLines: string[] = [];
       let anyProvider = false;
