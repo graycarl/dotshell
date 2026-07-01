@@ -5,6 +5,7 @@
  *   - anthropic      ✅ 订阅用量 + Extra Usage 查询（需 OAuth 订阅认证）
  *   - deepseek       ✅ 余额查询（人民币）
  *   - github-copilot ✅ 配额查询（Premium Requests / 月）
+ *   - kimi-coding    ✅ 配额查询（Kimi Code /usage）
  *   - ...            🔲 待实现
  *
  * 安装位置: ~/.pi/agent/extensions/quota.ts
@@ -47,7 +48,7 @@ interface ProviderConfig {
   key: string;
   label: string;
   authKey: string;    // auth.json 中的 key
-  authType: "api_key" | "cli" | "oauth";
+  authType: "api_key" | "cli" | "oauth" | "none";
   fetcher: QuotaFetcher;
 }
 
@@ -250,6 +251,193 @@ const fetchGitHubCopilotQuota: QuotaFetcher = async () => {
     label: `GitHub Copilot (${data.login})`,
     available: !!data.copilot_plan,
     balances: entitlements,
+  };
+};
+
+// ===================================================================
+//  Kimi Code 配额查询
+// ===================================================================
+
+const KIMI_CODE_USAGE_URL = "https://api.kimi.com/coding/v1/usages";
+
+const KIMI_MEMBERSHIP_LABELS: Record<string, string> = {
+  LEVEL_FREE: "Free",
+  LEVEL_PRIMARY: "Primary",
+  LEVEL_INTERMEDIATE: "Intermediate",
+  LEVEL_ADVANCED: "Advanced",
+  LEVEL_PRO: "Pro",
+  LEVEL_ULTRA: "Ultra",
+};
+
+interface KimiUsageDetail {
+  limit?: string | number;
+  used?: string | number;
+  remaining?: string | number;
+  resetTime?: string;
+  reset_at?: string;
+  resetAt?: string;
+}
+
+interface KimiUsageResponse {
+  usage?: KimiUsageDetail;
+  limits?: Array<{
+    name?: string;
+    title?: string;
+    detail?: KimiUsageDetail;
+    window?: {
+      duration?: number;
+      timeUnit?: string;
+    };
+  }>;
+  user?: {
+    membership?: {
+      level?: string;
+    };
+  };
+}
+
+function toNumberOrNull(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string") {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function formatKimiQuotaText(
+  limitRaw: unknown,
+  usedRaw: unknown,
+  remainingRaw: unknown,
+): { text: string; used?: string } {
+  const limit = toNumberOrNull(limitRaw);
+  let used = toNumberOrNull(usedRaw);
+  const remaining = toNumberOrNull(remainingRaw);
+
+  if (used === null && limit !== null && remaining !== null) {
+    used = Math.max(limit - remaining, 0);
+  }
+
+  if (limit !== null && used !== null && limit > 0) {
+    const usedInt = Math.round(used);
+    const limitInt = Math.round(limit);
+    const usedPct = Math.min(100, Math.max(0, Math.round((usedInt / limitInt) * 100)));
+    const leftPct = Math.max(0, 100 - usedPct);
+    return {
+      text: `${usedInt} / ${limitInt} (${usedPct}% 已用, ${leftPct}% 剩余)`,
+      used: `${usedInt}`,
+    };
+  }
+
+  if (remaining !== null) {
+    return { text: `剩余 ${Math.round(remaining)}` };
+  }
+  if (used !== null) {
+    return { text: `已用 ${Math.round(used)}`, used: `${Math.round(used)}` };
+  }
+
+  return { text: "数据不可用" };
+}
+
+function formatKimiLimitLabel(
+  window: { duration?: number; timeUnit?: string } | undefined,
+  fallback: string,
+): string {
+  if (!window?.duration || !window?.timeUnit) return fallback;
+
+  const duration = window.duration;
+  const unit = window.timeUnit;
+
+  if (unit.includes("MINUTE")) {
+    if (duration >= 60 && duration % 60 === 0) {
+      return `${duration / 60}h Limit`;
+    }
+    return `${duration}m Limit`;
+  }
+  if (unit.includes("HOUR")) return `${duration}h Limit`;
+  if (unit.includes("DAY")) return `${duration}d Limit`;
+
+  return fallback;
+}
+
+function pickResetTime(detail: KimiUsageDetail | undefined): string | undefined {
+  if (!detail) return undefined;
+  return detail.resetTime || detail.reset_at || detail.resetAt;
+}
+
+const fetchKimiCodeQuota: QuotaFetcher = async (apiKey: string) => {
+  if (!apiKey) {
+    throw new Error("未找到 Kimi API key，请先运行 /login 并选择 kimi");
+  }
+
+  const res = await fetch(KIMI_CODE_USAGE_URL, {
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      Accept: "application/json",
+      "User-Agent": "pi-quota-extension/1.0",
+    },
+  });
+
+  if (res.status === 401) {
+    throw new Error("Kimi API key 无效或已过期，请重新运行 /login");
+  }
+  if (res.status === 403) {
+    throw new Error("权限不足 (403)，无法访问 Kimi Code /usages");
+  }
+  if (res.status === 404) {
+    throw new Error("Kimi Code /usages API 不可用 (404)");
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`HTTP ${res.status}: ${text}`);
+  }
+
+  const data = (await res.json()) as KimiUsageResponse;
+  const balances: BalanceItem[] = [];
+
+  const membershipLevel = data.user?.membership?.level;
+  if (membershipLevel) {
+    balances.push({
+      currency: "Plan",
+      totalBalance: `Kimi Code ${KIMI_MEMBERSHIP_LABELS[membershipLevel] ?? membershipLevel}`,
+      planName: membershipLevel,
+    });
+  }
+
+  if (data.usage) {
+    const resetAt = pickResetTime(data.usage);
+    const progress = formatKimiQuotaText(data.usage.limit, data.usage.used, data.usage.remaining);
+    const reset = resetAt ? `  重置: ${formatTimeUntil(resetAt)}` : "";
+    balances.push({
+      currency: "Weekly Limit",
+      totalBalance: `${progress.text}${reset}`,
+      used: progress.used,
+      resetDate: resetAt,
+    });
+  }
+
+  for (const [idx, item] of (data.limits ?? []).entries()) {
+    const detail = item.detail ?? (item as KimiUsageDetail);
+    const label = formatKimiLimitLabel(item.window, `Limit #${idx + 1}`);
+    const resetAt = pickResetTime(detail);
+    const progress = formatKimiQuotaText(detail.limit, detail.used, detail.remaining);
+    const reset = resetAt ? `  重置: ${formatTimeUntil(resetAt)}` : "";
+
+    balances.push({
+      currency: label,
+      totalBalance: `${progress.text}${reset}`,
+      used: progress.used,
+      resetDate: resetAt,
+    });
+  }
+
+  return {
+    provider: "kimi-coding",
+    label: "Kimi Code",
+    available: balances.length > 0,
+    balances,
   };
 };
 
@@ -490,6 +678,7 @@ const fetchAnthropicQuota: QuotaFetcher = async (accessToken: string) => {
 //   "api_key" - 从 auth.json 读取 API key
 //   "cli"     - 通过命令行工具获取认证（如 gh）
 //   "oauth"   - 从 auth.json 读取 OAuth token
+//   "none"    - 由 fetcher 自行处理认证信息
 
 const PROVIDERS: ProviderConfig[] = [
   {
@@ -512,6 +701,13 @@ const PROVIDERS: ProviderConfig[] = [
     authKey: "github-copilot",
     authType: "cli",
     fetcher: fetchGitHubCopilotQuota,
+  },
+  {
+    key: "kimi-coding",
+    label: "Kimi Code",
+    authKey: "kimi-coding",
+    authType: "api_key",
+    fetcher: fetchKimiCodeQuota,
   },
 ];
 
@@ -604,6 +800,8 @@ function formatBalances(result: QuotaResult): string[] {
       b.currency.startsWith("7d ")
     ) {
       lines.push(`  📊 ${b.currency}: ${b.totalBalance}`);
+    } else if (/limit/i.test(b.currency)) {
+      lines.push(`  📊 ${b.currency}: ${b.totalBalance}`);
     } else {
       lines.push(`  💬 ${b.currency}: ${b.totalBalance}`);
     }
@@ -618,9 +816,10 @@ function formatBalances(result: QuotaResult): string[] {
 
 export default function (pi: ExtensionAPI) {
   pi.registerCommand("quota", {
-    description: "查询 AI 提供商账户余额/配额（支持: anthropic, deepseek, github-copilot）",
+    description: "查询 AI 提供商账户余额/配额（支持: anthropic, deepseek, github-copilot, kimi-coding）",
     handler: async (_args, ctx) => {
       const allLines: string[] = [];
+      let anyProvider = false;
 
       for (const provider of PROVIDERS) {
         let apiKey: string | null = null;
@@ -643,11 +842,10 @@ export default function (pi: ExtensionAPI) {
         }
 
         if (skipReason) {
-          allLines.push(`📋 ${provider.label}`);
-          allLines.push(`   ⏭️  ${skipReason}`);
-          allLines.push("");
           continue;
         }
+
+        anyProvider = true;
 
         try {
           const result = await provider.fetcher(apiKey ?? "");
@@ -658,6 +856,10 @@ export default function (pi: ExtensionAPI) {
           allLines.push(`  ❌ 查询失败: ${err instanceof Error ? err.message : String(err)}`);
         }
         allLines.push("");
+      }
+
+      if (!anyProvider) {
+        allLines.push("⚠️ 当前没有已配置的 Provider，请先运行 /login 或配置 auth.json。");
       }
 
       allLines.push("---");
