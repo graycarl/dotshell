@@ -42,7 +42,7 @@ Run from this skill directory:
 | `node get <id>` | Fetch one node's own fields | `./scripts/workflowy_api.py node get today` |
 | `node list [--parent <id>]` | List a node's **direct** children only | `./scripts/workflowy_api.py node list --parent arch` |
 | `node tree <id> [--max-depth N]` | Recursively fetch a node's **entire subtree** (all levels) | `./scripts/workflowy_api.py node tree today` |
-| `node create --parent <id> --name <text> [--note] [--layout] [--position]` | Create a node | `./scripts/workflowy_api.py node create --parent inbox --name "Buy milk"` |
+| `node create --parent <id> --name <text> [--child <text> ...] [--note] [--layout] [--position]` | Create a node, optionally with flat children in the same call | `./scripts/workflowy_api.py node create --parent inbox --name "Groceries" --child "Milk" --child "Eggs"` |
 | `node update <id> [--name] [--note] [--layout]` | Rename / edit note or layout | `./scripts/workflowy_api.py node update <id> --name "Fixed typo"` |
 | `node move <id> --parent <id> [--position]` | Move a node to a new parent | `./scripts/workflowy_api.py node move <id> --parent arch` |
 | `node complete <id>` | Mark a node complete | `./scripts/workflowy_api.py node complete <id>` |
@@ -59,6 +59,7 @@ Run from this skill directory:
 - **Shortcut keys only work as a `--parent`/list value, not as a direct `id`.** `node get <shortcut>` / `node update` / `node move` / `node complete` / `node delete` all call `GET /nodes/:id` or similar under the hood, which does **not** accept shortcut keys (it 404s) -- only `node list`/`node tree`/`node create`'s `--parent` does. To edit/move/delete/complete the node a shortcut points to, first run `node list --parent <shortcut>` and read the real UUID off any child's `parent_id` field (or just use `node tree <shortcut>`, which resolves this automatically), then operate on that UUID directly.
 - **Never pass `--yes` to `node delete` without the user explicitly confirming the deletion in the conversation first.** It is permanent and cannot be undone.
 - Children are unordered over the wire; this script always sorts them by `priority` ascending before printing, matching visual outline order.
+- **`node create`'s `--name` splits on every newline into flat direct children of the first line** -- verified empirically against the live API, and it does *not* match the API's own doc wording. The first line becomes the parent; every following line (whether separated by a single `\n` or a blank line / `\n\n`) becomes its own direct child -- there is no difference between single and double newlines, and there is no indentation-based deep nesting in one call. Use the `--child <text>` flag (repeatable) instead of hand-building `\n`-joined strings; for a subtree deeper than one level, chain multiple `node create` calls.
 
 ## Output
 

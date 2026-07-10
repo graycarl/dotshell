@@ -165,7 +165,13 @@ def cmd_node_tree(args):
 
 
 def cmd_node_create(args):
-    body = {"parent_id": args.parent, "name": args.name}
+    name = args.name
+    if args.children:
+        # Verified against the live API: every newline in `name` (single or double)
+        # splits off a new flat direct child of the first line -- there is no
+        # deeper indentation-based nesting in a single create call.
+        name = "\n".join([name] + args.children)
+    body = {"parent_id": args.parent, "name": name}
     if args.note is not None:
         body["note"] = args.note
     if args.layout is not None:
@@ -283,9 +289,11 @@ def build_parser():
     p.add_argument("id", help="Root node id, shortcut key, or calendar value")
     p.add_argument("--max-depth", type=int, default=None, help="Limit recursion depth (default: unlimited)")
 
-    p = node_sub.add_parser("create", help="Create a new node")
+    p = node_sub.add_parser("create", help="Create a new node (optionally with flat children in one call)")
     p.add_argument("--parent", required=True, help='Parent id, shortcut key, calendar value, or "None" for top level')
     p.add_argument("--name", required=True, help="Node text (supports Workflowy markdown)")
+    p.add_argument("--child", dest="children", action="append",
+                   help="Add a direct flat child under --name in the same call (repeatable)")
     p.add_argument("--note")
     p.add_argument("--layout", choices=["bullets", "todo", "h1", "h2", "h3", "code-block", "quote-block"])
     p.add_argument("--position", choices=["top", "bottom"])
