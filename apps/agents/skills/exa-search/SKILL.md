@@ -9,11 +9,20 @@ Use this skill whenever you need live-ish web search results, filtered link disc
 
 ## Setup
 
-1. Export your Exa API key.
+Provide an Exa API key one of two ways:
+
+1. **Environment variable** (checked first):
    ```bash
    export EXA_API_KEY="sk-your-key"
    ```
-2. (Optional) override the base URL via `EXA_API_BASE` (defaults to `https://api.exa.ai`).
+2. **auth.json** (fallback, checked if the env var is unset):
+   ```bash
+   cp auth.json.tpl auth.json
+   # then edit auth.json and fill in your key
+   ```
+   `auth.json` format: `{"api_key": "your_key_here"}`. It is not committed to version control (`**/auth.json` is gitignored at the repo root).
+
+`(Optional)` override the base URL via `EXA_API_BASE` (defaults to `https://api.exa.ai`).
 
 _No third-party dependencies are required; the helper script only uses Python's standard library._
 

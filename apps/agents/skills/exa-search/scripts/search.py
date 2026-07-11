@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+from pathlib import Path
 import sys
 from typing import Any, Dict, Optional, Sequence, Tuple
 import urllib.error
@@ -17,11 +18,20 @@ GENERAL_HELP = """Exa Search Skill Helper\n\nUsage:\n  search.py [search options
 
 def ensure_api_key() -> str:
     api_key = os.environ.get(API_KEY_ENV)
-    if not api_key:
-        raise RuntimeError(
-            f"Missing {API_KEY_ENV}. Please export your Exa API key before running."
-        )
-    return api_key
+    if api_key:
+        return api_key
+    auth_file = Path(__file__).resolve().parent.parent / "auth.json"
+    if auth_file.exists():
+        try:
+            api_key = json.loads(auth_file.read_text()).get("api_key")
+        except (json.JSONDecodeError, OSError):
+            api_key = None
+        if api_key:
+            return api_key
+    raise RuntimeError(
+        f"Missing {API_KEY_ENV}. Set the environment variable, "
+        "or copy auth.json.tpl to auth.json in this skill directory and fill in your key."
+    )
 
 
 def normalize_highlights(raw: Optional[Sequence[str]]) -> HighlightArg:

@@ -10,8 +10,15 @@ When the user asks about libraries, frameworks, or needs code examples, use this
 ## Setup
 
 1.  **Get your Context7 API Key**: Obtain an API key from the [Context7 website](https://context7.ai/).
-2.  **Create the auth file**: Copy `auth.json.tpl` to `auth.json` in this skill directory and fill in your API key.
 
+2.  Provide the API key one of two ways:
+
+    **A. Environment variable** (checked first):
+    ```bash
+    export CONTEXT7_API_KEY="your_key_here"
+    ```
+
+    **B. auth.json** (fallback, checked if the env var is unset):
     ```bash
     cp auth.json.tpl auth.json
     # Then edit auth.json and replace "your_context7_api_key_here" with your actual key
@@ -24,9 +31,11 @@ When the user asks about libraries, frameworks, or needs code examples, use this
     }
     ```
 
-    > **Note**: `auth.json` contains sensitive credentials and should not be committed to version control.
+    > **Note**: `auth.json` contains sensitive credentials and should not be committed to version control (`**/auth.json` is gitignored at the repo root).
 
 ## Usage
+
+> **Important**: If `CONTEXT7_API_KEY` is set as an environment variable, the auth.json file is not needed.
 
 This skill provides two main commands:
 
