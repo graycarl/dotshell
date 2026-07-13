@@ -24,6 +24,17 @@ if [ -L "$SKILLS_DST_DIR" ]; then
 fi
 mkdir -p "$SKILLS_DST_DIR"
 
+# Remove stale skill symlinks (skills removed from source)
+for existing in "$SKILLS_DST_DIR"/*; do
+    [ -L "$existing" ] || continue
+    target=$(readlink "$existing")
+    case "$target" in
+        "$SKILLS_SRC_DIR"/*)
+            rm "$existing"
+            ;;
+    esac
+done
+
 if [ -d "$SKILLS_SRC_DIR" ]; then
     for skill_dir in "$SKILLS_SRC_DIR"/*; do
         [ -d "$skill_dir" ] || continue
