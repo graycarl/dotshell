@@ -6,20 +6,34 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DOTSHELL="${DOTSHELL:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 PI_AGENT_DIR="$HOME/.pi/agent"
 
 mkdir -p "$PI_AGENT_DIR"
 
-# Link skills directory
-if [ -L "$PI_AGENT_DIR/skills" ]; then
-    rm "$PI_AGENT_DIR/skills"
+# Link skills directories individually (not the whole skills directory)
+SKILLS_SRC_DIR="$DOTSHELL/apps/agents/skills"
+SKILLS_DST_DIR="$PI_AGENT_DIR/skills"
+
+if [ -L "$SKILLS_DST_DIR" ]; then
+    rm "$SKILLS_DST_DIR"
 fi
-if [ -d "$DOTSHELL/apps/agents/skills" ]; then
-    ln -s "$DOTSHELL/apps/agents/skills" "$PI_AGENT_DIR/skills"
-    echo "✓ Linked skills -> $PI_AGENT_DIR/skills"
+mkdir -p "$SKILLS_DST_DIR"
+
+if [ -d "$SKILLS_SRC_DIR" ]; then
+    for skill_dir in "$SKILLS_SRC_DIR"/*; do
+        [ -d "$skill_dir" ] || continue
+        [ -f "$skill_dir/SKILL.md" ] || continue
+        skill_name="$(basename "$skill_dir")"
+
+        if [ -L "$SKILLS_DST_DIR/$skill_name" ]; then
+            rm "$SKILLS_DST_DIR/$skill_name"
+        fi
+        ln -s "$skill_dir" "$SKILLS_DST_DIR/$skill_name"
+        echo "✓ Linked skill $skill_name -> $SKILLS_DST_DIR/$skill_name"
+    done
 fi
 
-# Link prompts directory
 if [ -L "$PI_AGENT_DIR/prompts" ]; then
     rm "$PI_AGENT_DIR/prompts"
 fi
