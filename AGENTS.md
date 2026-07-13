@@ -181,6 +181,7 @@ local/
 | 问题研究 | research | `apps/agents/skills/research/` |
 | Workflowy 操作 | workflowy-cli | `apps/agents/skills/workflowy-cli/` |
 | YouTube 字幕 | youtube-transcript | `apps/agents/skills/youtube-transcript/` |
+| 博客管理（读写/发布） | blog | `apps/agents/skills/blog/` |
 
 ## 常见任务
 
