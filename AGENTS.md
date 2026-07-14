@@ -82,6 +82,24 @@ bash
 | `apps/alacritty/` | Alacritty 终端配置（多版本并存） |
 | `apps/ghostty/` | Ghostty 终端配置 |
 
+### `apps/pi/` — pi 配置部署
+
+`apps/pi/setup.sh` 负责将 pi 的 agent 配置以符号链接方式部署到 `~/.pi/agent/`：
+
+- **共享 skills**：遍历 `apps/agents/skills/` 下包含 `SKILL.md` 的目录，逐个链接到 `~/.pi/agent/skills/`；旧的失效 skill 软链会被清理。
+- **pi 专用配置**：链接 `apps/pi/agent/` 下的子目录/文件到 `~/.pi/agent/`：
+  - `prompts/` — 提示词模板
+  - `extensions/` — pi 扩展（TypeScript）
+  - `agents/` — 子 agent 定义
+  - `APPEND_SYSTEM.md` — 追加系统提示
+  - `keybindings.json` — 快捷键配置
+
+运行方式：
+
+```bash
+bash apps/pi/setup.sh
+```
+
 ### `apps/agents/` — AI Agent 共享技能
 
 多个 Agent（pi, opencode）共用一套 skills：
@@ -167,21 +185,6 @@ local/
 3. **不要删除未跟踪的个人文件**
 4. **修改 `.gitignore` 前先确认**
 
-## Agent 与子模块协作
-
-当 AI Agent 需要执行以下操作时，优先使用对应 skill：
-
-| 操作 | Skill | 位置 |
-|------|-------|------|
-| 网页自动化/前端测试 | browser-tools | `apps/agents/skills/browser-tools/` |
-| 查询库文档/API | context7 | `apps/agents/skills/context7/` |
-| 互联网搜索 | exa-search | `apps/agents/skills/exa-search/` |
-| GitHub 操作 | github | `apps/agents/skills/github/` |
-| 需求分析/方案设计 | plan | `apps/agents/skills/plan/` |
-| 问题研究 | research | `apps/agents/skills/research/` |
-| Workflowy 操作 | workflowy-cli | `apps/agents/skills/workflowy-cli/` |
-| YouTube 字幕 | youtube-transcript | `apps/agents/skills/youtube-transcript/` |
-| 博客管理（读写/发布） | blog | `apps/agents/skills/blog/` |
 
 ## 常见任务
 
