@@ -106,7 +106,7 @@ class AskUserComponent implements Component {
   private editor: Editor;
   private tui: TUI;
   private onDone: (result: AskResult) => void;
-  private showingConfirmation: boolean = false;
+  private confirmationState: "none" | "submit" | "cancel" = "none";
   private title?: string;
 
   // Input mode: 'select' for options, 'text' for free-form input
@@ -266,9 +266,13 @@ class AskUserComponent implements Component {
 
   handleInput(data: string): void {
     // Handle confirmation dialog
-    if (this.showingConfirmation) {
+    if (this.confirmationState !== "none") {
       if (matchesKey(data, Key.enter) || data.toLowerCase() === "y") {
-        this.submit();
+        if (this.confirmationState === "submit") {
+          this.submit();
+        } else {
+          this.cancel();
+        }
         return;
       }
       if (
@@ -276,7 +280,7 @@ class AskUserComponent implements Component {
         matchesKey(data, Key.ctrl("c")) ||
         data.toLowerCase() === "n"
       ) {
-        this.showingConfirmation = false;
+        this.confirmationState = "none";
         this.invalidate();
         this.tui.requestRender();
         return;
@@ -297,14 +301,26 @@ class AskUserComponent implements Component {
 
     // Handle Esc - layered behavior
     if (matchesKey(data, Key.escape)) {
-      // If in text mode and question has options and custom is allowed, switch back (layer 1)
+      this.saveCurrentAnswer();
+
+      // Layer 1: If in text mode and question has options and custom is allowed, switch back to select mode
       if (mode === "text" && hasOptions && allowCustom) {
         this.switchToSelectMode();
         this.tui.requestRender();
         return;
       }
-      // Otherwise, cancel the entire Q&A (layer 2)
-      this.cancel();
+
+      // Layer 2: Go back to previous question
+      if (this.currentIndex > 0) {
+        this.navigateTo(this.currentIndex - 1);
+        this.tui.requestRender();
+        return;
+      }
+
+      // Layer 3: At first question, show cancel confirmation
+      this.confirmationState = "cancel";
+      this.invalidate();
+      this.tui.requestRender();
       return;
     }
 
@@ -350,7 +366,7 @@ class AskUserComponent implements Component {
         if (this.currentIndex < this.questions.length - 1) {
           this.navigateTo(this.currentIndex + 1);
         } else {
-          this.showingConfirmation = true;
+          this.confirmationState = "submit";
         }
         this.invalidate();
         this.tui.requestRender();
@@ -366,7 +382,7 @@ class AskUserComponent implements Component {
           if (this.currentIndex < this.questions.length - 1) {
             this.navigateTo(this.currentIndex + 1);
           } else {
-            this.showingConfirmation = true;
+            this.confirmationState = "submit";
           }
           this.invalidate();
           this.tui.requestRender();
@@ -408,7 +424,7 @@ class AskUserComponent implements Component {
       if (this.currentIndex < this.questions.length - 1) {
         this.navigateTo(this.currentIndex + 1);
       } else {
-        this.showingConfirmation = true;
+        this.confirmationState = "submit";
       }
       this.invalidate();
       this.tui.requestRender();
@@ -548,21 +564,24 @@ class AskUserComponent implements Component {
     // ── Footer / Confirmation ──
     lines.push(padToWidth(this.dim("├" + horizontalLine(boxWidth - 2) + "┤")));
 
-    if (this.showingConfirmation) {
+    if (this.confirmationState === "submit") {
       const confirmMsg = `${this.yellow("Submit all answers?")} ${this.dim("(Enter/y to confirm, Esc/n to cancel)")}`;
+      lines.push(padToWidth(boxLine(truncateToWidth(confirmMsg, contentWidth))));
+    } else if (this.confirmationState === "cancel") {
+      const confirmMsg = `${this.yellow("Cancel all answers?")} ${this.dim("(Enter/y to confirm, Esc/n to go back)")}`;
       lines.push(padToWidth(boxLine(truncateToWidth(confirmMsg, contentWidth))));
     } else {
       let controls: string;
       if (mode === "select" && hasOptions) {
         if (allowCustom) {
-          controls = `${this.dim("↑↓")} select · ${this.dim("1-9")} quick · ${this.dim("e")} text input · ${this.dim("Enter")} confirm · ${this.dim("Esc")} cancel`;
+          controls = `${this.dim("↑↓")} select · ${this.dim("1-9")} quick · ${this.dim("e")} text input · ${this.dim("Enter")} confirm · ${this.dim("Esc")} back`;
         } else {
-          controls = `${this.dim("↑↓")} select · ${this.dim("1-9")} quick · ${this.dim("Enter")} confirm · ${this.dim("Esc")} cancel`;
+          controls = `${this.dim("↑↓")} select · ${this.dim("1-9")} quick · ${this.dim("Enter")} confirm · ${this.dim("Esc")} back`;
         }
       } else if (mode === "text" && hasOptions && allowCustom) {
         controls = `${this.dim("Tab/Enter")} next · ${this.dim("Shift+Tab")} prev · ${this.dim("Shift+Enter")} newline · ${this.dim("Esc")} back/cancel`;
       } else {
-        controls = `${this.dim("Tab/Enter")} next · ${this.dim("Shift+Tab")} prev · ${this.dim("Shift+Enter")} newline · ${this.dim("Esc")} cancel`;
+        controls = `${this.dim("Tab/Enter")} next · ${this.dim("Shift+Tab")} prev · ${this.dim("Shift+Enter")} newline · ${this.dim("Esc")} back`;
       }
 
       lines.push(padToWidth(boxLine(truncateToWidth(controls, contentWidth))));
