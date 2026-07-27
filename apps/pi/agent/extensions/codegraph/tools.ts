@@ -47,19 +47,21 @@ export function registerExploreTool(pi: ExtensionAPI): void {
     name: "codegraph_explore",
     label: "CodeGraph Explore",
     description:
-      "Semantically explore code: find relevant symbols, their source code grouped by file, call paths between them, and blast-radius impact summary. Covers dynamic dispatch (callbacks, interface→impl, React re-render) that grep cannot follow. Name a file or symbol in the query to read its source with line numbers.",
+      "PRIMARY CODE TOOL — call FIRST for almost any question or before an edit: how does X work, architecture, a bug, where/what is X, or the symbols you are about to change. Returns the verbatim source of the relevant symbols grouped by file in ONE capped call (Read-equivalent — treat the shown source as already Read; do NOT re-open those files), plus call paths and impact summary. Covers dynamic dispatch (callbacks, interface→impl, React re-render) that grep cannot follow. Usually the ONLY call you need — more accurate context, in far fewer tokens and round-trips than a search/Read/grep loop.",
     promptSnippet:
       "Explore code structure, flows, and relationships with one call — returns relevant symbols, source, and call paths.",
     promptGuidelines: [
-      "Use codegraph_explore to understand how a feature or flow works instead of crawling files with grep/read/ls.",
-      "Use codegraph_explore to survey a module or area before making changes.",
-      "Prefer codegraph_explore when you need to trace a call path (who calls X, what X calls).",
+      "Use codegraph_explore FIRST for any code question — it usually answers the whole question in one call.",
+      "Use codegraph_explore before making edits to see what calls the target symbol and what your change would break.",
+      "Prefer codegraph_explore over codegraph_search + read loop — one explore call replaces many search/read round-trips.",
     ],
     parameters: Type.Object({
-      query: Type.String({ description: "Natural-language or keyword query describing what to explore" }),
+      query: Type.String({
+        description: "Symbol names, file names, or short code terms to explore (e.g., 'AuthService loginUser session-manager', 'GraphTraverser BFS impact traversal.ts'). For a flow question, name the symbols spanning the flow (e.g., 'mutateElement renderScene'). A natural-language question works too — no prior codegraph_search needed.",
+      }),
       path: pathParam,
       maxFiles: Type.Optional(
-        Type.Number({ description: "Maximum number of files to include source from", default: 5 }),
+        Type.Number({ description: "Maximum number of files to include source from (default: 12)", default: 12 }),
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -116,35 +118,44 @@ export function registerNodeTool(pi: ExtensionAPI): void {
     name: "codegraph_node",
     label: "CodeGraph Node",
     description:
-      "Inspect a symbol's full source with callers and callees, or read a file with line numbers and an overview of symbols it declares. Use --file mode to read a specific file; use --symbols-only to get just the symbol index without file content.",
+      "Two modes. (1) READ A FILE — use INSTEAD of the Read tool: pass `file` (a path or basename) with no `symbol` and it returns that file's current on-disk source with line numbers, exactly the shape Read gives you, narrowable with `offset`/`limit` just like Read — PLUS a one-line note of which files depend on it. Same bytes as Read, faster (served from the index), with the blast radius attached. (2) ONE SYMBOL — its location, signature, source (set `includeCode: true`) and caller/callee trail in one call. For an AMBIGUOUS name it returns EVERY matching definition in one call; pass `file`/`line` to pin one. Use codegraph_explore for several related symbols or the full flow.",
     promptSnippet:
-      "Read a file (with line numbers) or inspect a symbol’s source and its call relationships.",
+      "Read a file (like the Read tool, but faster) or inspect a symbol and its callers/callees.",
     promptGuidelines: [
-      "Use codegraph_node to read a file with line numbers as an alternative to the read tool.",
-      "Use codegraph_node to inspect a specific symbol and see its callers/callees at a glance.",
+      "Use codegraph_node to read a file with line numbers instead of the read tool — faster and includes dependency info.",
+      "Use codegraph_node on a specific symbol before editing it to see its callers and callees.",
+      "Set `includeCode: true` only when you need the full source body — omit it for a lightweight overview first.",
     ],
     parameters: Type.Object({
-      name: Type.Optional(Type.String({ description: "Symbol name to look up (omit for file mode)" })),
-      file: Type.Optional(Type.String({ description: "File path to read — must be relative to the project root, not absolute (activates file mode)" })),
+      symbol: Type.Optional(Type.String({ description: "Symbol name to look up (symbol mode). Omit it and pass `file` alone to read a whole file like Read." })),
+      includeCode: Type.Optional(
+        Type.Boolean({ description: "Symbol mode: include the symbol's full body source. Omit or set false for a lightweight overview (location + signature + trail only).", default: false }),
+      ),
+      file: Type.Optional(Type.String({ description: "A file path or basename (e.g., 'harness.rs', 'src/auth/session.ts'). Pass it ALONE (no symbol) to READ the file like the Read tool. Or pass it WITH a symbol to disambiguate an overloaded name to the definition in this file." })),
       path: pathParam,
       offset: Type.Optional(
-        Type.Number({ description: "File mode: 1-based start line" }),
+        Type.Number({ description: "File mode: 1-based line to start reading from, exactly like Read's offset." }),
       ),
       limit: Type.Optional(
-        Type.Number({ description: "File mode: maximum lines to return" }),
+        Type.Number({ description: "File mode: maximum number of lines to return, exactly like Read's limit." }),
       ),
       symbolsOnly: Type.Optional(
-        Type.Boolean({ description: "File mode: return only the symbol map + dependents, no file content", default: false }),
+        Type.Boolean({ description: "File mode: return only the symbol map + dependents (a cheap structural overview) instead of the file's source.", default: false }),
+      ),
+      line: Type.Optional(
+        Type.Number({ description: "Symbol mode only: disambiguate to the definition at/around this line (use with the file:line a trail showed you)." }),
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const args: string[] = ["node"];
-      if (params.name) args.push(params.name);
+      if (params.symbol) args.push(params.symbol);
+      if (params.includeCode) args.push("--include-code");
       if (params.file) args.push("--file", toRelativePath(params.file, ctx));
       if (params.path) args.push("--path", toRelativePath(params.path, ctx));
       if (params.offset != null) args.push("--offset", String(params.offset));
       if (params.limit != null) args.push("--limit", String(params.limit));
       if (params.symbolsOnly) args.push("--symbols-only");
+      if (params.line != null) args.push("--line", String(params.line));
 
       const { stdout, stderr, code } = await execCodegraph(pi, args);
       return {
@@ -155,8 +166,9 @@ export function registerNodeTool(pi: ExtensionAPI): void {
 
     renderCall(args, theme, _context) {
       let text = theme.fg("toolTitle", theme.bold("● node "));
-      if (args.name) {
-        text += theme.fg("accent", args.name);
+      if (args.symbol) {
+        text += theme.fg("accent", args.symbol);
+        if (args.includeCode) text += theme.fg("dim", " +code");
       } else if (args.file) {
         text += theme.fg("accent", args.file);
       }
@@ -164,6 +176,7 @@ export function registerNodeTool(pi: ExtensionAPI): void {
       if (args.offset != null) text += theme.fg("dim", ` offset=${args.offset}`);
       if (args.limit != null) text += theme.fg("dim", ` limit=${args.limit}`);
       if (args.symbolsOnly) text += theme.fg("dim", " symbolsOnly");
+      if (args.line != null) text += theme.fg("dim", ` line=${args.line}`);
       return new Text(text, 0, 0);
     },
 
@@ -201,22 +214,25 @@ export function registerSearchTool(pi: ExtensionAPI): void {
     name: "codegraph_search",
     label: "CodeGraph Search",
     description:
-      "Search for symbols by name across the entire codebase using FTS5 full-text search. Returns symbols ranked by relevance.",
+      "Quick symbol search by name. Returns locations only (no code). Use codegraph_explore instead to get the actual source / understand an area in one call.",
     promptSnippet:
-      "Quickly find symbols (functions, classes, methods, types) by name across the codebase.",
+      "Find symbol locations by name — returns file:line, not source. Use codegraph_explore for the actual code.",
     promptGuidelines: [
-      "Use codegraph_search to find where a function/class/type is defined or referenced by name.",
-      "Use codegraph_search before codegraph_explore when you know the symbol name but not its location.",
-      "Prefer codegraph_search over grep for finding code definitions — it understands symbols, not raw text.",
+      "Use codegraph_search to find where a symbol is defined when you only need its location, not its source.",
+      "Prefer codegraph_explore over codegraph_search when you need to understand code — explore returns source in one call.",
+      "Use codegraph_search as a quick lookup when you know the exact symbol name and just need file:line.",
     ],
     parameters: Type.Object({
-      query: Type.String({ description: "Symbol name or partial name to search for" }),
+      query: Type.String({ description: "Symbol name or partial name (e.g., 'auth', 'signIn', 'UserService')" }),
       path: pathParam,
       limit: Type.Optional(
-        Type.Number({ description: "Maximum number of results", default: 10 }),
+        Type.Number({ description: "Maximum number of results (default: 10)", default: 10 }),
       ),
       kind: Type.Optional(
-        Type.String({ description: "Filter by node kind (e.g., function, class, method, interface)" }),
+        Type.String({
+          description: "Filter by node kind",
+          enum: ["function", "method", "class", "interface", "type", "variable", "route", "component"],
+        }),
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
