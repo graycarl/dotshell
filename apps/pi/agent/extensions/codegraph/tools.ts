@@ -76,22 +76,23 @@ export function registerExploreTool(pi: ExtensionAPI): void {
 
     renderCall(args, theme, _context) {
       let text = theme.fg("toolTitle", theme.bold("⌕ explore "));
-      text += theme.fg("accent", args.query);
-      if (args.path) text += theme.fg("dim", ` (${args.path})`);
+      text += theme.fg("accent", `"${args.query}"`);
+      if (args.path) text += theme.fg("dim", ` path=${args.path}`);
+      if (args.maxFiles != null) text += theme.fg("dim", ` maxFiles=${args.maxFiles}`);
       return new Text(text, 0, 0);
     },
 
     renderResult(result, { expanded }, theme, _context) {
       const content = result.content[0];
       const output = content?.type === "text" ? content.text : "";
-      const lines = lineCount(output);
-      const isError = /failed/.test(output);
+      const code = (result.details as { code?: number } | undefined)?.code;
+      const isError = code != null && code !== 0;
 
       if (isError) {
         return new Text(theme.fg("error", output.split("\n")[0] || "Error"), 0, 0);
       }
 
-      let text = theme.fg("success", `${lines} lines`);
+      let text = theme.fg("success", `${lineCount(output)} lines`);
 
       if (expanded) {
         const displayLines = output.split("\n").slice(0, 50);
@@ -158,27 +159,25 @@ export function registerNodeTool(pi: ExtensionAPI): void {
         text += theme.fg("accent", args.name);
       } else if (args.file) {
         text += theme.fg("accent", args.file);
-        if (args.offset || args.limit) {
-          const parts: string[] = [];
-          if (args.offset) parts.push(`L${args.offset}`);
-          if (args.limit) parts.push(`${args.limit} lines`);
-          text += theme.fg("dim", ` (${parts.join(", ")})`);
-        }
       }
+      if (args.path) text += theme.fg("dim", ` path=${args.path}`);
+      if (args.offset != null) text += theme.fg("dim", ` offset=${args.offset}`);
+      if (args.limit != null) text += theme.fg("dim", ` limit=${args.limit}`);
+      if (args.symbolsOnly) text += theme.fg("dim", " symbolsOnly");
       return new Text(text, 0, 0);
     },
 
     renderResult(result, { expanded }, theme, _context) {
       const content = result.content[0];
       const output = content?.type === "text" ? content.text : "";
-      const lines = lineCount(output);
-      const isError = /failed/.test(output);
+      const code = (result.details as { code?: number } | undefined)?.code;
+      const isError = code != null && code !== 0;
 
       if (isError) {
         return new Text(theme.fg("error", output.split("\n")[0] || "Error"), 0, 0);
       }
 
-      let text = theme.fg("success", `${lines} lines`);
+      let text = theme.fg("success", `${lineCount(output)} lines`);
 
       if (expanded) {
         const displayLines = output.split("\n").slice(0, 50);
@@ -235,23 +234,24 @@ export function registerSearchTool(pi: ExtensionAPI): void {
 
     renderCall(args, theme, _context) {
       let text = theme.fg("toolTitle", theme.bold("⌖ search "));
-      text += theme.fg("accent", args.query);
-      if (args.kind) text += theme.fg("dim", ` (kind: ${args.kind})`);
-      if (args.path) text += theme.fg("dim", ` in ${args.path}`);
+      text += theme.fg("accent", `"${args.query}"`);
+      if (args.path) text += theme.fg("dim", ` path=${args.path}`);
+      if (args.limit != null) text += theme.fg("dim", ` limit=${args.limit}`);
+      if (args.kind) text += theme.fg("dim", ` kind=${args.kind}`);
       return new Text(text, 0, 0);
     },
 
     renderResult(result, { expanded }, theme, _context) {
       const content = result.content[0];
       const output = content?.type === "text" ? content.text : "";
-      const lines = lineCount(output);
-      const isError = /failed/.test(output);
+      const code = (result.details as { code?: number } | undefined)?.code;
+      const isError = code != null && code !== 0;
 
       if (isError) {
         return new Text(theme.fg("error", output.split("\n")[0] || "Error"), 0, 0);
       }
 
-      let text = theme.fg("success", `${lines} lines`);
+      let text = theme.fg("success", `${lineCount(output)} lines`);
 
       if (expanded) {
         const displayLines = output.split("\n").slice(0, 50);
