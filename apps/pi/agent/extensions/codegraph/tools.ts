@@ -148,14 +148,15 @@ export function registerNodeTool(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const args: string[] = ["node"];
+      // Note: includeCode and line are MCP-level features — the CLI always
+      // returns full output and doesn't expose these as flags. Keep them in
+      // the schema for future compatibility but don't pass to CLI.
       if (params.symbol) args.push(params.symbol);
-      if (params.includeCode) args.push("--include-code");
       if (params.file) args.push("--file", toRelativePath(params.file, ctx));
       if (params.path) args.push("--path", toRelativePath(params.path, ctx));
       if (params.offset != null) args.push("--offset", String(params.offset));
       if (params.limit != null) args.push("--limit", String(params.limit));
       if (params.symbolsOnly) args.push("--symbols-only");
-      if (params.line != null) args.push("--line", String(params.line));
 
       const { stdout, stderr, code } = await execCodegraph(pi, args);
       return {
