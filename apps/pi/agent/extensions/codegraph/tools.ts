@@ -10,15 +10,16 @@
  * renderResult (collapsed summary by default; full output on expand).
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { relative, isAbsolute } from "node:path";
 import { execCodegraph } from "./utils.js";
 
 // ── Shared schemas ──────────────────────────────────────────────────
 
 const pathParam = Type.Optional(
-  Type.String({ description: "Project path (defaults to current working directory)" }),
+  Type.String({ description: "Project path relative to workspace root (defaults to current working directory)" }),
 );
 
 // ── Render helpers ──────────────────────────────────────────────────
@@ -26,6 +27,17 @@ const pathParam = Type.Optional(
 /** Count non-empty lines of text output. */
 function lineCount(text: string): number {
   return text.split("\n").filter((l) => l.trim().length > 0).length;
+}
+
+/**
+ * Convert an absolute path to one relative to ctx.cwd.
+ * Returns the original value unchanged if it's already relative or if ctx is unavailable.
+ */
+function toRelativePath(value: string, ctx: ExtensionContext): string {
+  if (isAbsolute(value)) {
+    return relative(ctx.cwd, value);
+  }
+  return value;
 }
 
 // ── codegraph_explore ───────────────────────────────────────────────
@@ -50,9 +62,9 @@ export function registerExploreTool(pi: ExtensionAPI): void {
         Type.Number({ description: "Maximum number of files to include source from", default: 5 }),
       ),
     }),
-    async execute(_toolCallId, params, _signal) {
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const args = ["explore", ...params.query.trim().split(/\s+/)];
-      if (params.path) args.push("--path", params.path);
+      if (params.path) args.push("--path", toRelativePath(params.path, ctx));
       if (params.maxFiles != null) args.push("--max-files", String(params.maxFiles));
 
       const { stdout, stderr, code } = await execCodegraph(pi, args);
@@ -112,7 +124,7 @@ export function registerNodeTool(pi: ExtensionAPI): void {
     ],
     parameters: Type.Object({
       name: Type.Optional(Type.String({ description: "Symbol name to look up (omit for file mode)" })),
-      file: Type.Optional(Type.String({ description: "File path to read (activates file mode)" })),
+      file: Type.Optional(Type.String({ description: "File path to read — must be relative to the project root, not absolute (activates file mode)" })),
       path: pathParam,
       offset: Type.Optional(
         Type.Number({ description: "File mode: 1-based start line" }),
@@ -124,11 +136,11 @@ export function registerNodeTool(pi: ExtensionAPI): void {
         Type.Boolean({ description: "File mode: return only the symbol map + dependents, no file content", default: false }),
       ),
     }),
-    async execute(_toolCallId, params, _signal) {
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const args: string[] = ["node"];
       if (params.name) args.push(params.name);
-      if (params.file) args.push("--file", params.file);
-      if (params.path) args.push("--path", params.path);
+      if (params.file) args.push("--file", toRelativePath(params.file, ctx));
+      if (params.path) args.push("--path", toRelativePath(params.path, ctx));
       if (params.offset != null) args.push("--offset", String(params.offset));
       if (params.limit != null) args.push("--limit", String(params.limit));
       if (params.symbolsOnly) args.push("--symbols-only");
@@ -208,9 +220,9 @@ export function registerSearchTool(pi: ExtensionAPI): void {
         Type.String({ description: "Filter by node kind (e.g., function, class, method, interface)" }),
       ),
     }),
-    async execute(_toolCallId, params, _signal) {
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const args = ["query", params.query];
-      if (params.path) args.push("--path", params.path);
+      if (params.path) args.push("--path", toRelativePath(params.path, ctx));
       if (params.limit != null) args.push("--limit", String(params.limit));
       if (params.kind) args.push("--kind", params.kind);
 
