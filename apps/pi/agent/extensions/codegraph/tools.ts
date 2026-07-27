@@ -24,9 +24,38 @@ const pathParam = Type.Optional(
 
 // ── Render helpers ──────────────────────────────────────────────────
 
-/** Count non-empty lines of text output. */
-function lineCount(text: string): number {
-  return text.split("\n").filter((l) => l.trim().length > 0).length;
+/** Number of preview lines shown in collapsed mode. */
+const PREVIEW_LINES = 10;
+
+/** Render the result with a preview of actual content when collapsed, full output when expanded. */
+function renderTextResult(
+  result: { content?: Array<{ type: string; text?: string }>; details?: { code?: number } },
+  options: { expanded: boolean },
+  theme: { fg: (color: string, text: string) => string },
+): InstanceType<typeof Text> {
+  const content = result.content?.[0];
+  const output = content?.type === "text" ? content.text : "";
+  const code = result.details?.code;
+  const isError = code != null && code !== 0;
+
+  if (isError) {
+    return new Text(theme.fg("error", output.split("\n")[0] || "Error"), 0, 0);
+  }
+
+  const allLines = output.split("\n");
+  const totalLines = allLines.length;
+  const linesToShow = options.expanded ? totalLines : Math.min(PREVIEW_LINES, totalLines);
+
+  let text = "";
+  for (let i = 0; i < linesToShow; i++) {
+    text += `\n${theme.fg("dim", allLines[i]!)}`;
+  }
+
+  if (totalLines > linesToShow) {
+    text += `\n${theme.fg("muted", `... (${totalLines - linesToShow} more lines,`)} ${theme.fg("accent", "Ctrl+E")}${theme.fg("muted", " to expand)")}`;
+  }
+
+  return new Text(text, 0, 0);
 }
 
 /**
@@ -85,28 +114,7 @@ export function registerExploreTool(pi: ExtensionAPI): void {
     },
 
     renderResult(result, { expanded }, theme, _context) {
-      const content = result.content[0];
-      const output = content?.type === "text" ? content.text : "";
-      const code = (result.details as { code?: number } | undefined)?.code;
-      const isError = code != null && code !== 0;
-
-      if (isError) {
-        return new Text(theme.fg("error", output.split("\n")[0] || "Error"), 0, 0);
-      }
-
-      let text = theme.fg("success", `${lineCount(output)} lines`);
-
-      if (expanded) {
-        const displayLines = output.split("\n").slice(0, 50);
-        for (const line of displayLines) {
-          text += `\n${theme.fg("dim", line)}`;
-        }
-        if (output.split("\n").length > 50) {
-          text += `\n${theme.fg("muted", `... ${output.split("\n").length - 50} more lines`)}`;
-        }
-      }
-
-      return new Text(text, 0, 0);
+      return renderTextResult(result, { expanded }, theme);
     },
   });
 }
@@ -182,28 +190,7 @@ export function registerNodeTool(pi: ExtensionAPI): void {
     },
 
     renderResult(result, { expanded }, theme, _context) {
-      const content = result.content[0];
-      const output = content?.type === "text" ? content.text : "";
-      const code = (result.details as { code?: number } | undefined)?.code;
-      const isError = code != null && code !== 0;
-
-      if (isError) {
-        return new Text(theme.fg("error", output.split("\n")[0] || "Error"), 0, 0);
-      }
-
-      let text = theme.fg("success", `${lineCount(output)} lines`);
-
-      if (expanded) {
-        const displayLines = output.split("\n").slice(0, 50);
-        for (const line of displayLines) {
-          text += `\n${theme.fg("dim", line)}`;
-        }
-        if (output.split("\n").length > 50) {
-          text += `\n${theme.fg("muted", `... ${output.split("\n").length - 50} more lines`)}`;
-        }
-      }
-
-      return new Text(text, 0, 0);
+      return renderTextResult(result, { expanded }, theme);
     },
   });
 }
@@ -259,28 +246,7 @@ export function registerSearchTool(pi: ExtensionAPI): void {
     },
 
     renderResult(result, { expanded }, theme, _context) {
-      const content = result.content[0];
-      const output = content?.type === "text" ? content.text : "";
-      const code = (result.details as { code?: number } | undefined)?.code;
-      const isError = code != null && code !== 0;
-
-      if (isError) {
-        return new Text(theme.fg("error", output.split("\n")[0] || "Error"), 0, 0);
-      }
-
-      let text = theme.fg("success", `${lineCount(output)} lines`);
-
-      if (expanded) {
-        const displayLines = output.split("\n").slice(0, 50);
-        for (const line of displayLines) {
-          text += `\n${theme.fg("dim", line)}`;
-        }
-        if (output.split("\n").length > 50) {
-          text += `\n${theme.fg("muted", `... ${output.split("\n").length - 50} more lines`)}`;
-        }
-      }
-
-      return new Text(text, 0, 0);
+      return renderTextResult(result, { expanded }, theme);
     },
   });
 }
