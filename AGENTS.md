@@ -114,7 +114,6 @@ apps/agents/skills/
 ├── plan/                # 方案设计
 ├── research/            # 问题研究
 ├── workflowy-cli/       # Workflowy API 操作
-└── youtube-transcript/  # YouTube 字幕获取
 ```
 
 **auth.json 约定**：需要 API Key 的 skill 使用 `auth.json` 文件（被 `.gitignore` 排除），模板为 `auth.json.tpl`。
