@@ -107,7 +107,7 @@ bash apps/pi/setup.sh
 
 ```
 apps/agents/skills/
-├── browser-tools/       # 浏览器自动化
+├── agent-browser/       # 浏览器自动化（agent-browser CLI）
 ├── context7/            # 库文档查询
 ├── exa-search/          # 互联网搜索
 ├── github/              # GitHub CLI
