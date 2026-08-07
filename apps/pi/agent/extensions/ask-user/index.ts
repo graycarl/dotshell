@@ -449,8 +449,13 @@ class AskUserComponent implements Component {
     const horizontalLine = (count: number) => "─".repeat(count);
 
     const boxLine = (content: string, leftPad: number = 2): string => {
-      const paddedContent = " ".repeat(leftPad) + content;
-      const contentLen = visibleWidth(paddedContent);
+      let paddedContent = " ".repeat(leftPad) + content;
+      let contentLen = visibleWidth(paddedContent);
+      // Safety net: never let content overflow the box width.
+      if (contentLen > boxWidth - 4) {
+        paddedContent = truncateToWidth(paddedContent, boxWidth - 4, "…");
+        contentLen = visibleWidth(paddedContent);
+      }
       const rightPad = Math.max(0, boxWidth - contentLen - 2);
       return this.dim("│") + paddedContent + " ".repeat(rightPad) + this.dim("│");
     };
@@ -528,7 +533,11 @@ class AskUserComponent implements Component {
         const isSelected = i === selectedIdx;
         const number = this.dim(`${i + 1}. `);
         const marker = isSelected ? this.cyan("❯ ") : "  ";
-        const optionText = isSelected ? this.bold(this.cyan(options[i])) : options[i];
+        // leftPad(4) + marker(2) + number(3) + right padding(2)
+        const optionWidth = contentWidth - 11;
+        const optionText = isSelected
+          ? this.bold(this.cyan(truncateToWidth(options[i], optionWidth, "…")))
+          : truncateToWidth(options[i], optionWidth, "…");
         const fullOption = marker + number + optionText;
 
         lines.push(padToWidth(boxLine(fullOption, 4)));
