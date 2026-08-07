@@ -132,7 +132,10 @@ def main():
         epilog='Example: ftp-upload.py ./report.pdf ftp://admin:secret@192.168.1.100/uploads/documents/'
     )
     parser.add_argument('local_file', help='Local file path to upload')
-    parser.add_argument('ftp_url', help='FTP target URL: ftp://user:pass@host[:port]/remote_dir')
+    parser.add_argument('ftp_url',
+                        nargs='?',
+                        default='ftp://3ds:3ds@192.168.50.21:5000/Inbox',
+                        help='FTP target URL: ftp://user:pass@host[:port]/remote_dir')
     args = parser.parse_args()
 
     # Validate local file
