@@ -6,13 +6,13 @@ import json
 import os
 from pathlib import Path
 import sys
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence, Union
 import urllib.error
 import urllib.request
 
 API_BASE = os.environ.get("EXA_API_BASE", "https://api.exa.ai").rstrip("/")
 API_KEY_ENV = "EXA_API_KEY"
-HighlightArg = Optional[Tuple[int, Optional[str]]]
+HighlightOpts = Union[bool, Dict[str, Any]]
 GENERAL_HELP = """Exa Search Skill Helper\n\nUsage:\n  search.py [search options...]        # default search mode\n  search.py search [search options...]\n  search.py contents [contents options...]\n  search.py answer [answer options...]\n  search.py similar [similar options...]\n\nRun `search.py <command> --help` for detailed flags."""
 
 
@@ -34,17 +34,52 @@ def ensure_api_key() -> str:
     )
 
 
-def normalize_highlights(raw: Optional[Sequence[str]]) -> HighlightArg:
-    if not raw:
+def normalize_highlights(raw: Optional[Sequence[str]], max_chars: Optional[int] = None) -> HighlightOpts:
+    """Convert --highlights [query] into the current API shape.
+
+    Bare flag -> True (highest-quality default). With a query ->
+    {"query": ...} plus optional {"maxCharacters": ...}. A leading numeric
+    token is legacy numSentences (deprecated) and is dropped.
+    """
+    opts: Dict[str, Any] = {}
+    if max_chars is not None:
+        opts["maxCharacters"] = max_chars
+    if raw:
+        tokens = list(raw)
+        if tokens and tokens[0].isdigit():
+            tokens = tokens[1:]
+        query = " ".join(tokens).strip() or None
+        if query:
+            opts["query"] = query
+    return opts if opts else True
+
+
+# category "research paper" was renamed to "publication" upstream; keep the old name working.
+CATEGORY_ALIASES = {"research paper": "publication"}
+
+
+def _normalize_category(cat: Optional[str]) -> Optional[str]:
+    if not cat:
         return None
-    if len(raw) == 1:
-        return (3, raw[0])
-    try:
-        num_sentences = int(raw[0])
-        query = " ".join(raw[1:]) or None
-        return (num_sentences, query)
-    except ValueError:
-        return (3, " ".join(raw))
+    return CATEGORY_ALIASES.get(cat, cat)
+
+
+def _build_text_opts(args: argparse.Namespace) -> Optional[Dict[str, Any]]:
+    """Build a contents.text object (or True) from the text-related flags."""
+    opts: Dict[str, Any] = {}
+    if getattr(args, "text_max_chars", None) is not None:
+        opts["maxCharacters"] = args.text_max_chars
+    if getattr(args, "text_include_html", False):
+        opts["includeHtmlTags"] = True
+    if getattr(args, "verbosity", None):
+        opts["verbosity"] = args.verbosity
+    include_sections = getattr(args, "include_sections", None)
+    if include_sections:
+        opts["includeSections"] = include_sections
+    exclude_sections = getattr(args, "exclude_sections", None)
+    if exclude_sections:
+        opts["excludeSections"] = exclude_sections
+    return opts if opts else None
 
 
 def build_search_parser() -> argparse.ArgumentParser:
@@ -72,12 +107,12 @@ def build_search_parser() -> argparse.ArgumentParser:
         "--category",
         choices=[
             "company",
-            "research paper",
+            "publication",
             "news",
-            "pdf",
             "personal site",
             "financial report",
             "people",
+            "research paper",  # legacy alias -> publication
         ],
     )
     parser.add_argument("--user-location", help="ISO country code, e.g. US")
@@ -87,14 +122,46 @@ def build_search_parser() -> argparse.ArgumentParser:
     parser.add_argument("--end-crawl-date", help="ISO 8601 crawl timestamp")
     parser.add_argument("--text", action="store_true", help="Return cached page text")
     parser.add_argument(
-        "--highlights",
-        nargs="*",
-        help="Include highlighted snippets. Optionally pass numSentences and query",
+        "--text-max-chars",
+        type=int,
+        dest="text_max_chars",
+        help="Limit number of characters when returning text",
     )
     parser.add_argument(
-        "--livecrawl",
-        choices=["never", "always", "fallback"],
-        help="(Deprecated) Control live crawling behavior. Use --max-age-hours instead.",
+        "--text-include-html",
+        action="store_true",
+        dest="text_include_html",
+        help="Include HTML tags when returning text",
+    )
+    parser.add_argument(
+        "--verbosity",
+        choices=["compact", "standard", "full"],
+        help="Text verbosity (default compact). Use with --max-age-hours 0 for fresh content",
+    )
+    parser.add_argument(
+        "--include-section",
+        dest="include_sections",
+        action="append",
+        choices=["header", "navigation", "banner", "body", "sidebar", "footer", "metadata"],
+        help="Only include these page sections (repeatable)",
+    )
+    parser.add_argument(
+        "--exclude-section",
+        dest="exclude_sections",
+        action="append",
+        choices=["header", "navigation", "banner", "body", "sidebar", "footer", "metadata"],
+        help="Exclude these page sections (repeatable)",
+    )
+    parser.add_argument(
+        "--highlights",
+        nargs="*",
+        help="Return highlights. Bare flag = highest-quality default; pass a query to guide selection",
+    )
+    parser.add_argument(
+        "--highlights-max-chars",
+        type=int,
+        dest="highlights_max_chars",
+        help="Cap total highlight characters per result",
     )
     parser.add_argument(
         "--max-age-hours",
@@ -176,12 +243,28 @@ def build_search_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-schema",
         dest="output_schema",
-        help="Path to JSON schema file for structured search output (use with deep/deep-reasoning)",
+        help="Path to JSON schema file for structured search output (works with any search type)",
     )
     parser.add_argument(
         "--system-prompt",
         dest="system_prompt",
         help="Instructions for the search model (use with deep/deep-reasoning)",
+    )
+    parser.add_argument(
+        "--additional-query",
+        dest="additional_queries",
+        action="append",
+        help="Extra query variations for deep-search variants (repeatable, max 10)",
+    )
+    parser.add_argument(
+        "--compliance",
+        choices=["hipaa"],
+        help="Enterprise compliance mode (requires type instant/fast, cache-only)",
+    )
+    parser.add_argument(
+        "--stream",
+        action="store_true",
+        help="Stream results as SSE (OpenAI-compatible chunks) instead of a JSON body",
     )
     parser.add_argument(
         "--timeout",
@@ -229,14 +312,34 @@ def build_contents_parser() -> argparse.ArgumentParser:
         help="Include HTML tags when returning text",
     )
     parser.add_argument(
-        "--highlights",
-        nargs="*",
-        help="Include highlighted snippets. Optionally pass numSentences and query",
+        "--verbosity",
+        choices=["compact", "standard", "full"],
+        help="Text verbosity (default compact). Use with --max-age-hours 0 for fresh content",
     )
     parser.add_argument(
-        "--highlights-per-url",
+        "--include-section",
+        dest="include_sections",
+        action="append",
+        choices=["header", "navigation", "banner", "body", "sidebar", "footer", "metadata"],
+        help="Only include these page sections (repeatable)",
+    )
+    parser.add_argument(
+        "--exclude-section",
+        dest="exclude_sections",
+        action="append",
+        choices=["header", "navigation", "banner", "body", "sidebar", "footer", "metadata"],
+        help="Exclude these page sections (repeatable)",
+    )
+    parser.add_argument(
+        "--highlights",
+        nargs="*",
+        help="Return highlights. Bare flag = highest-quality default; pass a query to guide selection",
+    )
+    parser.add_argument(
+        "--highlights-max-chars",
         type=int,
-        help="Number of highlight snippets per URL",
+        dest="highlights_max_chars",
+        help="Cap total highlight characters per URL",
     )
     parser.add_argument(
         "--subpages",
@@ -247,11 +350,6 @@ def build_contents_parser() -> argparse.ArgumentParser:
         "--subpage-target",
         dest="subpage_target",
         help="Target for subpage crawling (e.g. references)",
-    )
-    parser.add_argument(
-        "--images",
-        type=int,
-        help="Number of images to return for each URL",
     )
     parser.add_argument(
         "--extras-links",
@@ -290,11 +388,6 @@ def build_contents_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--summary-schema",
         help="Path to JSON schema file for structured summaries",
-    )
-    parser.add_argument(
-        "--livecrawl",
-        choices=["never", "fallback", "preferred", "always"],
-        help="(Deprecated) Control live crawling behavior. Use --max-age-hours instead.",
     )
     parser.add_argument(
         "--max-age-hours",
@@ -403,8 +496,15 @@ def build_search_payload(args: argparse.Namespace) -> Dict[str, Any]:
         "type": args.type,
         "numResults": args.num_results,
     }
-    if args.category:
-        payload["category"] = args.category
+    category = _normalize_category(args.category)
+    if category:
+        payload["category"] = category
+    if getattr(args, "stream", False):
+        payload["stream"] = True
+    if getattr(args, "additional_queries", None):
+        payload["additionalQueries"] = args.additional_queries
+    if getattr(args, "compliance", None):
+        payload["compliance"] = args.compliance
     if args.user_location:
         payload["userLocation"] = args.user_location
     if args.start_published_date:
@@ -432,14 +532,11 @@ def build_search_payload(args: argparse.Namespace) -> Dict[str, Any]:
         payload["moderation"] = True
 
     contents: Dict[str, Any] = {}
-    if args.text:
-        contents["text"] = True
+    text_opts = _build_text_opts(args)
+    if text_opts is not None:
+        contents["text"] = text_opts
     if args.highlights is not None:
-        num_sentences, query = args.highlights
-        contents["highlights"] = {
-            "numSentences": num_sentences,
-            **({"query": query} if query else {}),
-        }
+        contents["highlights"] = args.highlights
     summary_opts: Dict[str, Any] = {}
     if args.summary_query:
         summary_opts["query"] = args.summary_query
@@ -461,8 +558,6 @@ def build_search_payload(args: argparse.Namespace) -> Dict[str, Any]:
         contents["livecrawlTimeout"] = args.livecrawl_timeout
     if contents:
         payload["contents"] = contents
-    if args.livecrawl:
-        payload["livecrawl"] = args.livecrawl
     return payload
 
 
@@ -476,26 +571,19 @@ def build_contents_payload(args: argparse.Namespace) -> Dict[str, Any]:
         raise RuntimeError("At least one --url or --id must be provided.")
 
     text_requested = (
-        args.text or args.text_max_chars is not None or args.text_include_html
+        args.text
+        or args.text_max_chars is not None
+        or args.text_include_html
+        or args.verbosity is not None
+        or bool(args.include_sections)
+        or bool(args.exclude_sections)
     )
     if text_requested:
-        text_opts: Dict[str, Any] = {}
-        if args.text_max_chars is not None:
-            text_opts["maxCharacters"] = args.text_max_chars
-        if args.text_include_html:
-            text_opts["includeHtmlTags"] = True
+        text_opts = _build_text_opts(args)
         payload["text"] = text_opts or True
 
-    highlight_opts: Dict[str, Any] = {}
     if args.highlights is not None:
-        num_sentences, query = args.highlights
-        highlight_opts["numSentences"] = num_sentences
-        if query:
-            highlight_opts["query"] = query
-    if args.highlights_per_url is not None:
-        highlight_opts["highlightsPerUrl"] = args.highlights_per_url
-    if highlight_opts:
-        payload["highlights"] = highlight_opts
+        payload["highlights"] = args.highlights
 
     summary_opts: Dict[str, Any] = {}
     if args.summary_query:
@@ -510,13 +598,9 @@ def build_contents_payload(args: argparse.Namespace) -> Dict[str, Any]:
         payload["subpages"] = args.subpages
     if args.subpage_target is not None:
         payload["subpageTarget"] = args.subpage_target
-    if args.images is not None:
-        payload["images"] = args.images
     extras = _build_extras(args)
     if extras is not None:
         payload["extras"] = extras
-    if args.livecrawl:
-        payload["livecrawl"] = args.livecrawl
     if args.max_age_hours is not None:
         payload["maxAgeHours"] = args.max_age_hours
     if args.livecrawl_timeout is not None:
@@ -534,8 +618,8 @@ def call_exa(path: str, payload: Dict[str, Any], api_key: str, timeout: int) -> 
         headers={
             "accept": "application/json",
             "content-type": "application/json",
-            "x-api-key": api_key,
-            "user-agent": "Mozilla/5.0 (compatible; ExaSearchSkill/1.0)",
+            "authorization": f"Bearer {api_key}",
+            "user-agent": "Mozilla/5.0 (compatible; ExaSearchSkill/2.0)",
         },
         method="POST",
     )
@@ -589,6 +673,68 @@ def execute_search(args: argparse.Namespace) -> Dict[str, Any]:
     api_key = ensure_api_key()
     payload = build_search_payload(args)
     return call_exa("/search", payload, api_key, args.timeout)
+
+
+def execute_search_stream(args: argparse.Namespace) -> None:
+    """Stream /search SSE frames (OpenAI-compatible chunks) to stdout.
+
+    The API only streams for deep search types with outputSchema; otherwise
+    it returns a normal JSON body, which we print via print_search_results.
+    """
+    api_key = ensure_api_key()
+    payload = build_search_payload(args)
+    url = f"{API_BASE}/search"
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={
+            "accept": "text/event-stream",
+            "content-type": "application/json",
+            "authorization": f"Bearer {api_key}",
+            "user-agent": "Mozilla/5.0 (compatible; ExaSearchSkill/2.0)",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=args.timeout) as resp:
+            if "text/event-stream" not in resp.headers.get("Content-Type", ""):
+                body = resp.read().decode("utf-8", errors="ignore")
+                results = json.loads(body)
+                print_search_results(results, args.table_limit, args.markdown)
+                return
+            buffer = b""
+            for raw in resp:
+                buffer += raw
+                while b"\n\n" in buffer:
+                    frame, buffer = buffer.split(b"\n\n", 1)
+                    for line in frame.split(b"\n"):
+                        line = line.strip()
+                        if not line.startswith(b"data:"):
+                            continue
+                        data_line = line[5:].strip()
+                        if not data_line or data_line == b"[DONE]":
+                            continue
+                        try:
+                            chunk = json.loads(data_line)
+                        except json.JSONDecodeError:
+                            continue
+                        delta = chunk.get("delta")
+                        if isinstance(delta, dict):
+                            content = delta.get("content")
+                        elif isinstance(delta, str):
+                            content = delta
+                        else:
+                            choices = chunk.get("choices") or [{}]
+                            content = (choices[0].get("delta") or {}).get("content")
+                        if content:
+                            print(content, end="", flush=True)
+    except urllib.error.HTTPError as err:
+        error_body = err.read().decode("utf-8", errors="ignore") if err.fp else ""
+        raise RuntimeError(f"Exa API error {err.code}: {error_body.strip() or err.reason}") from err
+    except urllib.error.URLError as err:
+        raise RuntimeError(f"Failed to reach Exa API: {err.reason}") from err
+    print()
 
 
 def execute_contents(args: argparse.Namespace) -> Dict[str, Any]:
@@ -695,6 +841,25 @@ def print_search_results(results: Dict[str, Any], limit: Optional[int], markdown
                 print(json.dumps(output, ensure_ascii=False, indent=2))
         else:
             print(str(output)[:800])
+        grounding = output.get("grounding") if isinstance(output, dict) else None
+        if grounding:
+            print("\nGrounding:")
+            for entry in grounding:
+                field = entry.get("field", "content")
+                confidence = entry.get("confidence", "")
+                citations = entry.get("citations", [])
+                cite_str = ", ".join(
+                    f"[{c.get('title') or c.get('url')}]({c.get('url')})" for c in citations
+                )
+                print(f"  {field} ({confidence}): {cite_str}")
+
+    resolved_type = results.get("resolvedSearchType") or results.get("searchType")
+    if resolved_type:
+        print(f"search_type: {resolved_type}")
+    cost = results.get("costDollars") or {}
+    total = cost.get("total")
+    if total is not None:
+        print(f"cost_usd: {total}")
 
     if markdown:
         print(f"sources_reviewed: {len(rows)}")
@@ -755,6 +920,20 @@ def print_contents_results(results: Dict[str, Any], limit: Optional[int], markdo
                     text = json.dumps(summary)
                 print(f"    summary: {text[:400]}{'...' if len(text) > 400 else ''}")
             print()
+
+    statuses = results.get("statuses") or []
+    for st in statuses:
+        if isinstance(st, dict) and st.get("status") == "error":
+            err = st.get("error") or {}
+            code = err.get("httpStatusCode")
+            print(
+                f"[error] {st.get('id', '?')}: {err.get('tag', 'unknown')}"
+                + (f" (HTTP {code})" if code else "")
+            )
+    cost = results.get("costDollars") or {}
+    total = cost.get("total")
+    if total is not None:
+        print(f"cost_usd: {total}")
 
     if markdown:
         print(f"sources_reviewed: {len(rows)}")
@@ -859,13 +1038,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parser.parse_args(args_list)
     args.command = command
     if hasattr(args, "highlights"):
-        args.highlights = normalize_highlights(args.highlights)
+        args.highlights = normalize_highlights(
+            args.highlights, getattr(args, "highlights_max_chars", None)
+        )
 
     try:
         if command == "search":
-            results = execute_search(args)
-            save_raw_if_requested(results, args.raw)
-            print_search_results(results, args.table_limit, args.markdown)
+            if getattr(args, "stream", False):
+                execute_search_stream(args)
+            else:
+                results = execute_search(args)
+                save_raw_if_requested(results, args.raw)
+                print_search_results(results, args.table_limit, args.markdown)
         elif command == "contents":
             results = execute_contents(args)
             save_raw_if_requested(results, args.raw)

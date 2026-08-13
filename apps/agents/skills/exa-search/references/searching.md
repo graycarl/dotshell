@@ -33,7 +33,7 @@ Use categories to focus the index. Pass with `--category` or write `category:<ty
 ./scripts/search.py search --query "category:company developer tools for API testing" --num-results 10
 ```
 
-Available categories: `company`, `research paper`, `news`, `pdf`, `personal site`, `financial report`, `people`.
+Available categories: `company`, `publication`, `news`, `personal site`, `financial report`, `people` (legacy `research paper` is accepted and maps to `publication`).
 
 ### `numResults` sizing
 
@@ -89,6 +89,6 @@ Exa returns similarity, not validation. You must review titles and snippets and 
 - `--text` / `--text-max-chars` — pull page text.
 - `--highlights` — pull highlighted snippets.
 - `--summary-query` / `--summary-schema` — request a per-result summary.
-- `--max-age-hours` — control freshness; prefer this over `--livecrawl`.
+- `--max-age-hours` — control freshness (deprecated `--livecrawl` has been removed from the script).
 - `--type deep` / `--type deep-reasoning` — for hard, multi-hop research questions.
 - `--output-schema` / `--system-prompt` — for structured output from deep searches.
