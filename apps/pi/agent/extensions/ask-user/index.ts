@@ -115,6 +115,7 @@ class AskUserComponent implements Component {
 
   // Cache
   private cachedWidth?: number;
+  private cachedRows?: number;
   private cachedLines?: string[];
 
   // Colors - using proper reset sequences
@@ -151,9 +152,12 @@ class AskUserComponent implements Component {
     const editorTheme: EditorTheme = {
       borderColor: this.dim,
       selectList: {
-        selectedBg: (s: string) => `\x1b[44m${s}\x1b[0m`,
-        matchHighlight: this.cyan,
-        itemSecondary: this.gray,
+        // Blue background for the selected item's prefix marker
+        selectedPrefix: (s: string) => `\x1b[44m${s}\x1b[0m`,
+        selectedText: (s: string) => `\x1b[1m\x1b[36m${s}\x1b[0m`,
+        description: this.gray,
+        scrollInfo: this.dim,
+        noMatch: this.gray,
       },
     };
 
@@ -261,6 +265,7 @@ class AskUserComponent implements Component {
 
   invalidate(): void {
     this.cachedWidth = undefined;
+    this.cachedRows = undefined;
     this.cachedLines = undefined;
   }
 
@@ -438,7 +443,11 @@ class AskUserComponent implements Component {
   }
 
   render(width: number): string[] {
-    if (this.cachedLines && this.cachedWidth === width) {
+    if (
+      this.cachedLines &&
+      this.cachedWidth === width &&
+      this.cachedRows === this.tui.terminal.rows
+    ) {
       return this.cachedLines;
     }
 
@@ -529,18 +538,57 @@ class AskUserComponent implements Component {
       lines.push(padToWidth(boxLine(answerPrefix + this.gray("(Select an option)"))));
       lines.push(padToWidth(emptyBoxLine()));
 
-      for (let i = 0; i < options.length; i++) {
-        const isSelected = i === selectedIdx;
+      // ── Wrap long options (full text) + bounded scroll window ──
+      // Each option is word-wrapped to fit the box (crash-safe: every line
+      // stays within the box width; boxLine truncation remains as a safety
+      // net). Continuation lines align under the option text.
+      const prefixOf = (i: number) => {
         const number = this.dim(`${i + 1}. `);
-        const marker = isSelected ? this.cyan("❯ ") : "  ";
-        // leftPad(4) + marker(2) + number(3) + right padding(2)
-        const optionWidth = contentWidth - 11;
-        const optionText = isSelected
-          ? this.bold(this.cyan(truncateToWidth(options[i], optionWidth, "…")))
-          : truncateToWidth(options[i], optionWidth, "…");
-        const fullOption = marker + number + optionText;
+        const marker = i === selectedIdx ? this.cyan("❯ ") : "  ";
+        return { marker, number, width: visibleWidth(marker + number) };
+      };
 
-        lines.push(padToWidth(boxLine(fullOption, 4)));
+      const wrappedOptions = options.map((opt, i) => {
+        const { width } = prefixOf(i);
+        // boxLine(leftPad=4) allows content up to contentWidth-4; the prefix
+        // consumes `width` columns; keep 1 column of slack.
+        const optWidth = Math.max(10, contentWidth - 4 - width - 1);
+        const styled = i === selectedIdx ? this.bold(this.cyan(opt)) : opt;
+        const lines = wrapTextWithAnsi(styled, optWidth);
+        return { lines, height: Math.max(1, lines.length) };
+      });
+
+      // Height budget so the whole dialog (including the footer) stays within
+      // the terminal and is never clipped by the dock layout.
+      const dialogBudget = Math.max(12, this.tui.terminal.rows - 4);
+      const tailHeight = (allowCustom ? 1 : 0) + 5; // blank(+hint) + blank + sep + footer + border
+      const optionBudget = Math.max(4, dialogBudget - lines.length - tailHeight);
+
+      // Visible window around the selected option (roughly centered).
+      const total = wrappedOptions.length;
+      let start = selectedIdx;
+      let used = wrappedOptions[selectedIdx].height;
+      while (start > 0 && used + wrappedOptions[start - 1].height <= optionBudget) {
+        start--;
+        used += wrappedOptions[start].height;
+      }
+      let end = selectedIdx + 1;
+      while (end < total && used + wrappedOptions[end].height <= optionBudget) {
+        used += wrappedOptions[end].height;
+        end++;
+      }
+
+      for (let i = start; i < end; i++) {
+        const { marker, number, width } = prefixOf(i);
+        wrappedOptions[i].lines.forEach((line, j) => {
+          const content = j === 0 ? marker + number + line : " ".repeat(width) + line;
+          lines.push(padToWidth(boxLine(content, 4)));
+        });
+      }
+
+      // Scroll indicator when not all options are visible
+      if (start > 0 || end < total) {
+        lines.push(padToWidth(boxLine(this.gray(`(${selectedIdx + 1}/${total})`), 4)));
       }
 
       lines.push(padToWidth(emptyBoxLine()));
@@ -598,6 +646,7 @@ class AskUserComponent implements Component {
     lines.push(padToWidth(this.dim("╰" + horizontalLine(boxWidth - 2) + "╯")));
 
     this.cachedWidth = width;
+    this.cachedRows = this.tui.terminal.rows;
     this.cachedLines = lines;
     return lines;
   }
