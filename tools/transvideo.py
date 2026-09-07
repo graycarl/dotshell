@@ -10,6 +10,7 @@
 import argparse
 import logging
 import os
+import time
 
 import translators
 import whisper
@@ -18,23 +19,34 @@ logging.basicConfig(level=logging.INFO)
 # See: <https://github.com/openai/whisper?tab=readme-ov-file#available-models-and-languages>
 whisper_model = "small.en"
 # See: <https://pypi.org/project/translators/>
-trans_service = "bing"
+# Free endpoints are flaky/rate-limited; tried in order with retries.
+trans_services = ["bing", "alibaba", "youdao", "qqFanyi", "sogou"]
+# Combine whisper segments into subtitle lines of at most this many chars
+# (whisper often omits sentence-ending punctuation, so punctuation alone
+# is not a reliable flush trigger).
+MAX_SEGMENT_CHARS = 100
 
 class Transvideo:
     def __init__(self, video_file):
         self.video_file = video_file
-        self.audio_file = os.path.splitext(video_file)[0] + '.wav'
-        self.whisper_original_file = os.path.splitext(video_file)[0] + '.original.txt'
-        self.whisper_combined_file = os.path.splitext(video_file)[0] + '.combined.txt'
-        self.translate_file = os.path.splitext(video_file)[0] + '.trans.txt'
-        self.srt_file = os.path.splitext(video_file)[0] + '.srt'
-        self.output_file = os.path.splitext(video_file)[0] + '.trans' + os.path.splitext(video_file)[-1]
+        stem, ext = os.path.splitext(os.path.basename(video_file))
+        # intermediate files live in a _trans subdirectory next to the video
+        work_dir = os.path.join(os.path.dirname(os.path.abspath(video_file)), '_trans')
+        os.makedirs(work_dir, exist_ok=True)
+        self.audio_file = os.path.join(work_dir, stem + '.wav')
+        self.whisper_original_file = os.path.join(work_dir, stem + '.original.txt')
+        self.whisper_combined_file = os.path.join(work_dir, stem + '.combined.txt')
+        self.translate_file = os.path.join(work_dir, stem + '.trans.txt')
+        self.srt_file = os.path.join(work_dir, stem + '.srt')
+        self.output_file = os.path.splitext(video_file)[0] + '.trans' + ext
 
     def video_to_audio(self):
         logging.info('Converting video to audio...')
 
-        command = f'ffmpeg -i "{self.video_file}" "{self.audio_file}"'
+        command = f'ffmpeg -y -i "{self.video_file}" "{self.audio_file}"'
         exec_command(command)
+        if not os.path.exists(self.audio_file):
+            raise RuntimeError(f'ffmpeg failed to create {self.audio_file}')
 
     def save_whisper_result(self):
         logging.info('Getting whisper result...')
@@ -70,33 +82,59 @@ class Transvideo:
         with open(self.whisper_original_file, 'r') as f:
             whisper_original = f.read().strip().split('\n')
             for line in whisper_original:
-                start_time, end_time, segment_text = line.split('|')
+                if not line.strip():
+                    continue
+                start_time, end_time, segment_text = line.split('|', 2)
                 segment_text_list.append(segment_text.strip())
 
                 if text_start_time is None:
                     text_start_time = start_time
-                if not segment_text or segment_text[-1] not in ['.', '!', '?', '。', '！', '？']:
-                    continue
 
                 text = ' '.join(segment_text_list)
+                ends_sentence = bool(segment_text) and segment_text[-1] in ['.', '!', '?', '。', '！', '？']
+                if not ends_sentence and len(text) < MAX_SEGMENT_CHARS:
+                    continue
+
                 logging.info('%s %s', text_start_time, text)
 
                 combined_result.append('|'.join([text_start_time, end_time, text]))
 
                 segment_text_list = []
                 text_start_time = None
+        # flush remaining segments that didn't end with sentence-ending punctuation
+        if segment_text_list:
+            text = ' '.join(segment_text_list)
+            combined_result.append('|'.join([text_start_time, end_time, text]))
         save_text_to_file('\n'.join(combined_result), self.whisper_combined_file)
 
     def translate_whisper_result(self):
         logging.info('Translating whisper result...')
-        translate_result = []
-        with open(self.whisper_combined_file, 'r') as f:
+
+        # resume support: keep already translated lines from previous runs
+        done = {}
+        if os.path.exists(self.translate_file):
+            with open(self.translate_file, 'r') as f:
+                for line in f.read().strip().split('\n'):
+                    if not line.strip():
+                        continue
+                    parts = line.split('|', 3)
+                    if len(parts) == 4 and parts[3].strip():
+                        done['|'.join(parts[:3])] = parts[3]
+            logging.info('Resuming: %d lines already translated', len(done))
+
+        with open(self.whisper_combined_file, 'r') as f, open(self.translate_file, 'w') as out:
             for line in f.read().strip().split('\n'):
-                start_time, end_time, text_original = line.split('|')
-                text_translated = translators.translate_text(text_original, translator=trans_service, from_language='en', to_language='zh', if_ignore_limit_of_length=True)
+                if not line.strip():
+                    continue
+                start_time, end_time, text_original = line.split('|', 2)
+                key = '|'.join([start_time, end_time, text_original])
+                if key in done:
+                    text_translated = done[key]
+                else:
+                    text_translated = translate_text(text_original)
+                    out.write(key + '|' + text_translated + '\n')
+                    out.flush()
                 logging.info('%s %s %s', start_time, text_original, text_translated)
-                translate_result.append('|'.join([start_time, end_time, text_original, text_translated]))
-        save_text_to_file('\n'.join(translate_result), self.translate_file)
 
     def create_srt(self):
         logging.info('Converting whisper result to srt...')
@@ -105,7 +143,9 @@ class Transvideo:
         index = 1
         with open(self.translate_file, 'r') as f:
             for line in f.read().strip().split('\n'):
-                start_time, end_time, text_original, text_translated = line.split('|')
+                if not line.strip():
+                    continue
+                start_time, end_time, text_original, text_translated = line.split('|', 3)
                 transcript_result.append(str(index))
                 transcript_result.append('{} --> {}'.format(start_time, end_time))
                 transcript_result.append(text_original)
@@ -124,7 +164,7 @@ class Transvideo:
     def _compile_video_with_srt_hard(self):
         logging.info('Compiling video with srt...')
 
-        command = 'ffmpeg -i "{}" -vf "subtitles={}:force_style=\'FontSize=12,Fontname=PingFang SC\'" "{}"'.format(
+        command = 'ffmpeg -y -i "{}" -vf "subtitles={}:force_style=\'FontSize=12,Fontname=PingFang SC\'" "{}"'.format(
             self.video_file, self.srt_file, self.output_file
         )
         exec_command(command)
@@ -132,10 +172,29 @@ class Transvideo:
     def _compile_video_with_srt_soft(self):
         logging.info('Compiling video with srt...')
 
-        command = 'ffmpeg -i "{}" -i "{}" -c copy -c:s mov_text -metadata:s:s:0 language=eng "{}"'.format(
+        command = 'ffmpeg -y -i "{}" -i "{}" -c copy -c:s mov_text -metadata:s:s:0 language=eng "{}"'.format(
             self.video_file, self.srt_file, self.output_file
         )
         exec_command(command)
+
+
+def translate_text(text, retries=3):
+    last_error = None
+    for service in trans_services:
+        for attempt in range(retries):
+            try:
+                result = translators.translate_text(
+                    text, translator=service, from_language='en', to_language='zh',
+                    if_ignore_limit_of_length=True,
+                )
+                if result:
+                    return result
+                raise RuntimeError('empty translation result')
+            except Exception as e:
+                last_error = e
+                logging.warning('translate via %s failed (attempt %d/%d): %s', service, attempt + 1, retries, e)
+                time.sleep(1 + attempt)
+    raise RuntimeError(f'all translators failed for text: {text[:50]}... last error: {last_error}')
 
 
 def seconds_to_hms(seconds):
@@ -149,7 +208,9 @@ def seconds_to_hms(seconds):
 def exec_command(command):
     logging.info('Executing command: %s', command)
 
-    os.system(command)
+    code = os.system(command)
+    if code != 0:
+        raise RuntimeError(f'Command failed with exit code {code}: {command}')
 
 
 def save_text_to_file(text, filepath):
