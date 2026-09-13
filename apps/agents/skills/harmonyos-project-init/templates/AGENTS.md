@@ -46,14 +46,18 @@ ets/ 下业务代码建议按设计文档划分：`api/`（后端客户端）、
 已封装进根目录 `Makefile`（底层调用 DevEco Studio 内置工具链，无需打开 IDE）：
 
 ```bash
-make build   # 编译 + 打包 debug HAP（未签名，产物在 entry/build/default/outputs/）
-make test    # 跑 LocalUnit 单测（hypium，entry/src/test）
-make help    # 列出全部目标
+make build        # 编译 + 打包 debug HAP（未签名，产物在 entry/build/default/outputs/）
+make test         # 跑 LocalUnit 单测（hypium，entry/src/test）
+make ohpm-install # 拉取 ohpm 依赖（首次 make test 前必需；test 目标已内置缺失检测）
+make help         # 列出全部目标
 ```
 
 - 签名需在 DevEco Studio 里配置后才可装真机；未签名时 SignHap WARN 跳过，可忽略
 - 环境变量（DEVECO_SDK_HOME / JAVA_HOME / PATH）由 Makefile 自动设置，无需手动导出
 - 若本机 DevEco Studio 不在 `/Applications/DevEco-Studio.app`，改 Makefile 顶部路径
+- ⚠️ **`make test` 的假绿**：hypium 用例失败时 hvigor 仍可能打印 `BUILD SUCCESSFUL`，
+  只有日志里有 `Error in <case>`。判断测试是否真的通过必须：
+  `make test 2>&1 | grep -c "Error in"` 为 0（Makefile 的 test 目标已内置该校验）。
 
 ## 核心设计决策（详版见设计文档）
 
@@ -63,6 +67,14 @@ make help    # 列出全部目标
    系统返回 = pop，兄弟切换 = replace，面包屑 = popTo。
 2. **状态管理用 V2 范式**（@ObservedV2/@Trace/@Local）；页面间共享状态走
    AppStorageV2.connect 单例，勿靠路由 param 传大对象。
+   （若共享状态是**普通类单例**而非 @ObservedV2：在单例上加 `addListener/removeListener`，
+   页面用 `@Local version: number` 自增触发重渲。）
+3. **分层要适配「本地单测平台 API 是空桩」**（重要，会反向决定模块划分）：
+   `src/test` 的本地单测里所有 `@kit` API 都是空桩——不抛错、返回空数据
+   （实测 `cryptoFramework.createMd('MD5')` 返回 0 字节摘要、AES 解密返回空数组）。
+   所以：**纯算法/纯逻辑要自实现或依赖注入**（可 100% 本地测），
+   平台原语只做成薄封装（如 5 行的 `cryptoFramework` 调用）并列进真机验证清单。
+   否则会出现「测试全绿、生产路径零覆盖」的假安全感。
 
 <!-- 在此补充项目特有决策（数据流/同步策略/渲染规则等），例如： -->
 
@@ -75,11 +87,26 @@ make help    # 列出全部目标
    - 指南库：`/websites/developer_huawei_consumer_cn_doc_harmonyos-guides`
    - API 参考库：`/websites/developer_huawei_consumer_cn_doc_harmonyos-references`
    （用法见 context7 skill：先 resolve 再 query，每个查询聚焦单一主题）
-2. **精读原文用 `.md` 后缀**：Context7 片段不全或需核对版本标注时，
-   任何华为官方文档 URL 追加 `.md` 后缀即可直接获取 Markdown 正文，
-   例如 `.../harmonyos-references/ts-basic-components-text.md`。
-   用 `curl -sL` 即可拿到全文，无需浏览器渲染；返回 404 说明页面不存在。
-3. **只查深链，不查目录页**。本文档给出的 URL 均已验证可达（2026-08）。
+2. **精读原文：华为文档站取不到正文，走下面三条正路**（2026-09 实测：
+   该站是 JS 渲染的 SPA，裸 URL 用 `curl` 永远返回 200 空壳，**加 `.md` 后缀已全站 404**，
+   不能用 HTTP 状态码判断页面是否存在）：
+   1) **SDK d.ts（第一手事实来源，优先级最高）**：
+      `$DEVECO_SDK_HOME/default/openharmony/ets/api/*.d.ts`（API/枚举）、
+      `ets/kits/@kit.*.d.ts`（kit 导出清单）、
+      `toolchains/id_defined.json`（`sys.color.*` / `sys.media.*` 合法资源名）、
+      `toolchains/lib/PermissionDefinitions.json`（权限 grantMode/availableLevel）。
+      **不确定某 API/枚举是否存在时先 grep d.ts**，别猜。
+   2) **OpenHarmony 官方 docs 仓库 raw（含 ArkTS 示例、算法规格表）**：
+      `https://raw.githubusercontent.com/openharmony/docs/master/zh-cn/application-dev/<子系统>/<主题>.md`，
+      例 `security/UniversalKeystoreKit/huks-refined-user-identity-authentication.md`；
+      能力/算法支持矩阵查 `*-spec.md`（如 `security/CryptoArchitectureKit/crypto-sym-encrypt-decrypt-spec.md`）。
+   3) **Context7**（见上）。
+3. **设计新功能前先查权限级别**：`toolchains/lib/PermissionDefinitions.json` 里
+   `system_grant`+`availableLevel: normal` = 声明即可、**免弹窗**（如 `ACCESS_BIOMETRIC`、`PRIVACY_WINDOW`）；
+   `user_grant`+`system_basic` = **普通应用拿不到**（如 `READ_PASTEBOARD`）→ 设计阶段就该避开，
+   否则写完才发现功能不可实现。
+4. **只查深链，不查目录页**。本文档给出的 URL 用于**人工/浏览器查看**（已验证可达，2026-08），
+   agent 取正文请用上面第 2 条的 1)/2)。
 4. **版本对齐**：查 API 时注意页面中 "起始版本" 标注，忽略低于项目版本已废弃的接口；
    ArkTS 状态管理有 V1/V2 两代范式，优先了解差异。
 5. 完整分类清单（含一句话摘要 + 何时查阅）：
@@ -104,8 +131,23 @@ make help    # 列出全部目标
 
 当第一次做错了，后续修复时，需要总结一些经验写入这里，避免后续继续踩坑。
 
-- 华为文档站是 SPA：不带 `.md` 后缀的 URL 用 curl 永远返回 200 的空壳 HTML，
-  **不能用裸 URL 的 200 判断页面存在**，必须加 `.md` 看是否 404。
+- 华为文档站是 SPA：裸 URL 用 curl 永远返回 200 空壳 HTML，**不能用 HTTP 状态码判断页面存在**；
+  且 `.md` 后缀技巧已全站 404（2026-09 实测）→ 取正文走 SDK d.ts / OpenHarmony docs raw（见「资料使用规则」）。
+- **测试假绿**：hypium 用例失败时 hvigor 仍可能打印 `BUILD SUCCESSFUL`，只有日志里有 `Error in <case>`。
+  → 判测试通过必须 `make test 2>&1 | grep -c "Error in"` == 0（Makefile 的 test 目标已内置校验）。
+- **首次 `make test` 报 `Failed to resolve OhmUrl ... "@ohos/hypium"`**：根因是缺 `oh_modules` → `make ohpm-install`。
+- **手写骨架缺 `entry/oh-package.json5`** 时报 `OhPackageLoader.processModuleDependencyMap →
+  ERR_INVALID_ARG_TYPE: The "data" argument must be of type string ... Received undefined`——
+  错误信息完全看不出真实原因。同级还需 `entry/{build-profile.json5,hvigorfile.ts,obfuscation-rules.txt,.gitignore}`。
+- **本地单测里所有 `@kit` 平台 API 都是空桩**：不抛错但返回空数据（`createMd('MD5')` 返回 0 字节摘要、
+  AES 解密返回空数组）→ 纯算法必须自实现/依赖注入才能本地测，平台原语列真机清单（见「核心设计决策」3）。
+- **`buffer.from(str,'utf-8')` 返回 `Buffer`，不能直接当 `Uint8Array` 用**（本地 mock 下 `byteOffset` 还是伪造值）
+  → 用 `new Uint8Array(buffer.from(s,'utf-8').buffer)`。
+- **`sys.media.*` 里看似通用的名字可能是 private**：`ohos_ic_public_settings` 在 `toolchains/id_defined.json`
+  中不存在（编译报 Unknown resource name）→ 先去该文件 grep 合法符号（`ohos_ic_public_more`、
+  `ohos_ic_public_search_filled` 等）。
+- **模板工程不要带他人的签名材料绝对路径**：`build-profile.json5` 留 `"signingConfigs": []` 即可正常构建
+  （只 WARN），签名由用户在 DevEco Studio 里配置。
 - `js-apis-*` 旧命名页面多为子页面索引（几 KB 的链接列表），
   `arkts-apis-*` 新命名页面才有完整 API 正文。
 - **Navigation 路由表必须绑组件内 @Builder 方法**（`.navDestination(this.PageMap)`，@Builder 只声明

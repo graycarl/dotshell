@@ -2,7 +2,9 @@
 
 > 维护原则（违反即视为坏链接，需修复）：
 > 1. 每条 URL 必须是**深链**（直达正文，非目录首页）且**免登录**；
-> 2. 每条 URL 追加 `.md` 后缀应返回 Markdown 正文（`curl -sL <url>.md`，404 即失效）；
+> 2. ⚠️ **`.md` 后缀技巧已失效**（2026-09 实测：华为文档站任意 URL 加 `.md` 全站 404），
+>    且该站是 JS 渲染的 SPA——裸 URL 用 `curl` 永远返回 200 空壳。
+>    **本清单的 URL 仅供人工/浏览器打开**；agent 取正文走下方「如何使用本文档」第 2 条的三条正路。
 > 3. 每条附一句话摘要和"何时查阅"；
 > 4. 与项目 SDK 对齐：HarmonyOS 6.0.2 / API 22（新项目以 build-profile.json5 的 targetSdkVersion 为准）。
 >
@@ -10,7 +12,7 @@
 
 ## 如何使用本文档
 
-**两层配合，先搜后读：**
+**三层配合：语义速搜 → SDK 核事实 → 官方仓库读全文**
 
 1. **搜索/速答 → Context7**（语义搜索官方文档，返回聚焦片段 + 来源 URL）：
    - 指南库 ID：`/websites/developer_huawei_consumer_cn_doc_harmonyos-guides`
@@ -18,13 +20,29 @@
    - Samples 库 ID：`/linganmin/harmonyos_samples`
    - 适合：不知道具体页面、"怎么做 X" 类问题。局限：片段式摘录，可能缺完整签名/版本标注。
 
-2. **精读原文 → `.md` 后缀**（拿到权威全文）：
+2. **核对事实 / 读全文 → 三条正路**（免登录、可 grep、权威）：
 
-```bash
-curl -sL "<URL>.md"        # 获取 Markdown 全文
-```
+   1) **SDK d.ts——第一手事实来源，优先级最高**（API 是否存在、枚举有多少个值，以它为准）：
+      ```bash
+      SDK=/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony
+      ls $SDK/ets/api/*.d.ts          # 单模块 API（@ohos.* / arkts-apis-*）
+      cat $SDK/ets/kits/@kit.*.d.ts   # kit 导出清单（@kit.XxxKit 里到底导出了什么）
+      grep -n 'sys_color\|ohos_ic_public' $SDK/toolchains/id_defined.json   # sys.color.* / sys.media.* 合法名
+      python3 -c "import json;d=json.load(open('$SDK/toolchains/lib/PermissionDefinitions.json'));..."  # 权限级别
+      ```
+   2) **OpenHarmony 官方 docs 仓库 raw**（ArkTS 完整示例、能力/算法支持矩阵）：
+      `https://raw.githubusercontent.com/openharmony/docs/master/zh-cn/application-dev/<子系统>/<主题>.md`
+      - 例：`security/UniversalKeystoreKit/huks-refined-user-identity-authentication.md`（HUKS 指纹访问控制范式）
+      - 能力/规格类问题查 `*-spec.md`，如 `security/CryptoArchitectureKit/crypto-sym-encrypt-decrypt-spec.md`
+        （用于确认 `"AES256|CBC|NoPadding"` 这类 transformation 字符串是否合法）
+   3) **Context7**（见第 1 条）。
 
-大页面（>100KB，如组件 API 页）建议 pipe 给 grep 定位小节，避免一次读入过多内容。
+3. **设计新功能前先查权限级别**（决定功能可行性，属于前置闸门）：
+   `toolchains/lib/PermissionDefinitions.json` 里
+   - `grantMode: system_grant` + `availableLevel: normal` → **声明即可、免弹窗**
+     （已核实：`ACCESS_BIOMETRIC`、`PRIVACY_WINDOW`、`FILE_ACCESS_PERSIST`）；
+   - `grantMode: user_grant` + `availableLevel: system_basic` → **普通应用拿不到**
+     （已核实：`READ_PASTEBOARD`）→ 设计阶段就应避开，否则写完才发现不可实现。
 
 ---
 
@@ -135,6 +153,7 @@ curl -sL "<URL>.md"        # 获取 Markdown 全文
 - ArkTS API 模块新命名：`arkts-apis-<kit>-<模块>[-<类/接口>]`
 - 旧命名 `js-apis-*` 页面多为子页索引；正文在 `arkts-apis-*` 页面
 - 站内搜索命中带 `-V13`/`-V14` 版本后缀的 URL 时，去掉后缀即为最新版地址
+- **这些 URL 规律只用于人工打开**；agent 需要正文时请走上面第 2 条（SDK d.ts / docs 仓库 raw）
 
 ## 待补充（随项目开发填充）
 
