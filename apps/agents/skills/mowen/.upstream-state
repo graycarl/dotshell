@@ -1,0 +1,17 @@
+repo=mowenxd/cli
+ref=main
+commit=507e9e9e5a141ec36f81a389b70fd0170ac12593
+synced_at=2026-09-18T04:09:37Z
+skill_version=0.1.0
+file:skills/mo-auth/SKILL.md=9361bcffc2a2da41493444d95798344c59ba0dfd79291d247afa7eab027a8d88
+file:skills/mo-note/SKILL.md=1808c2aa64db027ec04641555b336c66fa9f93b58c90de34e020e3fb60467678
+file:skills/mo-tag/SKILL.md=58f67a4f241496cf55ed2f0f3607307fabce91d90b59352405c85a63d8a28563
+file:skills/mo-user/SKILL.md=afae6508e404b9752e301d19f23794ad9750a769d8b66128a0d8cd5154daa6e9
+file:skills/mo-remark/SKILL.md=a6c27f3d3ae1057affd69ed46d9d1add19a7d2efa1097a0db9b30b73358bd335
+file:skills/mo-discover/SKILL.md=86ce107726b1526d0bbbe99792b16f98b522564b38ec99cc794ad09e21dfb824
+file:skills/mo-misc/SKILL.md=8372b124348d26b298e98fdd417caa460244f7cecb2e1872de417b53360ac0ee
+file:skills/mo-shared/SKILL.md=f459f31680d0abcfa35d3350ac4f6144040caef24cf05a655bd6c2d8e040efe7
+file:skills/mo-shared/references/api-key.md=69bf69a68389c9e31ca14e4422e66c7343871a8f5b7e1cad13164a3127950b5f
+file:skills/mo-shared/references/mocli-output-proto.md=552ce754077d6896120baf00791fe0e24acf1eb4d45db6fadf0807141502fd11
+file:skills/mo-shared/references/mocli-output-schema.md=9738abfbe0bbba9c87b38714c6ab429fd695654896abb2db7653fae69ae05087
+file:skills/mo-shared/references/mo-note-content-schema.md=3576c451ffe7fc91021114d88b0123f459a9c5557cc9529802376e4782b2e26f
