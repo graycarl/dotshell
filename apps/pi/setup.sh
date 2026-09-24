@@ -45,12 +45,38 @@ if [ -d "$SKILLS_SRC_DIR" ]; then
     done
 fi
 
-if [ -L "$PI_AGENT_DIR/prompts" ]; then
-    rm "$PI_AGENT_DIR/prompts"
+# Link prompt templates individually (not the whole directory) so local-only
+# prompts are preserved and each template stays a direct child of the dir.
+PROMPTS_SRC_DIR="$SCRIPT_DIR/agent/prompts"
+PROMPTS_DST_DIR="$PI_AGENT_DIR/prompts"
+
+if [ -L "$PROMPTS_DST_DIR" ]; then
+    rm "$PROMPTS_DST_DIR"
 fi
-if [ -d "$SCRIPT_DIR/agent/prompts" ]; then
-    ln -s "$SCRIPT_DIR/agent/prompts" "$PI_AGENT_DIR/prompts"
-    echo "✓ Linked prompts -> $PI_AGENT_DIR/prompts"
+mkdir -p "$PROMPTS_DST_DIR"
+
+# Remove stale prompt symlinks (prompts removed from source)
+for existing in "$PROMPTS_DST_DIR"/*; do
+    [ -L "$existing" ] || continue
+    target=$(readlink "$existing")
+    case "$target" in
+        "$PROMPTS_SRC_DIR"|"$PROMPTS_SRC_DIR"/*)
+            rm "$existing"
+            ;;
+    esac
+done
+
+if [ -d "$PROMPTS_SRC_DIR" ]; then
+    for prompt_file in "$PROMPTS_SRC_DIR"/*.md; do
+        [ -f "$prompt_file" ] || continue
+        prompt_name="$(basename "$prompt_file")"
+
+        if [ -L "$PROMPTS_DST_DIR/$prompt_name" ]; then
+            rm "$PROMPTS_DST_DIR/$prompt_name"
+        fi
+        ln -s "$prompt_file" "$PROMPTS_DST_DIR/$prompt_name"
+        echo "✓ Linked prompt $prompt_name -> $PROMPTS_DST_DIR/$prompt_name"
+    done
 fi
 
 # Link extensions directory
