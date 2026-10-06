@@ -21,12 +21,30 @@ import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import type { Message } from "@mariozechner/pi-ai";
 import { StringEnum } from "@mariozechner/pi-ai";
 import { type ExtensionAPI, getMarkdownTheme } from "@mariozechner/pi-coding-agent";
+import type { SessionEntry } from "@mariozechner/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
-import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.js";
+import { type AgentConfig, type AgentScope, FORK_AGENT_NAME, discoverAgents } from "./agents.js";
 
 const MAX_SINGLE_CONCURRENCY = 4;
 const COLLAPSED_ITEM_COUNT = 10;
+
+// 内置 fork 默认禁用的工具，防止递归 fork bomb
+const FORK_EXCLUDE_TOOLS = "subagent,list_agents";
+
+/** Context forked from the main agent's active session branch. */
+interface ForkContext {
+	entries: SessionEntry[];
+	parentSession?: string;
+}
+
+/** Optional settings overrides for the built-in fork agent. */
+interface RuntimeOverrides {
+	model?: string;
+	tools?: string;
+	excludeTools?: string;
+	systemPromptAppend?: string;
+}
 
 // ── 全局信号量：限制同一时刻运行的子进程数量 ──────────────
 let activeSingleAgents = 0;
@@ -187,7 +205,7 @@ interface UsageStats {
 
 interface SingleResult {
 	agent: string;
-	agentSource: "user" | "project" | "unknown";
+	agentSource: "user" | "project" | "builtin" | "unknown";
 	task: string;
 	exitCode: number;
 	messages: Message[];
@@ -240,6 +258,93 @@ function writePromptToTempFile(agentName: string, prompt: string): { dir: string
 	return { dir: tmpDir, filePath };
 }
 
+/** Session id for a forked subagent session (must start and end alphanumeric). */
+function createForkSessionId(): string {
+	return `fork-${Math.random().toString(16).slice(2, 10)}${Date.now().toString(16).slice(-4)}`;
+}
+
+/**
+ * Drop the in-progress turn from an active branch.
+ *
+ * The parent session file usually ends with the assistant tool call that spawned
+ * this subagent, which has no tool result yet. Forking that verbatim makes the
+ * child inherit a dangling tool call (and often continue the parent's train of
+ * thought). Cutting at the last assistant message with an unmatched tool call
+ * keeps every completed step but removes the half-finished one.
+ */
+function buildForkEntries(branch: SessionEntry[]): SessionEntry[] {
+	const resultIds = new Set<string>();
+	for (const entry of branch) {
+		if (entry.type !== "message") continue;
+		if (entry.message.role === "toolResult" && typeof entry.message.toolCallId === "string") {
+			resultIds.add(entry.message.toolCallId);
+		}
+	}
+
+	let cut = branch.length;
+	for (let i = branch.length - 1; i >= 0; i--) {
+		const entry = branch[i];
+		if (entry.type !== "message" || entry.message.role !== "assistant") continue;
+		const content = entry.message.content;
+		if (!Array.isArray(content)) continue;
+		const hasPendingToolCall = content.some(
+			(part: any) => part.type === "toolCall" && typeof part.id === "string" && !resultIds.has(part.id),
+		);
+		if (hasPendingToolCall) {
+			cut = i;
+			break;
+		}
+	}
+
+	return branch.slice(0, cut);
+}
+
+/** Persist a forked branch as a standalone session file that `pi --fork` can consume. */
+function writeForkSourceFile(
+	entries: SessionEntry[],
+	targetCwd: string,
+	parentSession: string | undefined,
+	tmpDir: string,
+): string {
+	const filePath = path.join(tmpDir, "parent.jsonl");
+	const header = {
+		type: "session",
+		version: 3,
+		id: `src-${Math.random().toString(16).slice(2, 10)}`,
+		timestamp: new Date().toISOString(),
+		cwd: targetCwd,
+		...(parentSession ? { parentSession } : {}),
+	};
+	const content = [JSON.stringify(header), ...entries.map((entry) => JSON.stringify(entry))].join("\n");
+	fs.writeFileSync(filePath, `${content}\n`, { encoding: "utf-8", mode: 0o600 });
+	return filePath;
+}
+
+function buildTaskPrompt(task: string, isFork: boolean): string {
+	if (!isFork) return `Task: ${task}`;
+	return [
+		"The conversation above is shared context forked from the main agent.",
+		"You are now running as an independent sub-agent. Complete the task below autonomously and reply with a concise final report.",
+		"Do not ask the user questions; if you are blocked, state the blocker.",
+		"",
+		"Task:",
+		task,
+	].join("\n");
+}
+
+/** Read optional settings overrides for the built-in fork agent. */
+function resolveForkOverride(pi: ExtensionAPI, agent: AgentConfig | undefined): RuntimeOverrides | undefined {
+	if (!agent || agent.name !== FORK_AGENT_NAME) return undefined;
+	const config = (pi.getSettings() as any)?.subagent?.fork;
+	if (!config || typeof config !== "object") return undefined;
+	return {
+		model: typeof config.model === "string" ? config.model : undefined,
+		tools: typeof config.tools === "string" ? config.tools : undefined,
+		excludeTools: typeof config.excludeTools === "string" ? config.excludeTools : undefined,
+		systemPromptAppend: typeof config.systemPromptAppend === "string" ? config.systemPromptAppend : undefined,
+	};
+}
+
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 
 async function runSingleAgent(
@@ -247,6 +352,8 @@ async function runSingleAgent(
 	agents: AgentConfig[],
 	agentName: string,
 	task: string,
+	forkContext: ForkContext | undefined,
+	overrides: RuntimeOverrides | undefined,
 	cwd: string | undefined,
 	signal: AbortSignal | undefined,
 	onUpdate: OnUpdateCallback | undefined,
@@ -266,12 +373,24 @@ async function runSingleAgent(
 		};
 	}
 
+	const isFork = agent.context === "fork" && !!forkContext && forkContext.entries.length > 0;
 	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
 	let tmpPromptPath: string | null = null;
 
 	const args: string[] = ["--mode", "json", "-p", "--session-dir", tmpDir];
-	if (agent.model) args.push("--model", agent.model);
-	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
+	const effectiveModel = overrides?.model ?? agent.model;
+	const effectiveTools =
+		overrides?.tools ?? (agent.tools && agent.tools.length > 0 ? agent.tools.join(",") : undefined);
+	const effectiveExcludeTools =
+		overrides?.excludeTools ?? (agent.context === "fork" ? FORK_EXCLUDE_TOOLS : agent.excludeTools);
+
+	if (isFork && forkContext) {
+		const sourceFile = writeForkSourceFile(forkContext.entries, cwd ?? defaultCwd, forkContext.parentSession, tmpDir);
+		args.push("--session-id", createForkSessionId(), "--fork", sourceFile);
+	}
+	if (effectiveModel) args.push("--model", effectiveModel);
+	if (effectiveTools) args.push("--tools", effectiveTools);
+	if (effectiveExcludeTools) args.push("--exclude-tools", effectiveExcludeTools);
 
 	const currentResult: SingleResult = {
 		agent: agentName,
@@ -294,14 +413,17 @@ async function runSingleAgent(
 	};
 
 	try {
-		if (agent.systemPrompt.trim()) {
+		const effectiveSystemPrompt = [agent.systemPrompt, overrides?.systemPromptAppend]
+			.filter((s): s is string => !!s && s.trim().length > 0)
+			.join("\n\n");
+		if (effectiveSystemPrompt.trim()) {
 			const safeName = agentName.replace(/[^\w.-]+/g, "_");
 			tmpPromptPath = path.join(tmpDir, `prompt-${safeName}.md`);
-			fs.writeFileSync(tmpPromptPath, agent.systemPrompt, { encoding: "utf-8", mode: 0o600 });
+			fs.writeFileSync(tmpPromptPath, effectiveSystemPrompt, { encoding: "utf-8", mode: 0o600 });
 			args.push("--append-system-prompt", tmpPromptPath);
 		}
 
-		args.push(`Task: ${task}`);
+		args.push(buildTaskPrompt(task, isFork));
 		let wasAborted = false;
 
 		const exitCode = await new Promise<number>((resolve) => {
@@ -431,6 +553,7 @@ export default function (pi: ExtensionAPI) {
 		label: "Subagent",
 		description: [
 			"Delegate tasks to specialized subagents with isolated context.",
+			`A built-in agent named "${FORK_AGENT_NAME}" is always available: it inherits the main agent's full conversation context (fork) and completes the task independently. Use it when the delegated task needs context already gathered in this session.`,
 			"To parallelize, issue multiple subagent calls in the same assistant turn; they run concurrently.",
 			`At most ${MAX_SINGLE_CONCURRENCY} subagent processes run at once; excess calls queue until a slot frees.`, "",
 			'Default agent scope is "user" (from ~/.pi/agent/agents).',
@@ -438,6 +561,7 @@ export default function (pi: ExtensionAPI) {
 		].join(" "),
 		promptGuidelines: [
 			"When delegating to a subagent, always specify the exact agent name. If you are unsure which agents are available, first call list_agents to discover available subagents and their descriptions.",
+			`Use subagent(agent: "${FORK_AGENT_NAME}") when the sub-task needs the parent's accumulated context (fork); use other agents for isolated recon with a fresh context.`,
 			"To run independent subagents in parallel, issue multiple subagent tool calls in the same assistant turn instead of waiting for each to finish sequentially.",
 		],
 		parameters: SubagentParams,
@@ -491,6 +615,20 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
+			const targetAgent = agents.find((a) => a.name === params.agent);
+			let forkContext: ForkContext | undefined;
+			if (targetAgent?.context === "fork") {
+				try {
+					const entries = buildForkEntries(ctx.sessionManager.getBranch());
+					if (entries.length > 0) {
+						forkContext = { entries, parentSession: ctx.sessionManager.getSessionFile() };
+					}
+				} catch {
+					forkContext = undefined;
+				}
+			}
+			const overrides = resolveForkOverride(pi, targetAgent);
+
 			let result: SingleResult;
 			try {
 				result = await runSingleAgent(
@@ -498,6 +636,8 @@ export default function (pi: ExtensionAPI) {
 					agents,
 					params.agent,
 					params.task,
+					forkContext,
+					overrides,
 					params.cwd,
 					signal,
 					onUpdate,
@@ -529,6 +669,7 @@ export default function (pi: ExtensionAPI) {
 				theme.fg("toolTitle", theme.bold("subagent ")) +
 				theme.fg("accent", agentName) +
 				theme.fg("muted", ` [${scope}]`);
+			if (agentName === FORK_AGENT_NAME) text += theme.fg("accent", " fork");
 			text += `\n  ${theme.fg("dim", preview)}`;
 			return new Text(text, 0, 0);
 		},
@@ -657,6 +798,9 @@ export default function (pi: ExtensionAPI) {
 				lines.push(`  ${agent.name}`);
 				lines.push(`    Description: ${agent.description}`);
 				lines.push(`    Source: ${agent.source}`);
+				if (agent.context === "fork") {
+					lines.push("    Context: fork (inherits the main agent's conversation)");
+				}
 				if (agent.tools && agent.tools.length > 0) {
 					lines.push(`    Tools: ${agent.tools.join(", ")}`);
 				}
@@ -677,6 +821,7 @@ export default function (pi: ExtensionAPI) {
 						name: a.name,
 						description: a.description,
 						source: a.source,
+						context: a.context ?? "fresh",
 						tools: a.tools ?? [],
 						model: a.model ?? null,
 					})),
@@ -707,6 +852,9 @@ export default function (pi: ExtensionAPI) {
 				lines.push(`  ${agent.name}`);
 				lines.push(`    ${agent.description}`);
 				lines.push(`    Source: ${agent.source}`);
+				if (agent.context === "fork") {
+					lines.push("    Context: fork (inherits the main agent's conversation)");
+				}
 				if (agent.tools && agent.tools.length > 0) {
 					lines.push(`    Allowed tools: ${agent.tools.join(", ")}`);
 				}
