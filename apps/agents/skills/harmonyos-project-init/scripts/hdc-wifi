@@ -1,0 +1,300 @@
+#!/usr/bin/env bash
+# hdc-wifi — 自动发现并连接 HarmonyOS 设备的无线调试端口
+#
+# 随 harmonyos-project-init skill 分发（skills/harmonyos-project-init/scripts/hdc-wifi），
+# agent 直接从 skill 目录运行即可，不需要安装到 PATH。可用 HDC=/path/to/hdc 指定 hdc。
+#
+# 背景：鸿蒙手机「无线调试」的端口每次开启都是随机分配的，官方不提供固定方式。
+#       本脚本用「已知端口优先 → 全范围并发 TCP 扫描 → 逐个 hdc tconn 验证」的策略，
+#       把「查 IP / 查端口 / 敲 tconn」压缩成一条命令。
+#
+# 依赖：bash≥3.2、python3≥3.9（只用标准库）、DevEco 自带 hdc、常规 BSD/POSIX 命令。
+#       不需要安装 timeout/nc/jq/curl，不需要 sudo，不需要 pip 包。
+#
+# 用法: hdc-wifi [IP] [选项]
+#   hdc-wifi                     # 用上次成功的 IP（或唯一 USB 设备的 wlan IP）自动连接
+#   hdc-wifi 192.168.1.23        # 指定 IP
+#   hdc-wifi --port 5555         # 只试固定端口（配合 hdc tmode port 5555 用）
+#   hdc-wifi --range 25000-40000 # 自定义扫描范围
+#   hdc-wifi --jobs 512 --timeout 0.3   # 调扫描并发 / 单端口超时（默认 1024 / 0.25s）
+#   hdc-wifi --reset             # 先 hdc kill 再连
+#   hdc-wifi --conn-timeout 8    # 单次 hdc tconn 验证的超时秒数（默认 4）
+#   hdc-wifi --max-tries 20      # 最多验证多少个开放端口（默认 10）
+#   hdc-wifi -h
+#
+# 实测样例（华为 VDE-AL00 / API 26 / DevEco 6.1，无线调试端口 41153）
+#   热路径（端口未变）1.1s；冷启动全扫描 + 验证 ~24s；
+#   端口不在 25000-65535 时用 --range 1-65535。
+#
+# 提示：若机型支持固定端口，可先 USB 连一次执行 `hdc tmode port 5555`，
+#       之后 `hdc-wifi <IP> --port 5555` 就能秒连（本脚本也默认会先试 5555）。
+#
+# 已知坑：设备上常有「开放但不是 hdc」的端口（实测手机 3xxxx/6xxxx 段有 4~5 个），
+#        hdc tconn 打上去会挂 30~60s 才返回，所以这里必须给每次验证加超时。
+#
+set -uo pipefail
+
+VERSION="1.1.0"
+CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/hdc-wifi"
+STATE="$CONF_DIR/state"
+
+# 默认扫描范围：覆盖 Linux/macOS 风格临时端口段（实测手机开放端口在 35245~62110）。
+DEFAULT_RANGE="25000-65535"
+# 并发/超时：1024/0.25 实测 10s 扫完且不漏；太激进（如 4096/0.12）会因 SYN 被丢弃而全部漏报。
+TIMEOUT="0.25"
+JOBS="1024"
+# 兜底档位：激进档一个端口都没扫到时，用保守档再扫一遗。
+FALLBACK_TIMEOUT="0.4"
+FALLBACK_JOBS="256"
+# 快路径：先试这些「大概率/历史」端口，命中就秒连。
+COMMON_PORTS="5555 8710 10178 5556 8888 12345"
+# 单次 `hdc tconn` 验证的超时（秒）：真连上通常 <1s，超时即视为不是 hdc 端口。
+CONN_TIMEOUT="4"
+# 最多对多少个开放端口发起 tconn 验证（防止一堆无关端口拖时间）。
+MAX_TRIES="10"
+
+c_red=$'\033[31m'; c_grn=$'\033[32m'; c_ylw=$'\033[33m'; c_dim=$'\033[2m'; c_off=$'\033[0m'
+if [ ! -t 1 ]; then c_red=""; c_grn=""; c_ylw=""; c_dim=""; c_off=""; fi
+say()  { printf '%s\n' "$*"; }
+info() { printf '%s\n' "${c_dim}$*${c_off}"; }
+ok()   { printf '%s\n' "${c_grn}$*${c_off}"; }
+warn() { printf '%s\n' "${c_ylw}$*${c_off}" >&2; }
+die()  { printf '%s\n' "${c_red}✗ $*${c_off}" >&2; exit 1; }
+
+usage() {
+  awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"
+  exit 0
+}
+
+TMPD="$(mktemp -d "${TMPDIR:-/tmp}/hdc-wifi.XXXXXX")"
+trap 'rm -rf "$TMPD"' EXIT
+
+# ---------------------------------------------------------------- hdc 定位
+find_hdc() {
+  if [ -n "${HDC:-}" ] && [ -x "${HDC:-}" ]; then echo "$HDC"; return; fi
+  local p
+  for p in \
+    "/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/toolchains/hdc" \
+    "/Applications/DevEco-Studio.app/Contents/sdk"/default/*/toolchains/hdc \
+    "$HOME/Library/OpenHarmony/sdk"/*/toolchains/hdc \
+    "$HOME/Library/Huawei/Sdk"/*/toolchains/hdc \
+    "$HOME/Library/Huawei/Sdk"/*/hdc/hdc ; do
+    [ -x "$p" ] && { echo "$p"; return; }
+  done
+  p="$(command -v hdc 2>/dev/null)" && [ -n "$p" ] && { echo "$p"; return; }
+  return 1
+}
+
+# ---------------------------------------------------------------- 状态读写
+state_get() { [ -f "$STATE" ] && sed -n "s/^$1=//p" "$STATE" | head -1; }
+state_set() {
+  local ip="$1" port="$2"
+  mkdir -p "$CONF_DIR"
+  { [ -n "$port" ] && printf 'PORT=%s\n' "$port" || true
+    [ -n "$ip" ]   && printf 'IP=%s\n'   "$ip"   || true
+  } >"$STATE"
+}
+
+# ---------------------------------------------------------------- 参数解析
+IP=""; ONLY_PORT=""; RANGE="$DEFAULT_RANGE"; DO_RESET=0; NO_CACHE=0; QUIET=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help) usage ;;
+    -V|--version) echo "hdc-wifi $VERSION"; exit 0 ;;
+    --port) ONLY_PORT="${2:?}"; shift 2 ;;
+    --port=*) ONLY_PORT="${1#*=}"; shift ;;
+    --range) RANGE="${2:?}"; shift 2 ;;
+    --range=*) RANGE="${1#*=}"; shift ;;
+    --timeout) TIMEOUT="${2:?}"; shift 2 ;;
+    --conn-timeout) CONN_TIMEOUT="${2:?}"; shift 2 ;;
+    --max-tries) MAX_TRIES="${2:?}"; shift 2 ;;
+    --jobs) JOBS="${2:?}"; shift 2 ;;
+    --reset) DO_RESET=1; shift ;;
+    --no-cache) NO_CACHE=1; shift ;;
+    -q|--quiet) QUIET=1; shift ;;
+    -*) die "未知选项: $1（-h 看用法）" ;;
+    *) [ -z "$IP" ] || die "只接受一个 IP 参数"; IP="$1"; shift ;;
+  esac
+done
+
+HDC="$(find_hdc)" || die "找不到 hdc。请设置 HDC=/path/to/hdc，或安装 DevEco Studio。"
+info "hdc: $HDC  ($("$HDC" -v 2>&1 | head -1))"
+command -v python3 >/dev/null 2>&1 || die "端口扫描需要 python3（未找到）。"
+
+[ "$DO_RESET" = 1 ] && { info "hdc kill ..."; "$HDC" kill >/dev/null 2>&1; "$HDC" start >/dev/null 2>&1; sleep 0.3; }
+
+# ---------------------------------------------------------------- 1. 已连上就直接返回
+already_connected() { # $1=ip → 打印 port 或空
+  "$HDC" list targets 2>/dev/null | tr -d '\r' | sed -n "s#^$1:\([0-9]\{1,5\}\)\$#\1#p" | head -1
+}
+
+# ---------------------------------------------------------------- 2. 拿 IP
+auto_ip_from_usb() {
+  local key out
+  key="$("$HDC" list targets 2>/dev/null | tr -d '\r' | grep -v ':' | grep -v '^\[' | head -1)"
+  [ -n "$key" ] || return 1
+  info "尝试从 USB 设备 $key 读取 wlan IP ..." >&2
+  out="$("$HDC" -t "$key" shell ifconfig wlan0 2>/dev/null)" || out=""
+  [ -n "$out" ] || out="$("$HDC" -t "$key" shell ifconfig 2>/dev/null)"
+  [ -n "$out" ] || out="$("$HDC" -t "$key" shell ip -4 addr show 2>/dev/null)"
+  printf '%s\n' "$out" \
+    | grep -oE '(inet addr:)?inet [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' \
+    | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' \
+    | grep -v '^127\.' | head -1
+}
+
+[ -n "$IP" ] || IP="$(state_get IP)"
+if [ -z "$IP" ]; then
+  IP="$(auto_ip_from_usb)" || IP=""
+fi
+[ -n "$IP" ] || die "不知道 IP。用法: hdc-wifi <手机IP>（手机设置→开发者选项→无线调试 里能看到）"
+
+# 可达性预检（可选依赖 ping；ICMP 被禁时也继续，不当致命错误）
+PING_TO=(-W 1)
+[ "$(uname -s 2>/dev/null)" = Darwin ] && PING_TO=(-t 1)
+if command -v ping >/dev/null 2>&1 && ! ping -c 1 "${PING_TO[@]}" "$IP" >/dev/null 2>&1; then
+  warn "ping 不通 ${IP}（可能禁 ICMP 或 IP 不对），仍继续尝试 TCP 连接..."
+fi
+
+# 已连接？
+if [ "$NO_CACHE" = 0 ]; then
+  P="$(already_connected "$IP")"
+  if [ -n "$P" ]; then
+    ok "✓ $IP:$P 已经处于连接状态。"
+    "$HDC" list targets
+    exit 0
+  fi
+fi
+
+# ---------------------------------------------------------------- 3. hdc tconn 验证
+# 关键：设备上可能存在「TCP 能连上但不是 hdc」的端口（实测手机 3xxxx/6xxxx 段有 4~5 个），
+# 此时 hdc tconn 会挂 30~60s 才返回，所以必须自己包一层超时。
+# 权威判据：hdc 是否已把 ip:port 当成目标。
+# （已连过时 hdc tconn 不打印 Connect OK，而是 "[Info]Target is connected, repeat operation"）
+target_connected() { # $1=port
+  "$HDC" list targets 2>/dev/null | tr -d '\r' | grep -qx "$IP:$1"
+}
+
+try_connect() { # $1=port → 0 成功
+  local port="$1" out="$TMPD/tconn.$1" pid t0 now
+  target_connected "$port" && return 0          # 已经在连了，直接算成功
+  : >"$out"
+  "$HDC" tconn "$IP:$port" >"$out" 2>&1 &
+  pid=$!
+  t0=$(date +%s)
+  while :; do
+    if grep -qi 'connect ok' "$out" 2>/dev/null; then
+      kill -9 "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; return 0
+    fi
+    if ! kill -0 "$pid" 2>/dev/null; then wait "$pid" 2>/dev/null; break; fi
+    now=$(date +%s)
+    if [ $((now - t0)) -ge "$CONN_TIMEOUT" ]; then
+      kill -9 "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+      break
+    fi
+    sleep 0.2
+  done
+  target_connected "$port" && return 0
+  if grep -qi 'connected' "$out" 2>/dev/null; then
+    [ "$QUIET" = 1 ] || info "  $IP:$port → $(tr '\n' ' ' <"$out" | cut -c1-80)（但未出现在 list targets）"
+  elif [ "$QUIET" = 1 ]; then
+    :
+  elif [ -s "$out" ]; then
+    info "  $IP:$port → $(tr '\n' ' ' <"$out" | cut -c1-80)"
+  else
+    info "  $IP:$port → 无响应（超时 >${CONN_TIMEOUT}s）"
+  fi
+  return 1
+}
+
+tries=0
+verify() { # $1=port；成功返回 0，超出尝试上限返回 2
+  [ "$tries" -lt "$MAX_TRIES" ] || { warn "已达验证上限 ${MAX_TRIES} 个端口，放弃剩余候选。"; return 2; }
+  tries=$((tries + 1))
+  try_connect "$1"
+}
+
+connected=0
+# 3a. 快路径：历史端口（仅当 IP 一致）+ 常见端口（配合 hdc tmode port 固定端口时秒连）
+CAND="$ONLY_PORT"
+if [ -z "$CAND" ]; then
+  CACHED_PORT=""
+  [ "$(state_get IP)" = "$IP" ] && CACHED_PORT="$(state_get PORT)"
+  CAND="$CACHED_PORT $COMMON_PORTS"
+fi
+for p in $CAND; do
+  [ -n "$p" ] || continue
+  [ "$QUIET" = 1 ] || info "试端口 $p ..."
+  verify "$p"; rc=$?
+  [ "$rc" = 0 ] && { connected=1; PORT="$p"; break; }
+  [ "$rc" = 2 ] && break
+done
+
+# 3b. 全范围扫描
+scan_ports() { # $1=start $2=end $3=timeout $4=jobs   → stdout: 开放端口（升序，空格分隔）
+  python3 - "$IP" "$1" "$2" "$3" "$4" <<'PY' | grep -E '^[0-9]+$' | sort -n | tr '\n' ' '
+import asyncio, sys
+
+ip, start, end, timeout, jobs = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), float(sys.argv[4]), int(sys.argv[5])
+sem = asyncio.Semaphore(jobs)
+
+async def probe(port):
+    async with sem:
+        try:
+            r, w = await asyncio.wait_for(asyncio.open_connection(ip, port), timeout)
+            w.close()
+            try:
+                await w.wait_closed()
+            except Exception:
+                pass
+            return port
+        except Exception:
+            return None
+
+async def main():
+    tasks = [asyncio.ensure_future(probe(p)) for p in range(start, end + 1)]
+    for fut in asyncio.as_completed(tasks):
+        r = await fut
+        if r:
+            print(r, flush=True)
+
+asyncio.run(main())
+PY
+}
+
+verify_ports() { # $1=端口列表；成功则置 connected=1/PORT 并 return 0
+  local p rc
+  for p in $1; do
+    verify "$p"; rc=$?
+    [ "$rc" = 0 ] && { connected=1; PORT="$p"; return 0; }
+    [ "$rc" = 2 ] && return 1
+  done
+  return 1
+}
+
+if [ "$connected" = 0 ] && [ -z "$ONLY_PORT" ]; then
+  START="${RANGE%-*}"; END="${RANGE#*-}"
+  info "扫描 $IP 的端口 $START-${END}（并发 ${JOBS}，超时 ${TIMEOUT}s）..."
+  PORTS="$(scan_ports "$START" "$END" "$TIMEOUT" "$JOBS")"
+  if [ -z "${PORTS// /}" ]; then
+    # 激进档可能因 SYN 被丢弃而全漏（实测 4096 并发时 4 万个端口一个都扫不到）
+    warn "首轮未发现任何开放端口，改用保守档位重扫（并发 ${FALLBACK_JOBS}，超时 ${FALLBACK_TIMEOUT}s，可能要 1 分钟）..."
+    warn "若 IP 填错/无线调试未开，这轮会白等；急的话可以 Ctrl-C 后用 --range 1-65535 重试。"
+    PORTS="$(scan_ports "$START" "$END" "$FALLBACK_TIMEOUT" "$FALLBACK_JOBS")"
+  fi
+  if [ -z "${PORTS// /}" ]; then
+    warn "扫描范围内没有发现任何开放端口。"
+    warn "可能原因：无线调试没开、手机和电脑不在同一网段、IP 不对、或端口不在 ${RANGE}（试试 --range 1-65535）。"
+    exit 2
+  fi
+  info "开放端口: $PORTS"
+  verify_ports "$PORTS"
+fi
+
+[ "$connected" = 1 ] || die "连不上 ${IP}。检查：无线调试已开、同一 Wi-Fi、IP 正确（可加 --reset 或 --range 1-65535 重试）。"
+
+state_set "$IP" "$PORT"
+ok "✓ 已连接: $IP:$PORT"
+"$HDC" list targets
+say ""
+info "已记住 $IP:${PORT}，下次直接跑: hdc-wifi   （或 hdc-wifi ${IP}）"

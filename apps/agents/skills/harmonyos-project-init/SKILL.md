@@ -6,7 +6,8 @@ description: >
   docs/harmonyos-resources.md（华为官方文档深链清单）、Makefile（DevEco
   命令行构建封装）。当用户要求在新鸿蒙项目中初始化/补全 AGENTS.md 或项目
   上下文，或检测到鸿蒙工程（存在 build-profile.json5 与 entry/）但缺少
-  AGENTS.md 时使用。
+  AGENTS.md 时使用。也用于真机无线调试相关求助（hdc 连不上、无线调试端口
+  每次变化、hdc tconn 卡住）——本 skill 自带 scripts/hdc-wifi 自动发现端口。
 ---
 
 # HarmonyOS 项目上下文初始化
@@ -14,20 +15,29 @@ description: >
 把鸿蒙 App 开发的通用知识（资料检索规则、官方文档深链清单、实战已知坑、命令行构建）
 一键写入新工程，让后续 agent 接手时直接拥有完整开发上下文。
 
-## 模板文件（相对本 skill 目录）
+## 模板文件与捆绑工具（相对本 skill 目录）
 
 ```
 templates/
 ├── AGENTS.md                  # AGENTS.md 模板（含 {{占位符}}，需替换）
 ├── docs/harmonyos-resources.md # 官方文档深链清单（URL 已实测验证，勿改）
 └── Makefile                   # 命令行构建封装（含 {{app_name}} 占位符）
+
+scripts/
+└── hdc-wifi                   # 真机无线调试端口自动发现（真机调试前必读，见下节）
 ```
+
+**`scripts/hdc-wifi` 不复制进项目**：AGENTS.md / Makefile 里写它的**绝对路径**
+（由 `{{hdc_wifi}}` 占位符在 Step 3 替换），项目只引用不持有副本，脚本升级后所有项目自动受益。
 
 ## 触发场景
 
 - 用户说"初始化这个鸿蒙项目的 AGENTS.md / 项目上下文"；
 - 用户新建了鸿蒙工程并让 agent 开始干活，但项目里没有 AGENTS.md；
 - 检测到 `build-profile.json5` + `entry/`（鸿蒙模板工程特征）且根目录无 AGENTS.md。
+
+工具可单独使用（不必先做初始化）：用户抱怨真机无线调试连不上 / 端口每次都变时，
+直接跑本 skill 的 `scripts/hdc-wifi`（见下「捆绑工具」节）。
 
 ## 初始化流程
 
@@ -52,6 +62,7 @@ templates/
 | `{{app_positioning}}` | 无源 | 留「待补充」并写入报告 |
 | `{{data_source}}` | 无源 | 留「待补充」并写入报告（后端 API/数据来源） |
 | `{{design_doc}}` | 探测 `docs/design-*.md` 是否存在 | 有则用实际文件名，无则默认 `docs/design-v0.1.md` |
+| `{{hdc_wifi}}` | 本 skill 自身：`<SKILL.md 所在目录>/scripts/hdc-wifi` 的**绝对路径** | 给 AGENTS.md / Makefile 引用无线调试工具，勿改成项目内副本 |
 
 ### Step 2.5 骨架完整性校验（工程为手写/半手写时必做）
 
@@ -77,16 +88,38 @@ DevEco 模板新建的工程自带这些文件；**手写骨架时最容易漏�
    该清单 URL 已实测验证，**不要改动 URL**；只按需新增分区。
 3. **Makefile**：从模板直拷并替换 `{{app_name}}`。若用户机器 DevEco Studio
    不在 `/Applications/DevEco-Studio.app`，提示用户改顶部路径。
+   （Makefile **不封装**无线调试：`scripts/hdc-wifi` 不拷贝到项目，由 AGENTS.md 直接引用绝对路径）
 
 ### Step 4 报告
 
 完成后向用户报告：
 - 已生成的文件路径；
 - **待补充字段清单**（通常为 `app_positioning` / `data_source`，可让用户口述后补填）；
+- 已引用的无线调试工具路径（`{{hdc_wifi}}`）与用法；
 - 提示：Makefile 签名需在 DevEco Studio 里配置后才可装真机；`make build` 可命令行编译验证。
+
+## 捆绑工具：无线调试端口自动发现（scripts/hdc-wifi）
+
+**真机调试前必读**：鸿蒙手机「无线调试」的端口每次开启/重启/换 Wi-Fi 都会变，官方不给固定；
+且设备上常有 3~5 个「TCP 能连上但不是 hdc」的开放端口，`hdc tconn` 打上去会**挂 30~60s** 才返回
+（容易被误判成「网络慢/扫描慢」）。所以**别手抄端口、别裸调 tconn**，直接用本 skill 的脚本：
+
+```bash
+<SKILL 目录>/scripts/hdc-wifi                # 热路径 ~1s（已记住上次 IP:端口）
+<SKILL 目录>/scripts/hdc-wifi 192.168.1.23   # 指定 IP（或 USB 反查 wlan IP）
+<SKILL 目录>/scripts/hdc-wifi --port 5555    # 配 `hdc tmode port 5555` 的固定端口模式
+```
+
+- 依赖：bash≥3.2、python3≥3.9（仅标准库）、DevEco 自带 hdc（自动定位，`HDC=` 可覆盖）；
+  **无需安装、无需 sudo、不需要 timeout/nc/jq/curl**。
+- 冷启动约 24s：并发扫描 25000-65535（1024 并发 / 0.25s）→ 逐个带超时验证。
+  **不要**为求快把并发调到 4096/0.12s：实测 4 万个端口一个都扫不到（SYN 被设备丢弃）。
+- 项目侧入口：AGENTS.md 里直接给出该脚本的绝对路径（**不**包进 Makefile，少一层间接）。
 
 ## 注意事项
 
+- **`scripts/hdc-wifi` 只存在于本 skill**：项目里不落副本（避免多份漂移）。要改脚本就改 skill 里这份，
+  所有引用它的项目立即生效；若某项目确实需要自带，再单独拷贝并同步说明。
 - **占位符替换必须完整**：写入后 grep 一遍 `{{` 确认无残留（`rg '\{\{' AGENTS.md Makefile`）。
   **例外**：`{{app_positioning}}` 与 `{{data_source}}` 是无源字段，保留占位符 + 说明文字，由用户后续口述补填（见 Step 4）。
 - 模板中的"已知坑"是跨项目通用经验，新项目踩到新坑时按同样的格式追加到
