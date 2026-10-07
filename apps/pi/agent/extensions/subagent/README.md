@@ -233,22 +233,20 @@ agent 的系统提示词写在这里。
 ```text
 [system]      pi 默认系统提示（cwd、AGENTS.md、工具说明……）
               ＋ 追加片段（--append-system-prompt）：
-              "You are a forked sub-agent of pi. You were forked from the main
-               agent's session: the conversation above is shared history, not your
-               own past work on this task. Treat it strictly as background context.
-               Work autonomously to complete the task in the final user message.
-               You cannot ask the user questions; ... Do not call the
-               spawn_subagent, list_agents, or fork_subagent tools."
+              "You are a forked sub-agent of pi. The conversation in this session
+               is shared history forked from the main agent, not your own prior work.
+               Treat it strictly as background context, then complete the task given
+               in the final user message."
 
 [user]        登录接口偶发 401，帮我排查                       ← 继承
 [assistant]   我先看 auth 中间件 + toolCall(read auth.ts)       ← 继承
 [toolResult]  auth.ts 内容……                                    ← 继承
 [assistant]   找到原因：刷新后没写回 cookie。方案：……           ← 继承
 
-[user]        The conversation above is shared context forked from the main agent.
-              You are now running as an independent sub-agent. Complete the task below
-              autonomously and reply with a concise final report.
-              Do not ask the user questions; if you are blocked, state the blocker.
+[user]        Complete the task below autonomously.
+              Do not ask the user questions; if you are blocked, state the blocker instead of waiting.
+              Finish with a concise report: what you did, your findings, files changed
+              (with paths), and anything the main agent must know.
                                                                               ← 新增
               Task:
               按上面的方案实现 token 刷新写回 cookie，并补一个回归测试。
@@ -260,7 +258,8 @@ agent 的系统提示词写在这里。
 
 - **继承的是“活动分支”**：被放弃的旁支、其他分支的尝试不会带过去。
 - **继承的是“已完成的部分”**：只有拿到 tool result 的步骤会被带入，进行中的动作一律裁掉。
-- **上下文“身份”被改写**：追加的系统提示明确告知子 agent——上面的历史是**别人的**、仅作背景，它自己的任务在最后一条 user 消息里。这能显著降低子 agent 把父任务误当成自己任务、或过早停手的概率。
+- **职责分离**：系统提示只负责**身份重述**（这是 fork 的共享历史、不是你自己的工作），临场的**执行要求**（自主完成、不要问用户、报告格式）放在最后一条 user 消息里。系统提示每次请求重建、永不参与 compaction，因此身份不会因长会话压缩而丢失。
+- **上下文“身份”被改写**：追加的系统提示明确告知子 agent——继承的历史是**别人的**、仅作背景，它自己的任务在最后一条 user 消息里。这能显著降低子 agent 把父任务误当成自己任务、或过早停手的概率。
 - **任务被显式包装**：`task` 永远以最后一条 user 消息出现，保证子 agent 有明确的当前目标。
 - **不回写父会话**：子进程使用独立的 `--session-dir` 与新 session id；其输出只作为父会话中 `fork_subagent` 的 tool result 返回。
 - **可选 `model` / `tools` 只影响子进程运行方式**（用哪个模型、开放哪些工具），不改变上面继承的历史内容。

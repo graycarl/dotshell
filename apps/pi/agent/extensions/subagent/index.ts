@@ -36,12 +36,8 @@ const FORK_EXCLUDE_TOOLS = `${SPAWN_SUBAGENT_TOOL},list_agents,${FORK_SUBAGENT_T
 
 const FORK_SYSTEM_PROMPT = [
 	"You are a forked sub-agent of pi.",
-	"You were forked from the main agent's session: the conversation above is shared history, not your own past work on this task.",
-	"Treat it strictly as background context.",
-	"Work autonomously to complete the task in the final user message.",
-	"You cannot ask the user questions; if you are blocked, report the blocker instead of waiting.",
-	"When you finish, reply with a concise report: what you did, your findings, files changed (with paths), and anything the main agent must know.",
-	`Do not call the ${SPAWN_SUBAGENT_TOOL}, list_agents, or ${FORK_SUBAGENT_TOOL} tools.`,
+	"The conversation in this session is shared history forked from the main agent, not your own prior work.",
+	"Treat it strictly as background context, then complete the task given in the final user message.",
 ].join(" ");
 
 /** Context forked from the main agent's active session branch. */
@@ -355,9 +351,9 @@ function writeForkSourceFile(
 function buildTaskPrompt(task: string, isFork: boolean): string {
 	if (!isFork) return `Task: ${task}`;
 	return [
-		"The conversation above is shared context forked from the main agent.",
-		"You are now running as an independent sub-agent. Complete the task below autonomously and reply with a concise final report.",
-		"Do not ask the user questions; if you are blocked, state the blocker.",
+		"Complete the task below autonomously.",
+		"Do not ask the user questions; if you are blocked, state the blocker instead of waiting.",
+		"Finish with a concise report: what you did, your findings, files changed (with paths), and anything the main agent must know.",
 		"",
 		"Task:",
 		task,
