@@ -49,10 +49,9 @@ ln -sfn "$(pwd)/apps/pi/agent/agents" ~/.pi/agent/agents
 
 本扩展会以独立的系统提示词、工具与模型配置启动一个 `pi` 子进程。
 
-- **项目级 agent**（`.pi/agents/*.md`）由仓库控制，其提示词可指示模型读文件、执行 bash 等，仅对可信仓库启用。
+- **项目级 agent**（`.pi/agents/*.md`）由仓库控制，其提示词可指示模型读文件、执行 bash 等；仅在可信仓库使用。
 - 默认只加载**用户级 agent**（`~/.pi/agent/agents`）。
-- 启用项目级 agent 需显式传入 `agentScope: "both"` 或 `"project"`。
-- 交互模式下，运行项目级 agent 前会弹窗确认；传入 `confirmProjectAgents: false` 可关闭确认。
+- 启用项目级 agent 需显式传入 `agentScope: "both"` 或 `"project"`，不会再弹窗确认。
 
 ## 使用
 
@@ -86,9 +85,7 @@ Use fork_subagent to summarize what we decided about the cache layer
 - `agentScope: "project"`：只加载最近的 `.pi/agents`。
 - `agentScope: "both"`：两者都加载，项目级同名 agent 覆盖用户级。
 
-### 指定工作目录
-
-`cwd` 参数设置子进程的启动目录，默认继承主进程的 cwd。
+子进程始终继承主 agent 的工作目录（`ctx.cwd`），无法覆盖。
 
 ## 工具与命令
 
@@ -106,8 +103,6 @@ Use fork_subagent to summarize what we decided about the cache layer
 | `agent` | string | — | agent 名称；缺失则报错 |
 | `task` | string | — | 委派的任务；缺失则报错 |
 | `agentScope` | `"user"` \| `"project"` \| `"both"` | `"user"` | 加载哪些 agent 目录 |
-| `confirmProjectAgents` | boolean | `true` | 运行项目级 agent 前是否弹窗确认 |
-| `cwd` | string | 继承主进程 | 子进程工作目录 |
 
 ### `fork_subagent` 参数
 

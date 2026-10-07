@@ -62,7 +62,6 @@ interface AgentSpec {
 /** Options for a single agent run. */
 interface RunAgentOptions {
 	task: string;
-	cwd?: string;
 	/** When set, the subprocess forks this context instead of starting fresh. */
 	forkContext?: ForkContext;
 	signal?: AbortSignal;
@@ -363,7 +362,7 @@ function buildTaskPrompt(task: string, isFork: boolean): string {
 type OnUpdateCallback = (partial: AgentToolResult<AgentDetails>) => void;
 
 async function runAgent(defaultCwd: string, spec: AgentSpec, options: RunAgentOptions): Promise<SingleResult> {
-	const { task, cwd, forkContext, signal, onUpdate, makeDetails } = options;
+	const { task, forkContext, signal, onUpdate, makeDetails } = options;
 	const isFork = !!forkContext && forkContext.entries.length > 0;
 	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
 	let tmpPromptPath: string | null = null;
@@ -375,7 +374,7 @@ async function runAgent(defaultCwd: string, spec: AgentSpec, options: RunAgentOp
 			.join(",") || undefined;
 
 	if (isFork && forkContext) {
-		const sourceFile = writeForkSourceFile(forkContext.entries, cwd ?? defaultCwd, forkContext.parentSession, tmpDir);
+		const sourceFile = writeForkSourceFile(forkContext.entries, defaultCwd, forkContext.parentSession, tmpDir);
 		args.push("--session-id", createForkSessionId(), "--fork", sourceFile);
 	}
 	if (spec.model) args.push("--model", spec.model);
@@ -414,7 +413,7 @@ async function runAgent(defaultCwd: string, spec: AgentSpec, options: RunAgentOp
 		let wasAborted = false;
 
 		const exitCode = await new Promise<number>((resolve) => {
-			const proc = spawn("pi", args, { cwd: cwd ?? defaultCwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+			const proc = spawn("pi", args, { cwd: defaultCwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
 			let buffer = "";
 
 			const processLine = (line: string) => {
@@ -528,10 +527,6 @@ const SubagentParams = Type.Object({
 	agent: Type.Optional(Type.String({ description: "Name of the agent to invoke" })),
 	task: Type.Optional(Type.String({ description: "Task to delegate to the agent" })),
 	agentScope: Type.Optional(AgentScopeSchema),
-	confirmProjectAgents: Type.Optional(
-		Type.Boolean({ description: "Prompt before running project-local agents. Default: true.", default: true }),
-	),
-	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
 });
 
 function renderAgentResult(result: any, expanded: boolean, theme: any): Text | Container {
@@ -641,7 +636,6 @@ export default function (pi: ExtensionAPI) {
 			const agentScope: AgentScope = params.agentScope ?? "user";
 			const discovery = discoverAgents(ctx.cwd, agentScope);
 			const agents = discovery.agents;
-			const confirmProjectAgents = params.confirmProjectAgents ?? true;
 
 			const makeDetails = (results: SingleResult[]): AgentDetails => ({
 				agentScope,
@@ -660,22 +654,6 @@ export default function (pi: ExtensionAPI) {
 					],
 					details: makeDetails([]),
 				};
-			}
-
-			if ((agentScope === "project" || agentScope === "both") && confirmProjectAgents && ctx.hasUI) {
-				const agent = agents.find((a) => a.name === params.agent);
-				if (agent?.source === "project") {
-					const dir = discovery.projectAgentsDir ?? "(unknown)";
-					const ok = await ctx.ui.confirm(
-						"Run project-local agents?",
-						`Agents: ${params.agent}\nSource: ${dir}\n\nProject agents are repo-controlled. Only continue for trusted repositories.`,
-					);
-					if (!ok)
-						return {
-							content: [{ type: "text", text: "Canceled: project-local agents not approved." }],
-							details: makeDetails([]),
-						};
-				}
 			}
 
 			const release = await acquireSingleSlot(signal);
@@ -699,7 +677,6 @@ export default function (pi: ExtensionAPI) {
 			try {
 				result = await runAgent(ctx.cwd, toAgentSpec(targetAgent), {
 					task: params.task,
-					cwd: params.cwd,
 					signal,
 					onUpdate,
 					makeDetails,
