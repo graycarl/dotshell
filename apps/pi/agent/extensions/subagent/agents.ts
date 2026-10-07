@@ -17,7 +17,7 @@ export interface AgentConfig {
 	/** Extra tools to disable for this agent (passed as --exclude-tools). */
 	excludeTools?: string;
 	systemPrompt: string;
-	source: "user" | "project" | "builtin";
+	source: "user" | "project";
 	filePath: string;
 }
 
@@ -97,41 +97,6 @@ function findNearestProjectAgentsDir(cwd: string): string | null {
 	}
 }
 
-export const WORKER_NAME = "worker";
-
-const WORKER_SYSTEM_PROMPT = [
-	"You are a worker agent with full capabilities.",
-	"You operate in an isolated context window to handle delegated tasks without polluting the main conversation.",
-	"",
-	"Work autonomously to complete the assigned task. Use all available tools as needed.",
-	"",
-	"Output format when finished:",
-	"",
-	"## Completed",
-	"What was done.",
-	"",
-	"## Files Changed",
-	"- `path/to/file.ts` - what changed",
-	"",
-	"## Notes (if any)",
-	"Anything the main agent should know.",
-	"",
-	"If handing off to another agent (e.g. reviewer), include:",
-	"- Exact file paths changed",
-	"- Key functions/types touched (short list)",
-].join("\n");
-
-/** Agents shipped with the extension, usable without a markdown definition. */
-export const BUILTIN_AGENTS: AgentConfig[] = [
-	{
-		name: WORKER_NAME,
-		description: "General-purpose subagent with full capabilities, isolated context",
-		systemPrompt: WORKER_SYSTEM_PROMPT,
-		source: "builtin",
-		filePath: "(builtin)",
-	},
-];
-
 export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryResult {
 	const userDir = path.join(os.homedir(), ".pi", "agent", "agents");
 	const projectAgentsDir = findNearestProjectAgentsDir(cwd);
@@ -140,9 +105,6 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 	const projectAgents = scope === "user" || !projectAgentsDir ? [] : loadAgentsFromDir(projectAgentsDir, "project");
 
 	const agentMap = new Map<string, AgentConfig>();
-
-	// Built-in agents are always available; user/project agents may override them by name.
-	for (const agent of BUILTIN_AGENTS) agentMap.set(agent.name, agent);
 
 	if (scope === "both") {
 		for (const agent of userAgents) agentMap.set(agent.name, agent);

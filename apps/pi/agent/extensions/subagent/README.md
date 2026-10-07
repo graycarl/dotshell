@@ -5,7 +5,6 @@
 ## 功能特性
 
 - **隔离上下文**：每个 subagent 在独立的 `pi` 子进程中运行（独立 `--session-dir`），不污染主会话。
-- **内置 `worker`**：通用型 subagent，隔离上下文、全能力，无需 markdown 定义。
 - **`fork_subagent` 工具**：fork 主 agent 当前的活动分支，继承完整会话上下文后再执行任务；参数仅 `task`（+ 可选 `model`/`tools`）。
 - **并发**：同一 assistant turn 内发起多个 `spawn_subagent` 调用即可并发；进程级信号量最多同时运行 4 个子进程，超出的排队。
 - **流式输出**：实时显示子 agent 的工具调用与文本进度。
@@ -21,9 +20,10 @@ apps/pi/
 └── agent/
     ├── extensions/subagent/
     │   ├── index.ts      # 扩展入口：spawn_subagent / fork_subagent / list_agents 工具、/list-agents 命令
-    │   ├── agents.ts     # agent 发现逻辑 + 内置 agent 定义
+    │   ├── agents.ts     # agent 发现逻辑
     │   └── README.md
     ├── agents/           # markdown agent 定义
+    │   ├── worker.md
     │   ├── scout.md
     │   ├── planner.md
     │   └── reviewer.md
@@ -182,17 +182,7 @@ agent 的系统提示词写在这里。
 - `~/.pi/agent/agents/*.md` — 用户级，始终加载
 - `.pi/agents/*.md` — 项目级，仅在 `agentScope: "project"` / `"both"` 时加载
 
-同名覆盖顺序：项目级 > 用户级 > 内置。
-
-## 内置 Agent
-
-扩展自带一个无需 markdown 文件的内置 agent：
-
-| Agent | 说明 |
-|-------|------|
-| `worker` | 通用 subagent，具备全部能力、隔离上下文 |
-
-普通隔离任务用 `worker`；需要继承当前会话上下文时用 `fork_subagent` 工具。
+同名覆盖顺序：项目级 > 用户级。
 
 ## `fork_subagent` 工具
 
@@ -209,6 +199,7 @@ agent 的系统提示词写在这里。
 
 | Agent | 说明 | 工具 |
 |-------|------|------|
+| `worker` | 通用 subagent，具备全部能力、隔离上下文 | 继承全部 |
 | `scout` | 快速代码库侦察，返回可交接的精简上下文 | read, grep, find, ls, bash |
 | `planner` | 根据上下文与需求生成实现计划 | read, grep, find, ls |
 | `reviewer` | 代码质量与安全审查 | read, grep, find, ls, bash |
