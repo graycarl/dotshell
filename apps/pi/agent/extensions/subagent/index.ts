@@ -29,10 +29,10 @@ import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.js";
 const MAX_SINGLE_CONCURRENCY = 4;
 const COLLAPSED_ITEM_COUNT = 10;
 
-// 工具名；fork 子进程据此固定排除这三个工具，防止递归
+// 工具名；所有子进程都固定排除委派类工具，防止递归
 const SPAWN_SUBAGENT_TOOL = "spawn_subagent";
 const FORK_SUBAGENT_TOOL = "fork_subagent";
-const FORK_EXCLUDE_TOOLS = `${SPAWN_SUBAGENT_TOOL},list_agents,${FORK_SUBAGENT_TOOL}`;
+const RECURSION_EXCLUDE_TOOLS = `${SPAWN_SUBAGENT_TOOL},list_agents,${FORK_SUBAGENT_TOOL}`;
 
 const FORK_SYSTEM_PROMPT = [
 	"You are a forked sub-agent of pi.",
@@ -368,10 +368,10 @@ async function runAgent(defaultCwd: string, spec: AgentSpec, options: RunAgentOp
 	let tmpPromptPath: string | null = null;
 
 	const args: string[] = ["--mode", "json", "-p", "--session-dir", tmpDir];
-	const effectiveExcludeTools =
-		[spec.excludeTools, isFork ? FORK_EXCLUDE_TOOLS : undefined]
-			.filter((s): s is string => !!s && s.trim().length > 0)
-			.join(",") || undefined;
+	// 子进程不暴露委派类工具，防止无限递归；再叠加 agent 定义的 excludeTools。
+	const effectiveExcludeTools = [spec.excludeTools, RECURSION_EXCLUDE_TOOLS]
+		.filter((s): s is string => !!s && s.trim().length > 0)
+		.join(",");
 
 	if (spec.model) args.push("--model", spec.model);
 	if (spec.tools) args.push("--tools", spec.tools);

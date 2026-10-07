@@ -113,7 +113,7 @@ Use fork_subagent to summarize what we decided about the cache layer
 | `model` | string | 继承主进程 | 覆盖模型（如 `deepseek/deepseek-flash`） |
 | `tools` | string | 继承主进程 | 逗号分隔的工具白名单 |
 
-`fork_subagent` 的子进程固定排除 `spawn_subagent`、`list_agents`、`fork_subagent`，不可覆盖。
+所有子进程（`spawn_subagent` 与 `fork_subagent`）都固定排除 `spawn_subagent`、`list_agents`、`fork_subagent`，不可覆盖。
 
 ### `list_agents` 参数
 
@@ -186,7 +186,7 @@ agent 的系统提示词写在这里。
 1. 通过 `ctx.sessionManager.getBranch()` 读取当前会话的活动分支。
 2. 裁掉进行中的 turn（发起本次调用的那条 assistant 消息尚无 tool result）。
 3. 把该分支写入临时 session 文件，并以隔离的 session 目录启动 `pi --fork <file>`。
-4. 子进程中固定排除 `spawn_subagent`、`list_agents`、`fork_subagent`，防止递归 fork。
+4. 子进程固定排除 `spawn_subagent`、`list_agents`、`fork_subagent`，防止递归委派。
 
 若读到的活动分支为空（例如会话刚建立、尚无任何历史），`fork_subagent` 会**直接报错**并提示改用 `spawn_subagent`，不会静默退化成 fresh run。
 
@@ -283,4 +283,4 @@ agent 的系统提示词写在这里。
 - 每次调用都会重新扫描 agent 目录（便于会话中途编辑 agent 定义）。
 - 同一时刻最多运行 4 个子进程，其余排队。
 - `fork_subagent` 会携带父会话的完整上下文，token 成本约等于父上下文；当父会话接近上下文窗口上限时，子进程可能触发自动 compaction。
-- `fork_subagent` 子进程不含 `spawn_subagent` / `list_agents` / `fork_subagent` 工具，因此无法继续嵌套 fork。
+- 所有子进程都不含 `spawn_subagent` / `list_agents` / `fork_subagent` 工具，因此无法嵌套委派（`spawn_subagent` 与 `fork_subagent` 均如此）。
