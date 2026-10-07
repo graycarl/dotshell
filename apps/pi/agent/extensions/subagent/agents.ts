@@ -14,6 +14,8 @@ export interface AgentConfig {
 	description: string;
 	tools?: string[];
 	model?: string;
+	/** Extra tools to disable for this agent (passed as --exclude-tools). */
+	excludeTools?: string;
 	systemPrompt: string;
 	source: "user" | "project";
 	filePath: string;
@@ -60,12 +62,12 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 			?.split(",")
 			.map((t: string) => t.trim())
 			.filter(Boolean);
-
 		agents.push({
 			name: frontmatter.name,
 			description: frontmatter.description,
 			tools: tools && tools.length > 0 ? tools : undefined,
 			model: frontmatter.model,
+			excludeTools: frontmatter.excludeTools?.trim() || undefined,
 			systemPrompt: body,
 			source,
 			filePath,
@@ -114,14 +116,4 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 	}
 
 	return { agents: Array.from(agentMap.values()), projectAgentsDir };
-}
-
-export function formatAgentList(agents: AgentConfig[], maxItems: number): { text: string; remaining: number } {
-	if (agents.length === 0) return { text: "none", remaining: 0 };
-	const listed = agents.slice(0, maxItems);
-	const remaining = agents.length - listed.length;
-	return {
-		text: listed.map((a) => `${a.name} (${a.source}): ${a.description}`).join("; "),
-		remaining,
-	};
 }
