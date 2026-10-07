@@ -62,6 +62,8 @@ interface AgentSpec {
 /** Options for a single agent run. */
 interface RunAgentOptions {
 	task: string;
+	/** Model to use when the agent spec does not define one (the parent's current model). */
+	parentModel?: string;
 	/** When set, the subprocess forks this context instead of starting fresh. */
 	forkContext?: ForkContext;
 	signal?: AbortSignal;
@@ -258,6 +260,11 @@ function toAgentSpec(agent: AgentConfig): AgentSpec {
 	};
 }
 
+/** `${provider}/${id}` label for a model, as accepted by `--model`. */
+function formatModelLabel(model: { provider: string; id: string } | undefined): string | undefined {
+	return model ? `${model.provider}/${model.id}` : undefined;
+}
+
 function getFinalOutput(messages: Message[]): string {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
@@ -362,8 +369,9 @@ function buildTaskPrompt(task: string, isFork: boolean): string {
 type OnUpdateCallback = (partial: AgentToolResult<AgentDetails>) => void;
 
 async function runAgent(defaultCwd: string, spec: AgentSpec, options: RunAgentOptions): Promise<SingleResult> {
-	const { task, forkContext, signal, onUpdate, makeDetails } = options;
+	const { task, parentModel, forkContext, signal, onUpdate, makeDetails } = options;
 	const isFork = !!forkContext && forkContext.entries.length > 0;
+	const effectiveModel = spec.model ?? parentModel;
 	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
 	let tmpPromptPath: string | null = null;
 
@@ -373,7 +381,7 @@ async function runAgent(defaultCwd: string, spec: AgentSpec, options: RunAgentOp
 		.filter((s): s is string => !!s && s.trim().length > 0)
 		.join(",");
 
-	if (spec.model) args.push("--model", spec.model);
+	if (effectiveModel) args.push("--model", effectiveModel);
 	if (spec.tools) args.push("--tools", spec.tools);
 	if (effectiveExcludeTools) args.push("--exclude-tools", effectiveExcludeTools);
 
@@ -385,7 +393,7 @@ async function runAgent(defaultCwd: string, spec: AgentSpec, options: RunAgentOp
 		messages: [],
 		stderr: "",
 		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
-		model: spec.model,
+		model: effectiveModel,
 	};
 
 	const emitUpdate = () => {
@@ -694,6 +702,7 @@ export default function (pi: ExtensionAPI) {
 				if (params.model) spec.model = params.model;
 				result = await runAgent(ctx.cwd, spec, {
 					task: params.task,
+					parentModel: formatModelLabel(ctx.model),
 					signal,
 					onUpdate,
 					makeDetails,
@@ -758,7 +767,10 @@ export default function (pi: ExtensionAPI) {
 				}),
 			),
 			tools: Type.Optional(
-				Type.String({ description: "Comma-separated tool allowlist; default: inherit the parent's tools" }),
+				Type.String({
+					description:
+						"Comma-separated tool allowlist; default: the child pi's own default tools (not inherited from the parent)",
+				}),
 			),
 		}),
 
@@ -807,7 +819,7 @@ export default function (pi: ExtensionAPI) {
 						model: params.model,
 						tools: params.tools,
 					},
-					{ task: params.task, forkContext, signal, onUpdate, makeDetails },
+					{ task: params.task, parentModel: formatModelLabel(ctx.model), forkContext, signal, onUpdate, makeDetails },
 				);
 			} finally {
 				release();

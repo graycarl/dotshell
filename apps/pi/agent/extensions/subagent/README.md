@@ -111,9 +111,11 @@ Use fork_subagent to summarize what we decided about the cache layer
 |------|------|------|------|
 | `task` | string | — | 必填；要委派的任务 |
 | `model` | string | 继承主进程 | 覆盖模型（如 `deepseek/deepseek-flash`） |
-| `tools` | string | 继承主进程 | 逗号分隔的工具白名单 |
+| `tools` | string | 子进程 pi 默认 | 逗号分隔的工具白名单（**不**继承父进程的工具集） |
 
 所有子进程（`spawn_subagent` 与 `fork_subagent`）都固定排除 `spawn_subagent`、`list_agents`、`fork_subagent`，不可覆盖。
+
+`model` 默认继承父进程当前模型（`spawn_subagent` 通过显式 `--model`，`fork_subagent` 通过 fork 会话恢复）；`tools` **不继承**父进程的工具集，不填时使用子进程 pi 自身的默认工具。
 
 ### `list_agents` 参数
 
@@ -166,8 +168,8 @@ agent 的系统提示词写在这里。
 |------|------|------|
 | `name` | 是 | agent 名称；缺失则忽略该文件 |
 | `description` | 是 | 供 `list_agents` 展示；缺失则忽略该文件 |
-| `tools` | 否 | 逗号分隔的允许工具；不填则继承主进程的全部工具 |
-| `model` | 否 | 指定模型；不填则继承主进程模型 |
+| `tools` | 否 | 逗号分隔的允许工具；不填则用子进程 pi 的默认工具集（不继承父进程） |
+| `model` | 否 | 指定模型；不填则继承父进程当前模型 |
 | `excludeTools` | 否 | 额外禁用的工具，逗号分隔（对应 `--exclude-tools`） |
 
 **加载位置**：
