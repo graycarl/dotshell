@@ -115,7 +115,7 @@ Use fork_subagent to summarize what we decided about the cache layer
 
 所有子进程（`spawn_subagent` 与 `fork_subagent`）都固定排除 `spawn_subagent`、`list_agents`、`fork_subagent`，不可覆盖。
 
-`model` 默认继承父进程当前模型（`spawn_subagent` 通过显式 `--model`，`fork_subagent` 通过 fork 会话恢复）；`tools` **不继承**父进程的工具集，不填时使用子进程 pi 自身的默认工具。
+`model` 默认继承父进程当前模型（`spawn_subagent` 与 `fork_subagent` 都通过显式 `--model` 传入，未指定时回退到子进程 pi 的默认模型）；`tools` **不继承**父进程的工具集，不填时使用子进程 pi 自身的默认工具。
 
 ### `list_agents` 参数
 
@@ -131,6 +131,7 @@ Use fork_subagent to summarize what we decided about the cache layer
 - 最后 10 个显示项（文本取前 3 行，工具调用按内置工具风格格式化）
 - 超过 10 项时显示省略数量与 `(Ctrl+O to expand)`
 - 用量统计：`轮数 ↑输入 ↓输出 R缓存读 W缓存写 $费用 ctx:上下文tokens 模型`
+- HTML 报告路径（若导出成功）
 
 **展开视图（Ctrl+O）**：
 
@@ -146,7 +147,7 @@ Use fork_subagent to summarize what we decided about the cache layer
 - `write ~/path (N lines)` — write
 - `edit ~/path` — edit
 - `ls ~/path`、`find pattern in ~/path`、`grep /pattern/ in ~/path`
-- 其他工具：`名称 {参数}`
+- 其他工具：`名称 {json 参数预览，最多 50 字符}`
 
 ## Agent 定义
 
@@ -174,7 +175,7 @@ agent 的系统提示词写在这里。
 
 **加载位置**：
 
-- `~/.pi/agent/agents/*.md` — 用户级，始终加载
+- `~/.pi/agent/agents/*.md` — 用户级，`agentScope` 为 `"user"`（默认）或 `"both"` 时加载，`"project"` 时不加载
 - `.pi/agents/*.md` — 项目级，仅在 `agentScope: "project"` / `"both"` 时加载
 
 同名覆盖顺序：项目级 > 用户级。
@@ -265,13 +266,13 @@ agent 的系统提示词写在这里。
 
 | Agent | 说明 | 工具 |
 |-------|------|------|
-| `worker` | 通用 subagent，具备全部能力、隔离上下文 | 继承全部 |
+| `worker` | 通用 subagent，具备全部能力、隔离上下文 | 子进程 pi 默认工具集（不继承父进程） |
 
 `worker` 未指定 `model`，因此继承主进程的模型。
 
 ## 错误处理
 
-- **未知 agent**：返回 `Unknown agent: <name>`（exit code 1）。
+- **未知 agent**：返回 `Unknown agent: <name>`（标记为 `isError: true`）。
 - **`fork_subagent` 无可继承历史**：直接报错并提示改用 `spawn_subagent`，不会退化成 fresh run。
 - **exit code != 0**：作为错误返回，并附带 stderr 或子进程输出。
 - **`stopReason: "error"`**：透传错误信息。

@@ -636,6 +636,50 @@ function renderAgentResult(result: any, expanded: boolean, theme: any): Text | C
 	return new Text(text, 0, 0);
 }
 
+/** Render the final tool result shared by spawn_subagent and fork_subagent. */
+function finalizeResult(
+	result: SingleResult,
+	makeDetails: (results: SingleResult[]) => AgentDetails,
+): AgentToolResult<AgentDetails> {
+	const isError = result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
+	if (isError) {
+		const errorMsg = result.errorMessage || result.stderr || getFinalOutput(result.messages) || "(no output)";
+		return {
+			content: [{ type: "text", text: `Agent ${result.stopReason || "failed"}: ${errorMsg}` }],
+			details: makeDetails([result]),
+			isError: true,
+		};
+	}
+	return {
+		content: [{ type: "text", text: getFinalOutput(result.messages) || "(no output)" }],
+		details: makeDetails([result]),
+	};
+}
+
+/** Format the agent list shared by the list_agents tool and /list-agents command. */
+function formatAgentList(
+	agents: AgentConfig[],
+	projectAgentsDir: string | null | undefined,
+	labels: { header: string; descriptionLabel: string; toolsLabel: string },
+): string[] {
+	const lines: string[] = [labels.header, ""];
+	for (const agent of agents) {
+		lines.push(`  ${agent.name}`);
+		lines.push(`    ${labels.descriptionLabel}${agent.description}`);
+		lines.push(`    Source: ${agent.source}`);
+		if (agent.tools && agent.tools.length > 0) {
+			lines.push(`    ${labels.toolsLabel}${agent.tools.join(", ")}`);
+		}
+		lines.push("");
+	}
+	lines.push(`Tip: use the ${FORK_SUBAGENT_TOOL} tool to delegate with the parent's full context.`);
+	lines.push("");
+	if (projectAgentsDir) {
+		lines.push(`Project agents directory: ${projectAgentsDir}`);
+	}
+	return lines;
+}
+
 export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: SPAWN_SUBAGENT_TOOL,
@@ -710,19 +754,7 @@ export default function (pi: ExtensionAPI) {
 			} finally {
 				release();
 			}
-			const isError = result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
-			if (isError) {
-				const errorMsg = result.errorMessage || result.stderr || getFinalOutput(result.messages) || "(no output)";
-				return {
-					content: [{ type: "text", text: `Agent ${result.stopReason || "failed"}: ${errorMsg}` }],
-					details: makeDetails([result]),
-					isError: true,
-				};
-			}
-			return {
-				content: [{ type: "text", text: getFinalOutput(result.messages) || "(no output)" }],
-				details: makeDetails([result]),
-			};
+			return finalizeResult(result, makeDetails);
 		},
 
 		renderCall(args, theme) {
@@ -741,8 +773,6 @@ export default function (pi: ExtensionAPI) {
 			return renderAgentResult(result, expanded, theme);
 		},
 	});
-
-	// ── list_agents tool ─────────────────────────────────────────────────────
 
 	// ── fork_subagent tool ──────────────────────────────────────
 
@@ -825,19 +855,7 @@ export default function (pi: ExtensionAPI) {
 				release();
 			}
 
-			const isError = result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
-			if (isError) {
-				const errorMsg = result.errorMessage || result.stderr || getFinalOutput(result.messages) || "(no output)";
-				return {
-					content: [{ type: "text", text: `Agent ${result.stopReason || "failed"}: ${errorMsg}` }],
-					details: makeDetails([result]),
-					isError: true,
-				};
-			}
-			return {
-				content: [{ type: "text", text: getFinalOutput(result.messages) || "(no output)" }],
-				details: makeDetails([result]),
-			};
+			return finalizeResult(result, makeDetails);
 		},
 
 		renderCall(args, theme) {
@@ -851,6 +869,7 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	// ── list_agents tool ─────────────────────────────────────────────────────
 	pi.registerTool({
 		name: "list_agents",
 		label: "List Agents",
@@ -880,26 +899,11 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			const lines: string[] = [];
-			lines.push(`Found ${agents.length} subagent(s) (scope: ${agentScope}):`);
-			lines.push("");
-
-			for (const agent of agents) {
-				lines.push(`  ${agent.name}`);
-				lines.push(`    Description: ${agent.description}`);
-				lines.push(`    Source: ${agent.source}`);
-				if (agent.tools && agent.tools.length > 0) {
-					lines.push(`    Tools: ${agent.tools.join(", ")}`);
-				}
-				lines.push("");
-			}
-
-			lines.push(`Tip: use the ${FORK_SUBAGENT_TOOL} tool to delegate with the parent's full context.`);
-			lines.push("");
-
-			if (discovery.projectAgentsDir) {
-				lines.push(`Project agents directory: ${discovery.projectAgentsDir}`);
-			}
+			const lines = formatAgentList(agents, discovery.projectAgentsDir, {
+				header: `Found ${agents.length} subagent(s) (scope: ${agentScope}):`,
+				descriptionLabel: "Description: ",
+				toolsLabel: "Tools: ",
+			});
 
 			return {
 				content: [{ type: "text", text: lines.join("\n").trim() }],
@@ -933,26 +937,11 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			const lines: string[] = [];
-			lines.push(`Available subagents (${agents.length} total):`);
-			lines.push("");
-
-			for (const agent of agents) {
-				lines.push(`  ${agent.name}`);
-				lines.push(`    ${agent.description}`);
-				lines.push(`    Source: ${agent.source}`);
-				if (agent.tools && agent.tools.length > 0) {
-					lines.push(`    Allowed tools: ${agent.tools.join(", ")}`);
-				}
-				lines.push("");
-			}
-
-			lines.push(`Tip: use the ${FORK_SUBAGENT_TOOL} tool to delegate with the parent's full context.`);
-			lines.push("");
-
-			if (discovery.projectAgentsDir) {
-				lines.push(`Project agents directory: ${discovery.projectAgentsDir}`);
-			}
+			const lines = formatAgentList(agents, discovery.projectAgentsDir, {
+				header: `Available subagents (${agents.length} total):`,
+				descriptionLabel: "",
+				toolsLabel: "Allowed tools: ",
+			});
 
 			ctx.ui.notify(lines.join("\n").trim(), "info");
 		},
