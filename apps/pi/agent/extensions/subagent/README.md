@@ -103,6 +103,7 @@ Use fork_subagent to summarize what we decided about the cache layer
 | `agent` | string | — | agent 名称；缺失则报错 |
 | `task` | string | — | 委派的任务；缺失则报错 |
 | `agentScope` | `"user"` \| `"project"` \| `"both"` | `"user"` | 加载哪些 agent 目录 |
+| `model` | string | agent 定义 / 继承主进程 | 覆盖本次调用的模型（如 `deepseek/deepseek-flash`） |
 
 ### `fork_subagent` 参数
 

@@ -527,6 +527,12 @@ const SubagentParams = Type.Object({
 	agent: Type.Optional(Type.String({ description: "Name of the agent to invoke" })),
 	task: Type.Optional(Type.String({ description: "Task to delegate to the agent" })),
 	agentScope: Type.Optional(AgentScopeSchema),
+	model: Type.Optional(
+		Type.String({
+			description:
+				'Model for this call (e.g. "deepseek/deepseek-flash"); default: the agent definition\'s model, or inherit the parent model',
+		}),
+	),
 });
 
 function renderAgentResult(result: any, expanded: boolean, theme: any): Text | Container {
@@ -674,8 +680,10 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			let result: SingleResult;
+			const spec = toAgentSpec(targetAgent);
+			if (params.model) spec.model = params.model;
 			try {
-				result = await runAgent(ctx.cwd, toAgentSpec(targetAgent), {
+				result = await runAgent(ctx.cwd, spec, {
 					task: params.task,
 					signal,
 					onUpdate,
