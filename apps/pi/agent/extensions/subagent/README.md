@@ -23,10 +23,7 @@ apps/pi/
     │   ├── agents.ts     # agent 发现逻辑
     │   └── README.md
     ├── agents/           # markdown agent 定义
-    │   ├── worker.md
-    │   ├── scout.md
-    │   ├── planner.md
-    │   └── reviewer.md
+    │   └── worker.md
     └── prompts/          # 提示词模板（由 setup.sh 单独链接）
 ```
 
@@ -62,7 +59,7 @@ ln -sfn "$(pwd)/apps/pi/agent/agents" ~/.pi/agent/agents
 ### 委派单个任务
 
 ```
-Use scout to find all authentication code
+Use worker to find all authentication code
 ```
 
 ### 并发执行
@@ -70,7 +67,7 @@ Use scout to find all authentication code
 在同一个 assistant turn 里发出多个 `spawn_subagent` 调用即可并发：
 
 ```
-Run 2 scouts in parallel: one to find models, one to find providers
+Run 2 workers in parallel: one to find models, one to find providers
 ```
 
 ### 继承上下文（fork）
@@ -269,11 +266,8 @@ agent 的系统提示词写在这里。
 | Agent | 说明 | 工具 |
 |-------|------|------|
 | `worker` | 通用 subagent，具备全部能力、隔离上下文 | 继承全部 |
-| `scout` | 快速代码库侦察，返回可交接的精简上下文 | read, grep, find, ls, bash |
-| `planner` | 根据上下文与需求生成实现计划 | read, grep, find, ls |
-| `reviewer` | 代码质量与安全审查 | read, grep, find, ls, bash |
 
-以上均未指定 `model`，因此继承主进程的模型。
+`worker` 未指定 `model`，因此继承主进程的模型。
 
 ## 错误处理
 

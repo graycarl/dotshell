@@ -18,6 +18,6 @@ What was done.
 ## Notes (if any)
 Anything the main agent should know.
 
-If handing off to another agent (e.g. reviewer), include:
+If handing off to another agent, include:
 - Exact file paths changed
 - Key functions/types touched (short list)
