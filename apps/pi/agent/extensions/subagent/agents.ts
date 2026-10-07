@@ -8,7 +8,6 @@ import * as path from "node:path";
 import { parseFrontmatter } from "@mariozechner/pi-coding-agent";
 
 export type AgentScope = "user" | "project" | "both";
-export type AgentContextMode = "fresh" | "fork";
 
 export interface AgentConfig {
 	name: string;
@@ -17,8 +16,6 @@ export interface AgentConfig {
 	model?: string;
 	/** Extra tools to disable for this agent (passed as --exclude-tools). */
 	excludeTools?: string;
-	/** "fork" inherits the parent's full conversation context; "fresh" starts isolated. */
-	context?: AgentContextMode;
 	systemPrompt: string;
 	source: "user" | "project" | "builtin";
 	filePath: string;
@@ -65,17 +62,12 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 			?.split(",")
 			.map((t: string) => t.trim())
 			.filter(Boolean);
-		const rawContext = frontmatter.context?.trim();
-		const context: AgentContextMode | undefined =
-			rawContext === "fork" || rawContext === "fresh" ? (rawContext as AgentContextMode) : undefined;
-
 		agents.push({
 			name: frontmatter.name,
 			description: frontmatter.description,
 			tools: tools && tools.length > 0 ? tools : undefined,
 			model: frontmatter.model,
 			excludeTools: frontmatter.excludeTools?.trim() || undefined,
-			context,
 			systemPrompt: body,
 			source,
 			filePath,
@@ -105,18 +97,7 @@ function findNearestProjectAgentsDir(cwd: string): string | null {
 	}
 }
 
-export const FORK_AGENT_NAME = "fork";
 export const WORKER_NAME = "worker";
-
-const FORK_SYSTEM_PROMPT = [
-	"You are fork, a built-in sub-agent of pi.",
-	"You were forked from the main agent's session: the conversation above is shared history, not your own past work on this task.",
-	"Treat it strictly as background context.",
-	"Work autonomously to complete the task in the final user message.",
-	"You cannot ask the user questions; if you are blocked, report the blocker instead of waiting.",
-	"When you finish, reply with a concise report: what you did, your findings, files changed (with paths), and anything the main agent must know.",
-	"Do not call the subagent or list_agents tools.",
-].join(" ");
 
 const WORKER_SYSTEM_PROMPT = [
 	"You are a worker agent with full capabilities.",
@@ -143,18 +124,8 @@ const WORKER_SYSTEM_PROMPT = [
 /** Agents shipped with the extension, usable without a markdown definition. */
 export const BUILTIN_AGENTS: AgentConfig[] = [
 	{
-		name: FORK_AGENT_NAME,
-		description:
-			"Built-in forked sub-agent: inherits the main agent's full conversation context and completes the task independently. Use when the delegated task needs context already gathered in this session.",
-		context: "fork",
-		systemPrompt: FORK_SYSTEM_PROMPT,
-		source: "builtin",
-		filePath: "(builtin)",
-	},
-	{
 		name: WORKER_NAME,
 		description: "General-purpose subagent with full capabilities, isolated context",
-		context: "fresh",
 		systemPrompt: WORKER_SYSTEM_PROMPT,
 		source: "builtin",
 		filePath: "(builtin)",
@@ -183,14 +154,4 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 	}
 
 	return { agents: Array.from(agentMap.values()), projectAgentsDir };
-}
-
-export function formatAgentList(agents: AgentConfig[], maxItems: number): { text: string; remaining: number } {
-	if (agents.length === 0) return { text: "none", remaining: 0 };
-	const listed = agents.slice(0, maxItems);
-	const remaining = agents.length - listed.length;
-	return {
-		text: listed.map((a) => `${a.name} (${a.source}): ${a.description}`).join("; "),
-		remaining,
-	};
 }

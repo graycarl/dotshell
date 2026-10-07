@@ -24,13 +24,25 @@ import { type ExtensionAPI, getMarkdownTheme } from "@mariozechner/pi-coding-age
 import type { SessionEntry } from "@mariozechner/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
-import { type AgentConfig, type AgentScope, FORK_AGENT_NAME, discoverAgents } from "./agents.js";
+import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.js";
 
 const MAX_SINGLE_CONCURRENCY = 4;
 const COLLAPSED_ITEM_COUNT = 10;
 
-// 内置 fork 默认禁用的工具，防止递归 fork bomb
-const FORK_EXCLUDE_TOOLS = "subagent,list_agents";
+// 工具名；fork 子进程据此固定排除这三个工具，防止递归
+const SPAWN_SUBAGENT_TOOL = "spawn_subagent";
+const FORK_SUBAGENT_TOOL = "fork_subagent";
+const FORK_EXCLUDE_TOOLS = `${SPAWN_SUBAGENT_TOOL},list_agents,${FORK_SUBAGENT_TOOL}`;
+
+const FORK_SYSTEM_PROMPT = [
+	"You are a forked sub-agent of pi.",
+	"You were forked from the main agent's session: the conversation above is shared history, not your own past work on this task.",
+	"Treat it strictly as background context.",
+	"Work autonomously to complete the task in the final user message.",
+	"You cannot ask the user questions; if you are blocked, report the blocker instead of waiting.",
+	"When you finish, reply with a concise report: what you did, your findings, files changed (with paths), and anything the main agent must know.",
+	`Do not call the ${SPAWN_SUBAGENT_TOOL}, list_agents, or ${FORK_SUBAGENT_TOOL} tools.`,
+].join(" ");
 
 /** Context forked from the main agent's active session branch. */
 interface ForkContext {
@@ -38,12 +50,28 @@ interface ForkContext {
 	parentSession?: string;
 }
 
-/** Optional settings overrides for the built-in fork agent. */
-interface RuntimeOverrides {
-	model?: string;
+/** A resolved agent to execute in a subprocess. */
+interface AgentSpec {
+	name: string;
+	source: "user" | "project" | "builtin";
+	systemPrompt: string;
+	/** Comma-separated tool allowlist (maps to --tools). */
 	tools?: string;
+	/** Comma-separated tools to disable (maps to --exclude-tools). */
 	excludeTools?: string;
-	systemPromptAppend?: string;
+	/** Model override (maps to --model). */
+	model?: string;
+}
+
+/** Options for a single agent run. */
+interface RunAgentOptions {
+	task: string;
+	cwd?: string;
+	/** When set, the subprocess forks this context instead of starting fresh. */
+	forkContext?: ForkContext;
+	signal?: AbortSignal;
+	onUpdate?: OnUpdateCallback;
+	makeDetails: (results: SingleResult[]) => AgentDetails;
 }
 
 // ── 全局信号量：限制同一时刻运行的子进程数量 ──────────────
@@ -217,10 +245,22 @@ interface SingleResult {
 	htmlReportPath?: string;
 }
 
-interface SubagentDetails {
-	agentScope: AgentScope;
-	projectAgentsDir: string | null;
+interface AgentDetails {
 	results: SingleResult[];
+	agentScope?: AgentScope;
+	projectAgentsDir?: string | null;
+}
+
+/** Convert a discovered agent into an executable spec. */
+function toAgentSpec(agent: AgentConfig): AgentSpec {
+	return {
+		name: agent.name,
+		source: agent.source,
+		systemPrompt: agent.systemPrompt,
+		tools: agent.tools && agent.tools.length > 0 ? agent.tools.join(",") : undefined,
+		excludeTools: agent.excludeTools,
+		model: agent.model,
+	};
 }
 
 function getFinalOutput(messages: Message[]): string {
@@ -248,14 +288,6 @@ function getDisplayItems(messages: Message[]): DisplayItem[] {
 		}
 	}
 	return items;
-}
-
-function writePromptToTempFile(agentName: string, prompt: string): { dir: string; filePath: string } {
-	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
-	const safeName = agentName.replace(/[^\w.-]+/g, "_");
-	const filePath = path.join(tmpDir, `prompt-${safeName}.md`);
-	fs.writeFileSync(filePath, prompt, { encoding: "utf-8", mode: 0o600 });
-	return { dir: tmpDir, filePath };
 }
 
 /** Session id for a forked subagent session (must start and end alphanumeric). */
@@ -332,75 +364,37 @@ function buildTaskPrompt(task: string, isFork: boolean): string {
 	].join("\n");
 }
 
-/** Read optional settings overrides for the built-in fork agent. */
-function resolveForkOverride(pi: ExtensionAPI, agent: AgentConfig | undefined): RuntimeOverrides | undefined {
-	if (!agent || agent.name !== FORK_AGENT_NAME) return undefined;
-	const config = (pi.getSettings() as any)?.subagent?.fork;
-	if (!config || typeof config !== "object") return undefined;
-	return {
-		model: typeof config.model === "string" ? config.model : undefined,
-		tools: typeof config.tools === "string" ? config.tools : undefined,
-		excludeTools: typeof config.excludeTools === "string" ? config.excludeTools : undefined,
-		systemPromptAppend: typeof config.systemPromptAppend === "string" ? config.systemPromptAppend : undefined,
-	};
-}
+type OnUpdateCallback = (partial: AgentToolResult<AgentDetails>) => void;
 
-type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
-
-async function runSingleAgent(
-	defaultCwd: string,
-	agents: AgentConfig[],
-	agentName: string,
-	task: string,
-	forkContext: ForkContext | undefined,
-	overrides: RuntimeOverrides | undefined,
-	cwd: string | undefined,
-	signal: AbortSignal | undefined,
-	onUpdate: OnUpdateCallback | undefined,
-	makeDetails: (results: SingleResult[]) => SubagentDetails,
-): Promise<SingleResult> {
-	const agent = agents.find((a) => a.name === agentName);
-
-	if (!agent) {
-		return {
-			agent: agentName,
-			agentSource: "unknown",
-			task,
-			exitCode: 1,
-			messages: [],
-			stderr: `Unknown agent: ${agentName}`,
-			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
-		};
-	}
-
-	const isFork = agent.context === "fork" && !!forkContext && forkContext.entries.length > 0;
+async function runAgent(defaultCwd: string, spec: AgentSpec, options: RunAgentOptions): Promise<SingleResult> {
+	const { task, cwd, forkContext, signal, onUpdate, makeDetails } = options;
+	const isFork = !!forkContext && forkContext.entries.length > 0;
 	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
 	let tmpPromptPath: string | null = null;
 
 	const args: string[] = ["--mode", "json", "-p", "--session-dir", tmpDir];
-	const effectiveModel = overrides?.model ?? agent.model;
-	const effectiveTools =
-		overrides?.tools ?? (agent.tools && agent.tools.length > 0 ? agent.tools.join(",") : undefined);
 	const effectiveExcludeTools =
-		overrides?.excludeTools ?? (agent.context === "fork" ? FORK_EXCLUDE_TOOLS : agent.excludeTools);
+		[spec.excludeTools, isFork ? FORK_EXCLUDE_TOOLS : undefined]
+			.filter((s): s is string => !!s && s.trim().length > 0)
+			.join(",") || undefined;
 
 	if (isFork && forkContext) {
 		const sourceFile = writeForkSourceFile(forkContext.entries, cwd ?? defaultCwd, forkContext.parentSession, tmpDir);
 		args.push("--session-id", createForkSessionId(), "--fork", sourceFile);
 	}
-	if (effectiveModel) args.push("--model", effectiveModel);
-	if (effectiveTools) args.push("--tools", effectiveTools);
+	if (spec.model) args.push("--model", spec.model);
+	if (spec.tools) args.push("--tools", spec.tools);
 	if (effectiveExcludeTools) args.push("--exclude-tools", effectiveExcludeTools);
 
 	const currentResult: SingleResult = {
-		agent: agentName,
-		agentSource: agent.source,
+		agent: spec.name,
+		agentSource: spec.source,
 		task,
 		exitCode: 0,
 		messages: [],
 		stderr: "",
 		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
-		model: agent.model,
+		model: spec.model,
 	};
 
 	const emitUpdate = () => {
@@ -413,13 +407,10 @@ async function runSingleAgent(
 	};
 
 	try {
-		const effectiveSystemPrompt = [agent.systemPrompt, overrides?.systemPromptAppend]
-			.filter((s): s is string => !!s && s.trim().length > 0)
-			.join("\n\n");
-		if (effectiveSystemPrompt.trim()) {
-			const safeName = agentName.replace(/[^\w.-]+/g, "_");
+		if (spec.systemPrompt.trim()) {
+			const safeName = spec.name.replace(/[^\w.-]+/g, "_");
 			tmpPromptPath = path.join(tmpDir, `prompt-${safeName}.md`);
-			fs.writeFileSync(tmpPromptPath, effectiveSystemPrompt, { encoding: "utf-8", mode: 0o600 });
+			fs.writeFileSync(tmpPromptPath, spec.systemPrompt, { encoding: "utf-8", mode: 0o600 });
 			args.push("--append-system-prompt", tmpPromptPath);
 		}
 
@@ -508,7 +499,7 @@ async function runSingleAgent(
 			const sessionFiles = fs.readdirSync(tmpDir).filter((f) => f.endsWith(".jsonl"));
 			if (sessionFiles.length > 0) {
 				const sessionFile = path.join(tmpDir, sessionFiles[0]);
-				const safeName = agentName.replace(/[^\w.-]+/g, "_");
+				const safeName = spec.name.replace(/[^\w.-]+/g, "_");
 				const htmlPath = path.join(os.tmpdir(), `pi-subagent-${safeName}-${Date.now()}.html`);
 				const exportResult = spawnSync("pi", ["--export", sessionFile, htmlPath], { timeout: 15000 });
 				if (exportResult.status === 0) {
@@ -547,22 +538,106 @@ const SubagentParams = Type.Object({
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
 });
 
+function renderAgentResult(result: any, expanded: boolean, theme: any): Text | Container {
+	const details = result.details as AgentDetails | undefined;
+	if (!details || details.results.length === 0) {
+		const text = result.content[0];
+		return new Text(text?.type === "text" ? text.text : "(no output)", 0, 0);
+	}
+
+	const r = details.results[0];
+	const isError = r.exitCode !== 0 || r.stopReason === "error" || r.stopReason === "aborted";
+	const icon = isError ? theme.fg("error", "✗") : theme.fg("success", "✓");
+	const mdTheme = getMarkdownTheme();
+	const displayItems = getDisplayItems(r.messages);
+	const finalOutput = getFinalOutput(r.messages);
+
+	const renderCollapsed = (items: DisplayItem[]) => {
+		const toShow = items.slice(-COLLAPSED_ITEM_COUNT);
+		const skipped = items.length > COLLAPSED_ITEM_COUNT ? items.length - COLLAPSED_ITEM_COUNT : 0;
+		let text = "";
+		if (skipped > 0) text += theme.fg("muted", `... ${skipped} earlier items\n`);
+		for (const item of toShow) {
+			if (item.type === "text") {
+				text += `${theme.fg("toolOutput", item.text.split("\n").slice(0, 3).join("\n"))}\n`;
+			} else {
+				text += `${theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme))}\n`;
+			}
+		}
+		return text.trimEnd();
+	};
+
+	if (expanded) {
+		const container = new Container();
+		let header = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
+		if (isError && r.stopReason) header += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
+		container.addChild(new Text(header, 0, 0));
+		if (isError && r.errorMessage)
+			container.addChild(new Text(theme.fg("error", `Error: ${r.errorMessage}`), 0, 0));
+		container.addChild(new Spacer(1));
+		container.addChild(new Text(theme.fg("muted", "─── Task ───"), 0, 0));
+		container.addChild(new Text(theme.fg("dim", r.task), 0, 0));
+		container.addChild(new Spacer(1));
+		container.addChild(new Text(theme.fg("muted", "─── Output ───"), 0, 0));
+		if (displayItems.length === 0 && !finalOutput) {
+			container.addChild(new Text(theme.fg("muted", "(no output)"), 0, 0));
+		} else {
+			for (const item of displayItems) {
+				if (item.type === "toolCall")
+					container.addChild(
+						new Text(
+							theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme)),
+							0,
+							0,
+						),
+					);
+			}
+			if (finalOutput) {
+				container.addChild(new Spacer(1));
+				container.addChild(new Markdown(finalOutput.trim(), 0, 0, mdTheme));
+			}
+		}
+		const usageStr = formatUsageStats(r.usage, r.model);
+		if (usageStr) {
+			container.addChild(new Spacer(1));
+			container.addChild(new Text(theme.fg("dim", usageStr), 0, 0));
+		}
+		if (r.htmlReportPath) {
+			container.addChild(new Text(theme.fg("muted", "Report: ") + theme.fg("accent", r.htmlReportPath), 0, 0));
+		}
+		return container;
+	}
+
+	let text = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
+	if (isError && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
+	if (isError && r.errorMessage) text += `\n${theme.fg("error", `Error: ${r.errorMessage}`)}`;
+	else if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
+	else {
+		text += `\n${renderCollapsed(displayItems)}`;
+		if (displayItems.length > COLLAPSED_ITEM_COUNT) text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
+	}
+	const usageStr = formatUsageStats(r.usage, r.model);
+	if (usageStr) text += `\n${theme.fg("dim", usageStr)}`;
+	if (r.htmlReportPath) text += `\n${theme.fg("muted", "Report: ")}${theme.fg("accent", r.htmlReportPath)}`;
+	return new Text(text, 0, 0);
+}
+
 export default function (pi: ExtensionAPI) {
 	pi.registerTool({
-		name: "subagent",
-		label: "Subagent",
+		name: SPAWN_SUBAGENT_TOOL,
+		label: "Spawn Subagent",
 		description: [
 			"Delegate tasks to specialized subagents with isolated context.",
-			`A built-in agent named "${FORK_AGENT_NAME}" is always available: it inherits the main agent's full conversation context (fork) and completes the task independently. Use it when the delegated task needs context already gathered in this session.`,
-			"To parallelize, issue multiple subagent calls in the same assistant turn; they run concurrently.",
+			`For tasks that need the parent's accumulated context, use the ${FORK_SUBAGENT_TOOL} tool instead.`,
+			"To parallelize, issue multiple spawn_subagent calls in the same assistant turn; they run concurrently.",
 			`At most ${MAX_SINGLE_CONCURRENCY} subagent processes run at once; excess calls queue until a slot frees.`, "",
 			'Default agent scope is "user" (from ~/.pi/agent/agents).',
 			'To enable project-local agents in .pi/agents, set agentScope: "both" (or "project").',
 		].join(" "),
 		promptGuidelines: [
 			"When delegating to a subagent, always specify the exact agent name. If you are unsure which agents are available, first call list_agents to discover available subagents and their descriptions.",
-			`Use subagent(agent: "${FORK_AGENT_NAME}") when the sub-task needs the parent's accumulated context (fork); use other agents for isolated recon with a fresh context.`,
-			"To run independent subagents in parallel, issue multiple subagent tool calls in the same assistant turn instead of waiting for each to finish sequentially.",
+			`Use the ${FORK_SUBAGENT_TOOL} tool when the sub-task needs the parent's accumulated context; use spawn_subagent for isolated recon with a fresh context.`,
+			"To run independent subagents in parallel, issue multiple spawn_subagent calls in the same assistant turn instead of waiting for each to finish sequentially.",
 		],
 		parameters: SubagentParams,
 
@@ -572,7 +647,7 @@ export default function (pi: ExtensionAPI) {
 			const agents = discovery.agents;
 			const confirmProjectAgents = params.confirmProjectAgents ?? true;
 
-			const makeDetails = (results: SingleResult[]): SubagentDetails => ({
+			const makeDetails = (results: SingleResult[]): AgentDetails => ({
 				agentScope,
 				projectAgentsDir: discovery.projectAgentsDir,
 				results,
@@ -616,33 +691,23 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			const targetAgent = agents.find((a) => a.name === params.agent);
-			let forkContext: ForkContext | undefined;
-			if (targetAgent?.context === "fork") {
-				try {
-					const entries = buildForkEntries(ctx.sessionManager.getBranch());
-					if (entries.length > 0) {
-						forkContext = { entries, parentSession: ctx.sessionManager.getSessionFile() };
-					}
-				} catch {
-					forkContext = undefined;
-				}
+			if (!targetAgent) {
+				return {
+					content: [{ type: "text", text: `Unknown agent: ${params.agent}` }],
+					details: makeDetails([]),
+					isError: true,
+				};
 			}
-			const overrides = resolveForkOverride(pi, targetAgent);
 
 			let result: SingleResult;
 			try {
-				result = await runSingleAgent(
-					ctx.cwd,
-					agents,
-					params.agent,
-					params.task,
-					forkContext,
-					overrides,
-					params.cwd,
+				result = await runAgent(ctx.cwd, toAgentSpec(targetAgent), {
+					task: params.task,
+					cwd: params.cwd,
 					signal,
 					onUpdate,
 					makeDetails,
-				);
+				});
 			} finally {
 				release();
 			}
@@ -666,113 +731,123 @@ export default function (pi: ExtensionAPI) {
 			const agentName = args.agent || "...";
 			const preview = args.task ? (args.task.length > 60 ? `${args.task.slice(0, 60)}...` : args.task) : "...";
 			let text =
-				theme.fg("toolTitle", theme.bold("subagent ")) +
+				theme.fg("toolTitle", theme.bold(`${SPAWN_SUBAGENT_TOOL} `)) +
 				theme.fg("accent", agentName) +
 				theme.fg("muted", ` [${scope}]`);
-			if (agentName === FORK_AGENT_NAME) text += theme.fg("accent", " fork");
 			text += `\n  ${theme.fg("dim", preview)}`;
 			return new Text(text, 0, 0);
 		},
 
 		renderResult(result, { expanded }, theme) {
-			const details = result.details as SubagentDetails | undefined;
-			if (!details || details.results.length === 0) {
-				const text = result.content[0];
-				return new Text(text?.type === "text" ? text.text : "(no output)", 0, 0);
-			}
-
-			const r = details.results[0];
-			const isError = r.exitCode !== 0 || r.stopReason === "error" || r.stopReason === "aborted";
-			const icon = isError ? theme.fg("error", "✗") : theme.fg("success", "✓");
-			const mdTheme = getMarkdownTheme();
-			const displayItems = getDisplayItems(r.messages);
-			const finalOutput = getFinalOutput(r.messages);
-
-			const renderCollapsed = (items: DisplayItem[]) => {
-				const toShow = items.slice(-COLLAPSED_ITEM_COUNT);
-				const skipped = items.length > COLLAPSED_ITEM_COUNT ? items.length - COLLAPSED_ITEM_COUNT : 0;
-				let text = "";
-				if (skipped > 0) text += theme.fg("muted", `... ${skipped} earlier items\n`);
-				for (const item of toShow) {
-					if (item.type === "text") {
-						text += `${theme.fg("toolOutput", item.text.split("\n").slice(0, 3).join("\n"))}\n`;
-					} else {
-						text += `${theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme))}\n`;
-					}
-				}
-				return text.trimEnd();
-			};
-
-			if (expanded) {
-				const container = new Container();
-				let header = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
-				if (isError && r.stopReason) header += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
-				container.addChild(new Text(header, 0, 0));
-				if (isError && r.errorMessage)
-					container.addChild(new Text(theme.fg("error", `Error: ${r.errorMessage}`), 0, 0));
-				container.addChild(new Spacer(1));
-				container.addChild(new Text(theme.fg("muted", "─── Task ───"), 0, 0));
-				container.addChild(new Text(theme.fg("dim", r.task), 0, 0));
-				container.addChild(new Spacer(1));
-				container.addChild(new Text(theme.fg("muted", "─── Output ───"), 0, 0));
-				if (displayItems.length === 0 && !finalOutput) {
-					container.addChild(new Text(theme.fg("muted", "(no output)"), 0, 0));
-				} else {
-					for (const item of displayItems) {
-						if (item.type === "toolCall")
-							container.addChild(
-								new Text(
-									theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme)),
-									0,
-									0,
-								),
-							);
-					}
-					if (finalOutput) {
-						container.addChild(new Spacer(1));
-						container.addChild(new Markdown(finalOutput.trim(), 0, 0, mdTheme));
-					}
-				}
-				const usageStr = formatUsageStats(r.usage, r.model);
-				if (usageStr) {
-					container.addChild(new Spacer(1));
-					container.addChild(new Text(theme.fg("dim", usageStr), 0, 0));
-				}
-				if (r.htmlReportPath) {
-					container.addChild(new Text(theme.fg("muted", "Report: ") + theme.fg("accent", r.htmlReportPath), 0, 0));
-				}
-				return container;
-			}
-
-			let text = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
-			if (isError && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
-			if (isError && r.errorMessage) text += `\n${theme.fg("error", `Error: ${r.errorMessage}`)}`;
-			else if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
-			else {
-				text += `\n${renderCollapsed(displayItems)}`;
-				if (displayItems.length > COLLAPSED_ITEM_COUNT) text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
-			}
-			const usageStr = formatUsageStats(r.usage, r.model);
-			if (usageStr) text += `\n${theme.fg("dim", usageStr)}`;
-			if (r.htmlReportPath) text += `\n${theme.fg("muted", "Report: ")}${theme.fg("accent", r.htmlReportPath)}`;
-			return new Text(text, 0, 0);
+			return renderAgentResult(result, expanded, theme);
 		},
 	});
 
 	// ── list_agents tool ─────────────────────────────────────────────────────
+
+	// ── fork_subagent tool ──────────────────────────────────────
+
+	pi.registerTool({
+		name: FORK_SUBAGENT_TOOL,
+		label: "Fork Agent",
+		description: [
+			"Delegate a task to a forked subagent that inherits the main agent's full conversation context.",
+			"The forked agent sees the current conversation as shared history and completes the task independently in an isolated session.",
+			"Use it when the sub-task needs context already gathered in this session; use the spawn_subagent tool for isolated recon with a fresh context.",
+			`At most ${MAX_SINGLE_CONCURRENCY} subagent processes run at once; excess calls queue until a slot frees.`,
+		].join(" "),
+		promptGuidelines: [
+			`Use ${FORK_SUBAGENT_TOOL} when the sub-task needs the parent's accumulated context; use spawn_subagent for isolated recon with a fresh context.`,
+			`To run independent forks in parallel, issue multiple ${FORK_SUBAGENT_TOOL} calls in the same assistant turn.`,
+		],
+		parameters: Type.Object({
+			task: Type.String({ description: "Task for the forked agent to complete independently" }),
+			model: Type.Optional(
+				Type.String({
+					description: 'Model for the fork (e.g. "deepseek/deepseek-flash"); default: inherit the parent model',
+				}),
+			),
+			tools: Type.Optional(
+				Type.String({ description: "Comma-separated tool allowlist; default: inherit the parent's tools" }),
+			),
+		}),
+
+		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			let forkContext: ForkContext | undefined;
+			try {
+				const entries = buildForkEntries(ctx.sessionManager.getBranch());
+				if (entries.length > 0) {
+					forkContext = { entries, parentSession: ctx.sessionManager.getSessionFile() };
+				}
+			} catch {
+				forkContext = undefined;
+			}
+
+			const makeDetails = (results: SingleResult[]): AgentDetails => ({ results });
+
+			const release = await acquireSingleSlot(signal);
+			if (!release) {
+				return {
+					content: [{ type: "text", text: "Cancelled while waiting for a subagent concurrency slot." }],
+					details: makeDetails([]),
+				};
+			}
+
+			let result: SingleResult;
+			try {
+				result = await runAgent(
+					ctx.cwd,
+					{
+						name: FORK_SUBAGENT_TOOL,
+						source: "builtin",
+						systemPrompt: FORK_SYSTEM_PROMPT,
+						model: params.model,
+						tools: params.tools,
+					},
+					{ task: params.task, forkContext, signal, onUpdate, makeDetails },
+				);
+			} finally {
+				release();
+			}
+
+			const isError = result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
+			if (isError) {
+				const errorMsg = result.errorMessage || result.stderr || getFinalOutput(result.messages) || "(no output)";
+				return {
+					content: [{ type: "text", text: `Agent ${result.stopReason || "failed"}: ${errorMsg}` }],
+					details: makeDetails([result]),
+					isError: true,
+				};
+			}
+			return {
+				content: [{ type: "text", text: getFinalOutput(result.messages) || "(no output)" }],
+				details: makeDetails([result]),
+			};
+		},
+
+		renderCall(args, theme) {
+			const preview = args.task ? (args.task.length > 60 ? `${args.task.slice(0, 60)}...` : args.task) : "...";
+			const text = `${theme.fg("toolTitle", theme.bold(FORK_SUBAGENT_TOOL))}\n  ${theme.fg("dim", preview)}`;
+			return new Text(text, 0, 0);
+		},
+
+		renderResult(result, { expanded }, theme) {
+			return renderAgentResult(result, expanded, theme);
+		},
+	});
 
 	pi.registerTool({
 		name: "list_agents",
 		label: "List Agents",
 		description: [
 			"Discover available subagents and their descriptions.",
-			"Use this to find the correct agent name before calling subagent.",
+			"Use this to find the correct agent name before calling spawn_subagent.",
 			"Scans user agents (~/.pi/agent/agents/) and optionally project agents (.pi/agents/).",
 		].join(" "),
 		promptSnippet: "Discover available subagents and their descriptions",
 		promptGuidelines: [
 			"Call list_agents first when you need to delegate work to a subagent but are unsure which agent name to use.",
-			"Review the returned agent names and descriptions, then use the correct name with the subagent tool.",
+			"Review the returned agent names and descriptions, then use the correct name with the spawn_subagent tool.",
 		],
 		parameters: Type.Object({
 			agentScope: Type.Optional(AgentScopeSchema),
@@ -798,14 +873,14 @@ export default function (pi: ExtensionAPI) {
 				lines.push(`  ${agent.name}`);
 				lines.push(`    Description: ${agent.description}`);
 				lines.push(`    Source: ${agent.source}`);
-				if (agent.context === "fork") {
-					lines.push("    Context: fork (inherits the main agent's conversation)");
-				}
 				if (agent.tools && agent.tools.length > 0) {
 					lines.push(`    Tools: ${agent.tools.join(", ")}`);
 				}
 				lines.push("");
 			}
+
+			lines.push(`Tip: use the ${FORK_SUBAGENT_TOOL} tool to delegate with the parent's full context.`);
+			lines.push("");
 
 			if (discovery.projectAgentsDir) {
 				lines.push(`Project agents directory: ${discovery.projectAgentsDir}`);
@@ -821,7 +896,6 @@ export default function (pi: ExtensionAPI) {
 						name: a.name,
 						description: a.description,
 						source: a.source,
-						context: a.context ?? "fresh",
 						tools: a.tools ?? [],
 						model: a.model ?? null,
 					})),
@@ -852,14 +926,14 @@ export default function (pi: ExtensionAPI) {
 				lines.push(`  ${agent.name}`);
 				lines.push(`    ${agent.description}`);
 				lines.push(`    Source: ${agent.source}`);
-				if (agent.context === "fork") {
-					lines.push("    Context: fork (inherits the main agent's conversation)");
-				}
 				if (agent.tools && agent.tools.length > 0) {
 					lines.push(`    Allowed tools: ${agent.tools.join(", ")}`);
 				}
 				lines.push("");
 			}
+
+			lines.push(`Tip: use the ${FORK_SUBAGENT_TOOL} tool to delegate with the parent's full context.`);
+			lines.push("");
 
 			if (discovery.projectAgentsDir) {
 				lines.push(`Project agents directory: ${discovery.projectAgentsDir}`);

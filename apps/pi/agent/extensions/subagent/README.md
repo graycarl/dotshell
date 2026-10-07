@@ -6,8 +6,8 @@
 
 - **隔离上下文**：每个 subagent 在独立的 `pi` 子进程中运行（独立 `--session-dir`），不污染主会话。
 - **内置 `worker`**：通用型 subagent，隔离上下文、全能力，无需 markdown 定义。
-- **内置 `fork`**：fork 主 agent 当前的活动分支，继承完整会话上下文后再执行任务。
-- **并发**：同一 assistant turn 内发起多个 `subagent` 调用即可并发；进程级信号量最多同时运行 4 个子进程，超出的排队。
+- **`fork_subagent` 工具**：fork 主 agent 当前的活动分支，继承完整会话上下文后再执行任务；参数仅 `task`（+ 可选 `model`/`tools`）。
+- **并发**：同一 assistant turn 内发起多个 `spawn_subagent` 调用即可并发；进程级信号量最多同时运行 4 个子进程，超出的排队。
 - **流式输出**：实时显示子 agent 的工具调用与文本进度。
 - **Markdown 渲染**：展开视图（Ctrl+O）以 Markdown 渲染最终输出。
 - **用量统计**：每个子 agent 的轮数、tokens、缓存读写、费用与上下文占用。
@@ -20,7 +20,7 @@ apps/pi/
 ├── setup.sh
 └── agent/
     ├── extensions/subagent/
-    │   ├── index.ts      # 扩展入口：subagent / list_agents 工具、/list-agents 命令
+    │   ├── index.ts      # 扩展入口：spawn_subagent / fork_subagent / list_agents 工具、/list-agents 命令
     │   ├── agents.ts     # agent 发现逻辑 + 内置 agent 定义
     │   └── README.md
     ├── agents/           # markdown agent 定义
@@ -67,11 +67,21 @@ Use scout to find all authentication code
 
 ### 并发执行
 
-在同一个 assistant turn 里发出多个 `subagent` 调用即可并发：
+在同一个 assistant turn 里发出多个 `spawn_subagent` 调用即可并发：
 
 ```
 Run 2 scouts in parallel: one to find models, one to find providers
 ```
+
+### 继承上下文（fork）
+
+当子任务依赖当前会话已积累的上下文（此前的讨论、结论、看过的文件内容）时，用 `fork_subagent` 工具而不是 `spawn_subagent`：
+
+```
+Use fork_subagent to summarize what we decided about the cache layer
+```
+
+`fork_subagent` 把当前会话作为共享历史交给子进程，子进程在其上独立完成 `task`。
 
 ### 指定 agent 范围
 
@@ -87,11 +97,12 @@ Run 2 scouts in parallel: one to find models, one to find providers
 
 | 名称 | 类型 | 说明 |
 |------|------|------|
-| `subagent` | 工具 | 委派一个任务给指定 agent |
+| `spawn_subagent` | 工具 | 委派一个任务给指定 agent（隔离上下文） |
+| `fork_subagent` | 工具 | 委派任务给继承父会话上下文的子 agent |
 | `list_agents` | 工具 | 列出指定 scope 下可用的 agent |
 | `/list-agents` | 命令 | 列出全部 agent（scope 固定为 `both`） |
 
-### `subagent` 参数
+### `spawn_subagent` 参数
 
 | 参数 | 类型 | 默认 | 说明 |
 |------|------|------|------|
@@ -100,6 +111,16 @@ Run 2 scouts in parallel: one to find models, one to find providers
 | `agentScope` | `"user"` \| `"project"` \| `"both"` | `"user"` | 加载哪些 agent 目录 |
 | `confirmProjectAgents` | boolean | `true` | 运行项目级 agent 前是否弹窗确认 |
 | `cwd` | string | 继承主进程 | 子进程工作目录 |
+
+### `fork_subagent` 参数
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `task` | string | — | 必填；要委派的任务 |
+| `model` | string | 继承主进程 | 覆盖模型（如 `deepseek/deepseek-flash`） |
+| `tools` | string | 继承主进程 | 逗号分隔的工具白名单 |
+
+`fork_subagent` 的子进程固定排除 `spawn_subagent`、`list_agents`、`fork_subagent`，不可覆盖。
 
 ### `list_agents` 参数
 
@@ -143,7 +164,6 @@ description: 这个 agent 做什么
 tools: read, grep, find, ls
 model: claude-haiku-4-5
 excludeTools: bash
-context: fresh
 ---
 
 agent 的系统提示词写在这里。
@@ -156,7 +176,6 @@ agent 的系统提示词写在这里。
 | `tools` | 否 | 逗号分隔的允许工具；不填则继承主进程的全部工具 |
 | `model` | 否 | 指定模型；不填则继承主进程模型 |
 | `excludeTools` | 否 | 额外禁用的工具，逗号分隔（对应 `--exclude-tools`） |
-| `context` | 否 | `fresh`（默认）隔离上下文；`fork` 继承父会话上下文 |
 
 **加载位置**：
 
@@ -167,48 +186,32 @@ agent 的系统提示词写在这里。
 
 ## 内置 Agent
 
-扩展自带两个无需 markdown 文件的内置 agent：
+扩展自带一个无需 markdown 文件的内置 agent：
 
-| Agent | 上下文 | 说明 |
-|-------|--------|------|
-| `worker` | fresh | 通用 subagent，具备全部能力、隔离上下文 |
-| `fork` | fork | 继承主 agent 的完整会话上下文，独立完成任务 |
+| Agent | 说明 |
+|-------|------|
+| `worker` | 通用 subagent，具备全部能力、隔离上下文 |
 
-普通隔离任务用 `worker`；当任务依赖当前会话已积累的上下文时用 `fork`：
+普通隔离任务用 `worker`；需要继承当前会话上下文时用 `fork_subagent` 工具。
 
-```
-Use subagent with agent "fork" to summarize what we decided about the cache layer
-```
+## `fork_subagent` 工具
 
-`fork` 的工作方式：
+`fork_subagent` 直接把主 agent 的当前会话作为共享历史 fork 给子进程，因此不需要 agent 定义，也不接受 `agentScope` 等对 fork 无意义的参数。
+
+工作方式：
 
 1. 通过 `ctx.sessionManager.getBranch()` 读取当前会话的活动分支。
-2. 裁掉进行中的 turn（发起本次 subagent 调用的那条 assistant 消息尚无 tool result）。
+2. 裁掉进行中的 turn（发起本次调用的那条 assistant 消息尚无 tool result）。
 3. 把该分支写入临时 session 文件，并以隔离的 session 目录启动 `pi --fork <file>`。
-4. 子进程中排除 `subagent` 与 `list_agents`，防止递归 fork。
-
-可选覆盖配置（`~/.pi/agent/settings.json`）：
-
-```json
-{
-  "subagent": {
-    "fork": {
-      "model": "deepseek/deepseek-flash",
-      "tools": "read,grep,find,ls",
-      "excludeTools": "subagent,list_agents",
-      "systemPromptAppend": "给 fork agent 的额外指令"
-    }
-  }
-}
-```
+4. 子进程中固定排除 `spawn_subagent`、`list_agents`、`fork_subagent`，防止递归 fork。
 
 ## 预置 Markdown Agent
 
-| Agent | 说明 | 工具 | 上下文 |
-|-------|------|------|--------|
-| `scout` | 快速代码库侦察，返回可交接的精简上下文 | read, grep, find, ls, bash | fresh |
-| `planner` | 根据上下文与需求生成实现计划 | read, grep, find, ls | fresh |
-| `reviewer` | 代码质量与安全审查 | read, grep, find, ls, bash | fresh |
+| Agent | 说明 | 工具 |
+|-------|------|------|
+| `scout` | 快速代码库侦察，返回可交接的精简上下文 | read, grep, find, ls, bash |
+| `planner` | 根据上下文与需求生成实现计划 | read, grep, find, ls |
+| `reviewer` | 代码质量与安全审查 | read, grep, find, ls, bash |
 
 以上均未指定 `model`，因此继承主进程的模型。
 
@@ -226,5 +229,5 @@ Use subagent with agent "fork" to summarize what we decided about the cache laye
 - 折叠视图只显示最后 10 个显示项，需 Ctrl+O 展开查看全部。
 - 每次调用都会重新扫描 agent 目录（便于会话中途编辑 agent 定义）。
 - 同一时刻最多运行 4 个子进程，其余排队。
-- `fork` 会携带父会话的完整上下文，token 成本约等于父上下文；当父会话接近上下文窗口上限时，子进程可能触发自动 compaction。
-- `fork` 子进程不含 `subagent` / `list_agents` 工具，因此无法继续嵌套 fork。
+- `fork_subagent` 会携带父会话的完整上下文，token 成本约等于父上下文；当父会话接近上下文窗口上限时，子进程可能触发自动 compaction。
+- `fork_subagent` 子进程不含 `spawn_subagent` / `list_agents` / `fork_subagent` 工具，因此无法继续嵌套 fork。
