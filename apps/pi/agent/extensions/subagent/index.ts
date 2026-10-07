@@ -774,6 +774,19 @@ export default function (pi: ExtensionAPI) {
 
 			const makeDetails = (results: SingleResult[]): AgentDetails => ({ results });
 
+			if (!forkContext) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: "Cannot fork: the current session has no conversation history to fork. Use the spawn_subagent tool for a fresh, isolated run instead.",
+						},
+					],
+					details: makeDetails([]),
+					isError: true,
+				};
+			}
+
 			const release = await acquireSingleSlot(signal);
 			if (!release) {
 				return {

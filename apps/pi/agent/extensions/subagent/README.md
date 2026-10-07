@@ -188,6 +188,8 @@ agent 的系统提示词写在这里。
 3. 把该分支写入临时 session 文件，并以隔离的 session 目录启动 `pi --fork <file>`。
 4. 子进程中固定排除 `spawn_subagent`、`list_agents`、`fork_subagent`，防止递归 fork。
 
+若读到的活动分支为空（例如会话刚建立、尚无任何历史），`fork_subagent` 会**直接报错**并提示改用 `spawn_subagent`，不会静默退化成 fresh run。
+
 ### 典型场景与消息结构
 
 场景：主 agent 排查完一个 bug 并定下了修复方案，现在把“按方案实现并补测试”交给 `fork_subagent`，避免在主上下文里展开实现细节。
@@ -268,6 +270,7 @@ agent 的系统提示词写在这里。
 ## 错误处理
 
 - **未知 agent**：返回 `Unknown agent: <name>`（exit code 1）。
+- **`fork_subagent` 无可继承历史**：直接报错并提示改用 `spawn_subagent`，不会退化成 fresh run。
 - **exit code != 0**：作为错误返回，并附带 stderr 或子进程输出。
 - **`stopReason: "error"`**：透传错误信息。
 - **`stopReason: "aborted"`**：用户中止（Ctrl+C）会杀掉子进程并报错。
