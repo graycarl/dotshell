@@ -373,10 +373,6 @@ async function runAgent(defaultCwd: string, spec: AgentSpec, options: RunAgentOp
 			.filter((s): s is string => !!s && s.trim().length > 0)
 			.join(",") || undefined;
 
-	if (isFork && forkContext) {
-		const sourceFile = writeForkSourceFile(forkContext.entries, defaultCwd, forkContext.parentSession, tmpDir);
-		args.push("--session-id", createForkSessionId(), "--fork", sourceFile);
-	}
 	if (spec.model) args.push("--model", spec.model);
 	if (spec.tools) args.push("--tools", spec.tools);
 	if (effectiveExcludeTools) args.push("--exclude-tools", effectiveExcludeTools);
@@ -402,6 +398,11 @@ async function runAgent(defaultCwd: string, spec: AgentSpec, options: RunAgentOp
 	};
 
 	try {
+		if (isFork && forkContext) {
+			const sourceFile = writeForkSourceFile(forkContext.entries, defaultCwd, forkContext.parentSession, tmpDir);
+			args.push("--session-id", createForkSessionId(), "--fork", sourceFile);
+		}
+
 		if (spec.systemPrompt.trim()) {
 			const safeName = spec.name.replace(/[^\w.-]+/g, "_");
 			tmpPromptPath = path.join(tmpDir, `prompt-${safeName}.md`);
