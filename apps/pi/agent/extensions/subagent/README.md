@@ -195,6 +195,76 @@ agent 的系统提示词写在这里。
 3. 把该分支写入临时 session 文件，并以隔离的 session 目录启动 `pi --fork <file>`。
 4. 子进程中固定排除 `spawn_subagent`、`list_agents`、`fork_subagent`，防止递归 fork。
 
+### 典型场景与消息结构
+
+场景：主 agent 排查完一个 bug 并定下了修复方案，现在把“按方案实现并补测试”交给 `fork_subagent`，避免在主上下文里展开实现细节。
+
+调用：
+
+```json
+{ "task": "按上面的方案实现 token 刷新写回 cookie，并补一个回归测试。" }
+```
+
+#### 1. 父会话活动分支（fork 的源）
+
+发起调用前，主会话的**活动分支**大致是：
+
+| # | role | 内容摘要 |
+|---|------|---------|
+| 1 | user | 登录接口偶发 401，帮我排查 |
+| 2 | assistant | “我先看 auth 中间件” + toolCall `read auth.ts` |
+| 3 | toolResult | `auth.ts` 的完整内容（含 `setToken`） |
+| 4 | assistant | “找到原因：刷新后没写回 cookie”，给出修复方案 |
+| 5 | assistant | toolCall `fork_subagent { task: ... }` ← 进行中 |
+
+> 第 5 条是发起本次调用的 assistant 消息，此刻还没有对应的 tool result。
+
+#### 2. 继承与修改
+
+| 处理 | 内容 |
+|------|------|
+| **继承（原样保留）** | 第 1–4 条：用户诉求、读过的文件内容、工具调用与结果、主 agent 已得出的结论与方案，全部按原结构带入 |
+| **裁剪** | 第 5 条（进行中的 turn）被 `buildForkEntries` 丢弃——它只有一个悬空 toolCall，不裁掉会让子进程继承一个“半截”动作、并顺着主 agent 的思路继续 |
+| **追加上下文说明** | 通过 `--append-system-prompt` 追加 `FORK_SYSTEM_PROMPT`，改写这段历史的“身份” |
+| **包装任务** | `task` 被 `buildTaskPrompt` 包成一条**新的 user 消息**追加到历史末尾 |
+
+#### 3. 子进程实际收到的消息流（自上而下）
+
+```text
+[system]      pi 默认系统提示（cwd、AGENTS.md、工具说明……）
+              ＋ 追加片段（--append-system-prompt）：
+              "You are a forked sub-agent of pi. You were forked from the main
+               agent's session: the conversation above is shared history, not your
+               own past work on this task. Treat it strictly as background context.
+               Work autonomously to complete the task in the final user message.
+               You cannot ask the user questions; ... Do not call the
+               spawn_subagent, list_agents, or fork_subagent tools."
+
+[user]        登录接口偶发 401，帮我排查                       ← 继承
+[assistant]   我先看 auth 中间件 + toolCall(read auth.ts)       ← 继承
+[toolResult]  auth.ts 内容……                                    ← 继承
+[assistant]   找到原因：刷新后没写回 cookie。方案：……           ← 继承
+
+[user]        The conversation above is shared context forked from the main agent.
+              You are now running as an independent sub-agent. Complete the task below
+              autonomously and reply with a concise final report.
+              Do not ask the user questions; if you are blocked, state the blocker.
+                                                                              ← 新增
+              Task:
+              按上面的方案实现 token 刷新写回 cookie，并补一个回归测试。
+```
+
+（主会话里那条 `fork_subagent` toolCall 消息**不会**出现在子进程中。）
+
+#### 4. 关键点
+
+- **继承的是“活动分支”**：被放弃的旁支、其他分支的尝试不会带过去。
+- **继承的是“已完成的部分”**：只有拿到 tool result 的步骤会被带入，进行中的动作一律裁掉。
+- **上下文“身份”被改写**：追加的系统提示明确告知子 agent——上面的历史是**别人的**、仅作背景，它自己的任务在最后一条 user 消息里。这能显著降低子 agent 把父任务误当成自己任务、或过早停手的概率。
+- **任务被显式包装**：`task` 永远以最后一条 user 消息出现，保证子 agent 有明确的当前目标。
+- **不回写父会话**：子进程使用独立的 `--session-dir` 与新 session id；其输出只作为父会话中 `fork_subagent` 的 tool result 返回。
+- **可选 `model` / `tools` 只影响子进程运行方式**（用哪个模型、开放哪些工具），不改变上面继承的历史内容。
+
 ## 预置 Markdown Agent
 
 | Agent | 说明 | 工具 |
