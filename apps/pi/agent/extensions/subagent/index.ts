@@ -415,6 +415,8 @@ async function runAgent(defaultCwd: string, spec: AgentSpec, options: RunAgentOp
 		const exitCode = await new Promise<number>((resolve) => {
 			const proc = spawn("pi", args, { cwd: defaultCwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
 			let buffer = "";
+			let exited = false;
+			let killTimer: ReturnType<typeof setTimeout> | undefined;
 
 			const processLine = (line: string) => {
 				if (!line.trim()) return;
@@ -453,18 +455,22 @@ async function runAgent(defaultCwd: string, spec: AgentSpec, options: RunAgentOp
 				}
 			};
 
+			proc.stdout.setEncoding("utf8");
 			proc.stdout.on("data", (data) => {
-				buffer += data.toString();
+				buffer += data;
 				const lines = buffer.split("\n");
 				buffer = lines.pop() || "";
 				for (const line of lines) processLine(line);
 			});
 
+			proc.stderr.setEncoding("utf8");
 			proc.stderr.on("data", (data) => {
-				currentResult.stderr += data.toString();
+				currentResult.stderr += data;
 			});
 
 			proc.on("close", (code) => {
+				exited = true;
+				if (killTimer) clearTimeout(killTimer);
 				if (buffer.trim()) processLine(buffer);
 				resolve(code ?? 0);
 			});
@@ -477,8 +483,8 @@ async function runAgent(defaultCwd: string, spec: AgentSpec, options: RunAgentOp
 				const killProc = () => {
 					wasAborted = true;
 					proc.kill("SIGTERM");
-					setTimeout(() => {
-						if (!proc.killed) proc.kill("SIGKILL");
+					killTimer = setTimeout(() => {
+						if (!exited) proc.kill("SIGKILL");
 					}, 5000);
 				};
 				if (signal.aborted) killProc();
@@ -491,7 +497,9 @@ async function runAgent(defaultCwd: string, spec: AgentSpec, options: RunAgentOp
 
 		// Generate HTML report from the saved session file
 		try {
-			const sessionFiles = fs.readdirSync(tmpDir).filter((f) => f.endsWith(".jsonl"));
+			const sessionFiles = fs
+				.readdirSync(tmpDir)
+				.filter((f) => f.endsWith(".jsonl") && f !== "parent.jsonl");
 			if (sessionFiles.length > 0) {
 				const sessionFile = path.join(tmpDir, sessionFiles[0]);
 				const safeName = spec.name.replace(/[^\w.-]+/g, "_");
@@ -670,19 +678,19 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			const targetAgent = agents.find((a) => a.name === params.agent);
-			if (!targetAgent) {
-				return {
-					content: [{ type: "text", text: `Unknown agent: ${params.agent}` }],
-					details: makeDetails([]),
-					isError: true,
-				};
-			}
-
 			let result: SingleResult;
-			const spec = toAgentSpec(targetAgent);
-			if (params.model) spec.model = params.model;
 			try {
+				const targetAgent = agents.find((a) => a.name === params.agent);
+				if (!targetAgent) {
+					return {
+						content: [{ type: "text", text: `Unknown agent: ${params.agent}` }],
+						details: makeDetails([]),
+						isError: true,
+					};
+				}
+
+				const spec = toAgentSpec(targetAgent);
+				if (params.model) spec.model = params.model;
 				result = await runAgent(ctx.cwd, spec, {
 					task: params.task,
 					signal,
