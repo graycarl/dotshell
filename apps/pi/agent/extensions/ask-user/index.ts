@@ -454,6 +454,9 @@ class AskUserComponent implements Component {
     const lines: string[] = [];
     const boxWidth = Math.min(width - 4, 120);
     const contentWidth = boxWidth - 4; // 2 chars padding on each side
+    // boxLine() adds a left pad of 2, so wrapped text must not use the full
+    // contentWidth: max content width is contentWidth - leftPad.
+    const textWidth = contentWidth - 2;
 
     const horizontalLine = (count: number) => "─".repeat(count);
 
@@ -511,7 +514,7 @@ class AskUserComponent implements Component {
     const allowCustom = q.allowCustom !== false;
 
     const questionText = `${this.bold("Q:")} ${q.question}`;
-    const wrappedQuestion = wrapTextWithAnsi(questionText, contentWidth);
+    const wrappedQuestion = wrapTextWithAnsi(questionText, textWidth);
     for (const line of wrappedQuestion) {
       lines.push(padToWidth(boxLine(line)));
     }
@@ -520,7 +523,7 @@ class AskUserComponent implements Component {
     if (q.context) {
       lines.push(padToWidth(emptyBoxLine()));
       const contextText = this.gray(`> ${q.context}`);
-      const wrappedContext = wrapTextWithAnsi(contextText, contentWidth - 2);
+      const wrappedContext = wrapTextWithAnsi(contextText, textWidth);
       for (const line of wrappedContext) {
         lines.push(padToWidth(boxLine(line)));
       }
@@ -623,10 +626,10 @@ class AskUserComponent implements Component {
 
     if (this.confirmationState === "submit") {
       const confirmMsg = `${this.yellow("Submit all answers?")} ${this.dim("(Enter/y to confirm, Esc/n to cancel)")}`;
-      lines.push(padToWidth(boxLine(truncateToWidth(confirmMsg, contentWidth))));
+      lines.push(padToWidth(boxLine(truncateToWidth(confirmMsg, textWidth))));
     } else if (this.confirmationState === "cancel") {
       const confirmMsg = `${this.yellow("Cancel all answers?")} ${this.dim("(Enter/y to confirm, Esc/n to go back)")}`;
-      lines.push(padToWidth(boxLine(truncateToWidth(confirmMsg, contentWidth))));
+      lines.push(padToWidth(boxLine(truncateToWidth(confirmMsg, textWidth))));
     } else {
       let controls: string;
       if (mode === "select" && hasOptions) {
@@ -641,7 +644,7 @@ class AskUserComponent implements Component {
         controls = `${this.dim("Tab/Enter")} next · ${this.dim("Shift+Tab")} prev · ${this.dim("Shift+Enter")} newline · ${this.dim("Esc")} back`;
       }
 
-      lines.push(padToWidth(boxLine(truncateToWidth(controls, contentWidth))));
+      lines.push(padToWidth(boxLine(truncateToWidth(controls, textWidth))));
     }
     lines.push(padToWidth(this.dim("╰" + horizontalLine(boxWidth - 2) + "╯")));
 
