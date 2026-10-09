@@ -17,6 +17,9 @@ description: >
 技术结构图、不做工作量统计图、不做多视角对比）。报告回答一个问题：**这场对话是
 怎么一步步发生的。**
 
+**形心默认要有图形。** 时间轴、分叉/合流、流水线、色板、大数字仪表盘都是 spec 里的
+普通块类型（见 §4），不用写 Python，所以「整篇都是文字卡」不算交付完成。
+
 ## 1 事实基础（写报告前必须知道）
 
 | 事项 | 结论 |
@@ -32,8 +35,9 @@ description: >
 ## 2 文件清单
 
 ```
-scripts/extract.py   # session → 事实（digest / --turn / --json）
+scripts/extract.py   # session → 事实（digest / --turn / --json / --timeline）
 scripts/reportkit.py # 高层排版 + spec 渲染器：轮卡、面板、多列、两栏汇总、脚注、套模板
+scripts/artkit.py    # 图形层：时间轴条形图 / 分叉合流 / 流水线 / 色板 / 大数字仪表盘
 scripts/svgkit.py    # 底层 SVG 原语：折行（含安全系数）、卡片高度、转义、图形
 scripts/preview.py   # 把报告里的 SVG 出成 PNG（内联亮/暗主题色），目视检查版式
 scripts/verify.py    # 校验报告里引用的用户原文与 session 是否一字不差
@@ -74,6 +78,7 @@ digest 已包含每轮的完整用户原文、工具计数、写改文件、`ask
 
 ```bash
 python3 <skill>/scripts/extract.py --turn 3,7           # 指定轮次的全文细节
+python3 <skill>/scripts/extract.py --timeline          # 直接吐出 spec 的 timeline 段
 ```
 
 `--turn N` 每轮给出：用户输入原文 + agent 的全部文字段落 + 工具调用 brief + 提交
@@ -147,11 +152,14 @@ digest 末尾给了两份**证据**（`signals` 与 `支线清单`）：
 > 脚本的 `signals` 只能看见「写改」和「提交」。**「改动了又回滚」这种净效果为零的
 > 轮次抓不到**（它在两轮里各写了两个文件），需要你读 digest 时自己留意。
 
-### Step 4.5 深度分层：轮 → 子结构
+### Step 4.5 深度分层：轮 → 子结构 → 图形
 
 报告的最小单位是「轮」，但需要时可以把某一轮展开成子结构——波次、阶段、子任务、
 验收项。这是**逐轮各自的深度**，不必全篇统一：常见的组合是「只保留前两轮，但把第
 一轮展开到子任务级」。
+
+能画成图的优先画图（并行 → `fork`、阶段 → `pipeline`、前后对比 → `swatches`、数字
+→ `tiles`，见 §4）；图说不清的才用 `columns` / `kv` / `panel` 文字块。
 
 - 和 Step 2/3 一起问清：要哪几轮、哪一轮要展开、展开到什么粒度。**渲染完再改等于
   重做一遍 SVG**（有了 `reportkit` 只是重跑一条命令，但用户的等待仍要避免）
@@ -168,14 +176,20 @@ digest 末尾给了两份**证据**（`signals` 与 `支线清单`）：
 **不要手写几何。** 报告 = 一份 spec（JSON 文件或 Python 调用）+ `reportkit.py`，
 这样 Step 2 / 3 / 4.5 的取舍变起来只是改数据、重跑一条命令：
 
+**图形也是 spec 的一部分**：`timeline`（顶层）/ `fork` / `pipeline` / `swatches` /
+`tiles` 都是块类型，写 spec 就够，不必写 Python（字段见 §4）。
+
 ```bash
 python3 <skill>/scripts/reportkit.py spec.json --out ~/Inbox/init-sdd.html
 ```
 
-spec 的字段与块类型（`turn` / `panel` / `columns` / `kv` / `gap`）见 `reportkit.py`
-的模块文档；等价的 Python API 是 `Doc(...).turn(...) / .columns(...) / .write(path)`。
+spec 的字段与块类型（`turn` / `panel` / `columns` / `kv` / `gap` / `timeline` /
+`fork` / `pipeline` / `swatches` / `tiles`）见 `reportkit.py`
+的模块文档；等价的 Python API 是
+`Doc(...).turn(...) / .columns(...) / .fork(...) / .write(path)`。
 两类子结构有现成块：`columns` 是分波次/分阶段的多列面板（每列：头部 / 负责人 /
-事项 / 底部对齐的结论），`kv` 是两栏汇总面板（左栏标题留空时沿用面板标题）。
+事项 / 底部对齐的结论），`kv` 是两栏汇总面板（左栏标题留空时沿用面板标题）。这两块
+现在主要用于图说不清的场合（见 §4 的选型表）。
 
 结构固定三段：
 
@@ -229,11 +243,79 @@ python3 <skill>/scripts/preview.py ~/Inbox/init-sdd.html --theme both --out /tmp
 文字贴边、面板标题被卡片盖住、内外边框重合，都是这一步才看得见的。
 
 交付说明里写清楚：文件路径、scope（active branch、UTC）、跑了哪些检查（verify +
-preview）、**跳过了什么**（没点主题切换、没测窄屏等），以及**这份报告是怎么生成的**
+preview）、**跳过了什么**（没点主题切换、没测窄屏等）、**用了哪几张图**（时间轴 /
+`fork` / `pipeline` / `swatches` / `tiles` 各几张），以及**这份报告是怎么生成的**
 （spec 文件路径 + 那条 `reportkit.py` 命令），方便用户下一步说「再去掉一轮」或
-「把第一轮展开」时一句话就能重渲。
+「把第一轮展开」「T2 那张换成流水线」时一句话就能重渲。
 
-## 4 常见坑
+## 4 图形层（artkit.py）
+
+**默认要有图。** 整篇都是文字卡 = 没做完。先按选型表把内容换成图，再用文字卡补
+图说不清的地方。
+
+| 内容长什么样 | 用哪张图 | spec 块 |
+|---|---|---|
+| 全程节奏：每轮多长、哪轮最重、中间断了多久 | 时间轴条形图（条形长度 ∝ 工具调用次数，虚线标间歇） | 顶层 `timeline`（`extract.py --timeline` 直接给） |
+| 一件事拆成 N 路并行做、最后合回来 | 分叉/合流图（主干分 N 条泳道，虚线汇到合流点） | `fork` |
+| 分波次/分阶段推进，阶段有先后 | 流水线（盒子 + 箭头；某阶段内部并行就挂 `badge`） | `pipeline` |
+| 改之前 vs 改之后（颜色、参数、坏值/好值） | 色板取证（把色块真的画出来 + 大数字） | `swatches` |
+| 一堆交付/验收数字 | 大数字仪表盘（3×N 数字块 + 未完成警示条） | `tiles` |
+| 若干条并列事实，没有形状 | 文字块 | `columns` / `kv` / `panel` |
+
+**三条纪律**（都是从踩过的坑里来的）：
+
+1. **数字由脚本算，图上不手写。** 时长/间歇/工具次数用 `extract.py --timeline`；
+   交付数字从 `--turn N` 的收尾文字里抄。条形长度、总结行都由这些字段驱动。
+2. **不手摆坐标。** 只喂数据，高度/折行/箭头位置由 `artkit` 算（它统一返回
+   `(markup, height)`）。自己加新图形时也要遵守这个契约。
+3. **颜色只用模板类**（`box-acc` / `box-ok` / `box-warn` / `box-pur` / `node` /
+   `flow` / `flow-d` / `life` / `sep` …）。属性里内联 `var(--x)` 在独立 SVG 里不解析
+   （`preview.py` 会报），字面色值只许出现在 `swatches`——那里画的就是当时的错误颜色。
+
+### 各图的 spec 形状（`artkit.py` 的 docstring 是权威）
+
+下面是示意写法（真 spec 是 JSON，不能带注释）：
+
+    "timeline": [{"label": "T1", "at": "10-06 17:43", "dur": "11m16s", "dur_s": 676,
+                  "gap": "24m10s", "gap_s": 1450, "value": 16, "unit": "次",
+                  "sub": "11m16s · 1 提交"}]
+    // timeline_note 可省：省了就由 dur_s / gap_s / value 自动写总结行
+
+    {"kind": "fork", "title": "T1 · 4 路分叉", "trunk": "T1 · 派发 4 路",
+     "merge": "T2 · 4 路合并进 dev",
+     "lanes": [{"head": "W1 · config/", "meta": "wt-config · feat/config",
+                "line": "wg-quick 解析 / 序列化 / 校验", "sub": "纯 ArkTS（禁 import @kit）"}]}
+
+    {"kind": "pipeline", "title": "T2 · 4 波推进", "foot": "→ 终点：4 模块合并双绿",
+     "stages": [{"head": "① 接管 T1 的 4 路", "sub": "3 路撞上 5 小时额度限制",
+                 "items": ["逐路核对 worktree 实际状态", "补派 config + native 收尾"],
+                 "badge": "∥ 3 路并行 · 同时开工"}]}
+
+    {"kind": "swatches", "title": "T5 · 配色取证", "cls": "box-warn",
+     "before": {"title": "改之前", "rows": [{"hex": "#F1F3F5",
+                    "text": "详情页卡片底", "why": "浅底浅字，读不出"}]},
+     "after": {"title": "改之后", "big": ["25", "→ 0 处硬编码颜色"],
+               "items": ["新增 13 个主题化资源（base + dark 双份）"],
+               "foot": "真机双主题复验"}}
+
+    {"kind": "tiles", "title": "交付物与验证", "per_row": 3,
+     "alert": "未完成：真机清单与互操作用例待设备上执行回填",
+     "tiles": [{"n": "119", "unit": "文件", "caption": "PR #1 · dev → main，已 MERGED"}],
+     "notes": ["文档：dev-contracts.md · device-verification.md"]}
+
+要点：
+
+- **fork**：`lane.meta` 右对齐（放分支名 / worktree），`line` / `sub` 自动折行并撑高
+  卡片；省略 `merge` 就只表示「分出去了」。泳道 3–5 条最好看。
+- **pipeline**：阶段数以 4 为佳（≤5）；`badge` 挂在盒子正下方，用来表示「这一阶段内部
+  又是并行的」；`foot` 是整条流水线的终点，别写成阶段内容。
+- **swatches**：`hex` 必须是字面色值（这就是取证的意义）；`big` 是 `[数字, 单位]`。
+- **tiles**：`per_row` 默认 3；`alert` 是琥珀色警示条（未完成项），别拿它当强调用；
+  `caption` 自动折行，写长一点没关系。
+- **timeline**：只能放顶层（画在概览节点列表上方），不要塞进 `transcript`——它的职责
+  就是「一屏看完全程的节奏」；`at` 建议带日期（`extract.py --timeline` 已经带了）。
+
+## 5 常见坑
 
 - **不回溯树** → 把 rewind 掉的支线当成主线渲染。先确认 `支线 N 条` 这个数字，再
   动手；有支线时不要凭文件名顺序假设对话是线性的。
@@ -255,3 +337,14 @@ preview）、**跳过了什么**（没点主题切换、没测窄屏等），以
 - **SVG 多写一个 `<svg>` 开标签** → 浏览器按嵌套 SVG 缩放，页面出现大片空白。
 - **`thinkingLevel` 在 message 上，不在条目上** → 取字段时容易取错层级。
 - **改了用户原文** → verify.py 会拦，但最好一开始就别碰。
+- **图形块忘了把高度算进 y** → 后面的卡片叠在前一张图上。`artkit` 的渲染器统一返回
+  `(markup, height)`，由 `reportkit` 负责 `y += height + 12`；自己加图形时照这个契约写。
+- **属性里内联 `var(--x)`** → 独立 SVG 渲染器不解析，形状在亮/暗两版里都变黑
+  （`preview.py` 现在会直接报）。颜色走模板类；非要在属性里写色值就写字面量。
+- **右对齐文字不会自动折行**：`text(..., anchor="end")` 只挪锚点，长了就出框，而
+  `preview.py` 的越界检查只看 text 的 x/y、不看排版溢出。先 `wrap_text` 再逐行 `end`，
+  或把文案改短。
+- **暗色主题下的字面色块要描边**：`#000000` 色块在深色背景上等于消失（加
+  `stroke="#8b949e"` 这类中性描边，亮色主题下也顺便有了边界）。
+- **时间轴放进概览要占高度**：概览节点列表的起始 y 必须从时间轴底部往下让，否则第一张
+  节点卡会盖住时间轴的时长 / 间歇标签。

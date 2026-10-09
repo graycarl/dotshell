@@ -8,6 +8,10 @@ footer — plus the template filling, so a report is data instead of 300 lines o
 geometry.  Editing a report (drop a turn, expand one into sub-structure, move it
 to another file) becomes a one-line change and a re-render.
 
+The five *diagrams* (timeline strip, fork, pipeline, swatches, tiles) live in
+`artkit.py`; a spec can use them directly as transcript blocks and nobody has to
+write Python for a vivid report.
+
 Two ways to use it::
 
     # 1. from a spec file (recommended: the spec is what you iterate on)
@@ -31,6 +35,10 @@ Spec format (`spec.json`), every key optional except `title`/`verbatim`::
     {
       "title": "…", "subtitle": "…(可含 HTML)", "lang": "zh-CN",
       "chips": ["我的输入 <b>5</b> 条", …],
+      "timeline": [{"label": "T1", "at": "09-21 23:19", "dur": "2h12m",
+                    "dur_s": 7920, "gap": "10h21m", "gap_s": 37260,
+                    "value": 144, "unit": "次", "sub": "144 工具 · 8 提交"}],
+      "timeline_note": "全程 …（省略则由 timeline 数据自动总结）",
       "overview": [{"label": "T1", "time": "09-21 23:19", "dur": "2h12m",
                     "user": "…", "result": "…",
                     "sub": [["W1", "…"]], "pause_after": "会话中断 ≈ 10h"}],
@@ -45,7 +53,22 @@ Spec format (`spec.json`), every key optional except `title`/`verbatim`::
         {"kind": "panel", "title": "…", "cls": "box-warn", "items": ["· …"]},
         {"kind": "kv", "title": "…", "cls": "box-ok",
          "left": {"title": "…", "items": ["…"]},
-         "right": {"title": "…", "items": [["xs", "…"], "…"]}}
+         "right": {"title": "…", "items": [["xs", "…"], "…"]}},
+        {"kind": "fork", "title": "…", "trunk": "T1 · 派发 4 路",
+         "merge": "T2 · 4 路合并进 dev",
+         "lanes": [{"head": "W1 · config/", "meta": "wt-config · feat/config",
+                    "line": "…", "sub": "…"}]},
+        {"kind": "pipeline", "title": "…", "foot": "→ …",
+         "stages": [{"head": "① …", "sub": "…", "items": ["…"],
+                     "badge": "∥ 3 路并行 · 同时开工"}]},
+        {"kind": "swatches", "title": "…", "cls": "box-warn",
+         "before": {"title": "改之前",
+                    "rows": [{"hex": "#F1F3F5", "text": "…", "why": "…"}]},
+         "after": {"title": "改之后", "big": ["25", "→ 0 处硬编码颜色"],
+                   "items": ["…"], "foot": "…"}},
+        {"kind": "tiles", "title": "…", "per_row": 3, "alert": "未完成：…",
+         "tiles": [{"n": "119", "unit": "文件", "caption": "…"}],
+         "notes": ["文档：…"]}
       ],
       "footer": ["<p><b>数据来源</b>…</p>"],
       "verbatim": [{"i": 1, "text": "<用户原文>"}]
@@ -53,7 +76,10 @@ Spec format (`spec.json`), every key optional except `title`/`verbatim`::
 
 `items` entries are either a string (body text, class `tq`) or
 `["cls", "text"]`; `cls` may be `tq` / `tqh` / `st` / `xs` / `mono` / `h3s` /
-`gap` (a `gap` item inserts a blank row).
+`gap` (a `gap` item inserts a blank row).  The diagram kinds (`timeline` /
+`fork` / `pipeline` / `swatches` / `tiles`) are rendered by `artkit.py`; their
+payload keys are listed in SKILL.md §"图形层".  `timeline` rows come from
+`extract.py --timeline`.
 
 Chrome: a `turn` block with `index` and `user` feeds `verbatim` automatically, so
 the verify.py block cannot drift from the rendered cards.  Chips are NOT derived
@@ -71,6 +97,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import svgkit as k  # noqa: E402
+import artkit as a  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE = os.path.join(os.path.dirname(HERE), "templates", "report.html")
@@ -135,7 +162,7 @@ def leftover_tokens(document: str) -> list:
 
 class Doc:
     def __init__(self, title, subtitle="", chips=(), footer=(), lang="zh-CN",
-                 verbatim=None, width=WIDTH):
+                 verbatim=None, width=WIDTH, timeline=None, timeline_note=""):
         self.title = title
         self.subtitle = subtitle
         self.chips = list(chips)
@@ -145,6 +172,8 @@ class Doc:
         self.nodes = []
         self.blocks = []
         self._verbatim = list(verbatim or [])
+        self._timeline = list(timeline or [])
+        self._timeline_note = timeline_note
 
     # ── overview ─────────────────────────────────────────────────────────
     def node(self, label, time="", dur="", user="", result="", sub=(), pause_after=None):
@@ -180,6 +209,42 @@ class Doc:
         self.blocks.append(dict(kind="gap", text=text))
         return self
 
+    # ── overview strip ───────────────────────────────────────────────────
+    def timeline(self, rows, note=""):
+        """Bar chart under the report header: bar length ∝ `row["value"]`.
+
+        `rows` is `extract.py --timeline` output — one dict per turn:
+        `label / at / dur / dur_s / gap / gap_s / value / unit / sub`.
+        """
+        self._timeline = list(rows)
+        self._timeline_note = note
+        return self
+
+    # ── diagram blocks ───────────────────────────────────────────────────
+    def art(self, kind, **data):
+        """Add a diagram block.  `kind` ∈ `artkit.RENDERERS`; the rest of `data`
+        is that renderer's payload (see artkit's docstrings / SKILL.md §图形层)."""
+        if kind not in a.RENDERERS:
+            raise ValueError(f"unknown art kind: {kind!r} (known: {', '.join(a.RENDERERS)})")
+        self.blocks.append(dict(kind="art", art=kind, **data))
+        return self
+
+    def fork(self, title, lanes, **data):
+        """One trunk → n parallel lanes → one merge point (parallel work)."""
+        return self.art("fork", title=title, lanes=list(lanes), **data)
+
+    def pipeline(self, title, stages, **data):
+        """Ordered stages with arrows; a stage may carry a `badge` (e.g. ∥ 3 路并行)."""
+        return self.art("pipeline", title=title, stages=list(stages), **data)
+
+    def swatches(self, title, before, after, **data):
+        """Before/after colour forensics — the only place literal hexes are right."""
+        return self.art("swatches", title=title, before=before, after=after, **data)
+
+    def tiles(self, title, tiles, **data):
+        """Big-number dashboard (delivery totals, verification counts)."""
+        return self.art("tiles", title=title, tiles=list(tiles), **data)
+
     # ── verbatim ─────────────────────────────────────────────────────────
     def verbatim(self):
         """Turns quoted in the report, ready for `verify.py`."""
@@ -198,6 +263,11 @@ class Doc:
     # ── rendering ────────────────────────────────────────────────────────
     def svg_overview(self):
         body, y, centers = [], 8.0, []
+        if self._timeline:
+            strip, top = a.timeline(y, X_CARD, self.width - X_CARD - 4,
+                                    self._timeline, self._timeline_note)
+            body.append(strip)
+            y = top + 24
         for index, node in enumerate(self.nodes):
             lines = k.wrap_items([("tqh", node["user"]), ("gap", None),
                                   ("st", "→ " + node["result"])],
@@ -281,6 +351,10 @@ class Doc:
                 body.append(k.card(T_CARD, y, 430, 26, cls="box", rx=8))
                 body.append(k.text(T_CARD + 14, y + 18, "⏸ " + block["text"], "xs"))
                 y += 26 + 16
+            elif kind == "art":
+                markup, height = a.render(block["art"], y, T_CARD, width, block)
+                body.append(markup)
+                y += height + 12
             elif kind == "panel":
                 body.append(self._panel_block(block, y))
                 _, height = k.text_card(T_CARD, y, width, block["title"],
@@ -378,7 +452,7 @@ class Doc:
             "TITLE": self.title,
             "SUBTITLE": self.subtitle,
             "CHIPS": chips,
-            "OVERVIEW": self.svg_overview() if self.nodes else "",
+            "OVERVIEW": self.svg_overview() if (self.nodes or self._timeline) else "",
             "TRANSCRIPT": self.svg_transcript() if self.blocks else "",
             "FOOTER": footer,
             "VERBATIM_JSON": verbatim,
@@ -404,7 +478,9 @@ class Doc:
                   chips=spec.get("chips", ()),
                   footer=spec.get("footer", ()),
                   lang=spec.get("lang", "zh-CN"),
-                  verbatim=spec.get("verbatim"))
+                  verbatim=spec.get("verbatim"),
+                  timeline=spec.get("timeline"),
+                  timeline_note=spec.get("timeline_note", ""))
         for node in spec.get("overview", []):
             doc.node(node.get("label", ""), time=node.get("time", ""),
                      dur=node.get("dur", ""), user=node.get("user", ""),
@@ -432,6 +508,9 @@ class Doc:
                        cls=block.get("cls", "box-ok"))
             elif kind == "gap":
                 doc.gap(block.get("text", ""))
+            elif kind in a.RENDERERS or kind == "art":
+                data = {key: value for key, value in block.items() if key != "kind"}
+                doc.art(data.pop("art", kind), **data)
             else:
                 raise ValueError(f"unknown spec block kind: {kind!r}")
         return doc
@@ -451,6 +530,8 @@ def main(argv=None) -> int:
     size = os.path.getsize(path)
     print(f"wrote {path}  ({size / 1024:.1f} KB) · "
           f"轮 {sum(1 for b in doc.blocks if b['kind'] == 'turn')} · "
+          f"图形 {sum(1 for b in doc.blocks if b['kind'] == 'art')}"
+          + (" + 时间轴" if doc._timeline else "") + " · "
           f"概览节点 {len(doc.nodes)} · verbatim {len(doc.verbatim()['turns'])} 条")
     return 0
 

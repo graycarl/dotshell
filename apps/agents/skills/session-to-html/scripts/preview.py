@@ -14,7 +14,9 @@ stylesheet with the theme's literal colours, and shells out to `rsvg-convert`.
     python3 preview.py ~/Inbox/dev-k.html --svg-only     # just dump the SVGs
 
 Then open the PNGs (or feed them to an image-capable model).  Exit code 1 means a
-check failed, 0 means "look at the pictures".
+check failed, 0 means "look at the pictures".  Two checks run before you look:
+text nodes outside the canvas, and inline `var(--x)` in attributes (which no
+standalone renderer resolves, so the shape silently renders black).
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ ROOT_RE = re.compile(r":root\s*\{(.*?)\}", re.DOTALL)
 DARK_RE = re.compile(r'html\[data-theme="dark"\]\s*\{(.*?)\}', re.DOTALL)
 DECL_RE = re.compile(r"--([A-Za-z0-9_-]+)\s*:\s*([^;]+);")
 VIEWBOX_RE = re.compile(r'viewBox="([\d.\s-]+)"')
+INLINE_VAR_RE = re.compile(r'="[^"]*var\(\s*--')
 LABEL_RE = re.compile(r'aria-label="([^"]*)"')
 TEXT_RE = re.compile(r'<text\b([^>]*)>', re.IGNORECASE)
 XY_RE = re.compile(r'\b(x|y)="([-\d.]+)"')
@@ -148,6 +151,11 @@ def main(argv=None) -> int:
             overflow = text_overflow(diagram, size)
             if overflow:
                 problems.append(f"{name}: {len(overflow)} 个 text 落在画布外 {overflow[:3]}")
+            inline_var = INLINE_VAR_RE.findall(diagram)
+            if inline_var:
+                problems.append(
+                    f"{name}: {len(inline_var)} 处属性里内联 var() —— 独立 SVG 渲染时不解析"
+                    f"（亮/暗两版都变黑）；改用模板类（box-ok / node / flow / sep …）或字面色值")
             if size:
                 print(f"{name}  viewBox {size[0]:.0f}x{size[1]:.0f}  "
                       f"text {len(TEXT_RE.findall(diagram))} 个  →  {svg_path}")

@@ -14,6 +14,7 @@ Usage:
     extract.py --name report-demo       # force display-name lookup only
     extract.py --json                   # full structured facts
     extract.py --turn 3,7               # full detail for those turns
+    extract.py --timeline               # paste-ready `timeline` block for a report spec
     extract.py --list                   # list candidate sessions
 
 Only the stdlib is used, and the session file is read incrementally so a
@@ -29,7 +30,7 @@ import os
 import re
 import sys
 from collections import Counter, defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 
 SESSIONS_ROOT = os.environ.get("PI_SESSION_DIR") or os.path.expanduser("~/.pi/agent/sessions")
 OUT_DIR = os.environ.get("SESSION_TO_HTML_OUTDIR") or "~/Inbox"
@@ -528,6 +529,59 @@ def fmt_time(iso: str) -> str:
     return (iso or "")[11:19]
 
 
+def fmt_span(seconds) -> str:
+    """Compact duration: 59s / 11m16s / 1h05m / 5h39m."""
+    seconds = int(round(seconds or 0))
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, rest = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m{rest:02d}s" if rest else f"{minutes}m"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h{minutes:02d}m" if minutes else f"{hours}h"
+
+
+def parse_stamp(iso: str):
+    try:
+        return datetime.fromisoformat((iso or "").replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def timeline_rows(turns):
+    """One bar per turn, ready to paste into a report spec as `timeline`.
+
+    `value` is the tool-call count (that is what the bar length encodes);
+    `dur_s` / `gap_s` are the raw seconds, which let `artkit` write the
+    auto-summary line (全程 / 对话 / 间歇 / 工作集中在哪一轮).
+    """
+    spans = []
+    for turn in turns:
+        start = parse_stamp(turn["time"])
+        end = parse_stamp(turn["last_assistant_time"]) or start
+        seconds = (end - start).total_seconds() if start and end else 0.0
+        spans.append((turn, start, end, seconds))
+    rows = []
+    for index, (turn, start, end, seconds) in enumerate(spans):
+        following = spans[index + 1][1] if index + 1 < len(spans) else None
+        gap = (following - end).total_seconds() if (following and end) else 0.0
+        commits = len(turn["commits"])
+        rows.append({
+            "label": f"T{turn['index']}",
+            "at": start.strftime("%m-%d %H:%M") if start else "",
+            "dur": fmt_span(seconds),
+            "dur_s": int(round(seconds)),
+            "gap": fmt_span(gap) if gap > 0 else "",
+            "gap_s": int(round(max(gap, 0))),
+            "value": sum(turn["tools"].values()),
+            "unit": "次",
+            "sub": " · ".join(part for part in
+                               (fmt_span(seconds), f"{commits} 提交" if commits else "")
+                               if part),
+        })
+    return rows
+
+
 def render_digest(meta, turns):
     s, b, t = meta["session"], meta["branch"], meta["totals"]
     span = meta["span"]
@@ -692,6 +746,8 @@ def main(argv=None):
     parser.add_argument("--name", dest="session_name", help="session display name only (/name, --name)")
     parser.add_argument("--json", action="store_true", help="full structured facts")
     parser.add_argument("--turn", help="comma separated turn numbers, full detail")
+    parser.add_argument("--timeline", action="store_true",
+                        help="paste-ready `timeline` block for a report spec")
     parser.add_argument("--list", action="store_true", help="list candidate sessions and exit")
     args = parser.parse_args(argv)
 
@@ -726,6 +782,13 @@ def main(argv=None):
     meta, turns, branches, leaf = load(candidates[0])
     if args.json:
         print(json.dumps(to_json(meta, turns, branches), ensure_ascii=False, indent=2))
+    elif args.timeline:
+        rows = timeline_rows(turns)
+        lines = json.dumps(rows, ensure_ascii=False, indent=2).splitlines()
+        print("\n".join([f'  "timeline": {lines[0]}'] + ["  " + line for line in lines[1:]]))
+        print("# 粘进 spec 作为顶层键（后面还有其它键时补个逗号）；"
+              "不打 timeline_note 时，时间轴上的总结行由 artkit 用 dur_s / gap_s 自动写",
+              file=sys.stderr)
     elif args.turn:
         wanted = {int(x) for x in re.split(r"[,\s]+", args.turn.strip()) if x}
         print(render_turns(meta, turns, wanted))
