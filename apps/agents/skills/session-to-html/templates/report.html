@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<!--
+  session-to-html report template.
+
+  Replace these placeholders (all optional except TITLE and VERBATIM_JSON):
+    {{LANG}}           html lang attribute, default zh-CN
+    {{TITLE}}          <title> and <h1>
+    {{SUBTITLE}}       one or two sentences under the title (may contain HTML)
+    {{CHIPS}}          the <span class="chip">…</span> row
+    {{OVERVIEW}}       the overview SVG (or any HTML)
+    {{TRANSCRIPT}}     the dialogue transcript SVG (or any HTML)
+    {{VERBATIM_JSON}}  {"turns": [{"i": 1, "text": "<user text verbatim>"}]}
+                       — verified by scripts/verify.py, keep it exactly as-is
+    {{FOOTER}}         source, scope and artifact notes
+
+  SVG helpers available as CSS classes: .h1s .h3s .tq .st .xs .mono .tqh .tout
+  .qtext .ans .opt-on .dot .tnum, plus shapes .box .box-soft .box-acc .box-warn
+  .box-ok .box-pur .box-dan and connectors .life .flow .flow-d.
+-->
+<html lang="{{LANG}}" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{TITLE}}</title>
+<style>
+:root{
+  --bg:#ffffff; --bg-soft:#f6f8fa; --card:#ffffff; --fg:#1f2328; --fg-mute:#59636e;
+  --line:#d8dee4; --accent:#0969da; --accent-soft:#eaf6ff; --warn:#9a6700; --warn-soft:#fff8c5;
+  --ok:#1a7f37; --ok-soft:#dafbe1; --danger:#cf222e; --danger-soft:#ffebe9;
+  --purple:#8250df; --purple-soft:#fbf3ff; --shadow:0 1px 3px rgba(31,35,40,.08);
+}
+html[data-theme="dark"]{
+  --bg:#0d1117; --bg-soft:#161b22; --card:#161b22; --fg:#e6edf3; --fg-mute:#9198a1;
+  --line:#30363d; --accent:#4493f8; --accent-soft:#0e1c2c; --warn:#d29922; --warn-soft:#26200e;
+  --ok:#3fb950; --ok-soft:#0d2318; --danger:#f85149; --danger-soft:#2b1315;
+  --purple:#a371f7; --purple-soft:#191330; --shadow:none;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;background:var(--bg);color:var(--fg);font-size:15px;line-height:1.65;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+code,.mono{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace}
+.wrap{max-width:1120px;margin:0 auto;padding:0 24px 96px}
+header.top{border-bottom:1px solid var(--line);background:var(--bg-soft);padding:40px 0 28px;position:relative}
+header.top .wrap{padding-bottom:0}
+h1{font-size:27px;margin:0 0 10px;letter-spacing:-.01em}
+.sub{color:var(--fg-mute);font-size:14px;margin:0 0 18px;max-width:840px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{font-size:12.5px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);
+  background:var(--card);color:var(--fg-mute);white-space:nowrap}
+.chip b{color:var(--fg);font-weight:600}
+#themeBtn{position:absolute;top:34px;right:24px;cursor:pointer;font-size:13px;background:var(--card);
+  color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:7px 12px}
+#themeBtn:hover{border-color:var(--accent);color:var(--accent)}
+nav.toc{position:sticky;top:0;z-index:20;border-bottom:1px solid var(--line);
+  background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(8px)}
+nav.toc .wrap{display:flex;gap:16px;flex-wrap:wrap;padding-top:10px;padding-bottom:10px;font-size:13px}
+nav.toc a{color:var(--fg-mute);text-decoration:none}
+nav.toc a:hover{color:var(--accent)}
+section{margin-top:44px}
+h2{font-size:19px;margin:0 0 6px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+h2 .n{color:var(--fg-mute);font-weight:400;margin-right:6px}
+p.lead{color:var(--fg-mute);font-size:14px;margin:12px 0 16px}
+figure.diagram{margin:18px 0 6px;border:1px solid var(--line);border-radius:12px;
+  background:var(--bg-soft);padding:10px 14px;overflow-x:auto}
+svg.diagram{display:block;width:100%;height:auto;min-width:700px}
+
+/* ── SVG text ─────────────────────────────────────────────────────────── */
+svg text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  fill:var(--fg);font-size:12.5px}
+svg .h1s{font-size:14.5px;font-weight:700}
+svg .h3s{font-size:12.5px;font-weight:600;fill:var(--fg-mute)}
+svg .tq{font-size:12.5px}
+svg .tqh{font-size:13px;font-weight:600}
+svg .tout{font-size:11.5px;font-weight:600;fill:var(--fg)}
+svg .st{font-size:11.5px;fill:var(--fg-mute)}
+svg .xs{font-size:11px;fill:var(--fg-mute)}
+svg .mono{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  font-size:11px;fill:var(--fg-mute)}
+svg .qtext{font-size:12.5px;font-weight:600;fill:var(--accent)}
+svg .ans{font-size:12px;font-weight:600;fill:var(--ok)}
+svg .opt-on{font-size:12px;font-weight:600}
+svg .dot{font-size:9px;font-weight:700;fill:#fff}
+html[data-theme="dark"] svg .dot{fill:#0d1117}
+svg .tnum{font-size:10.5px;font-weight:600;fill:#fff}
+
+/* ── SVG shapes ───────────────────────────────────────────────────────── */
+svg .box{fill:var(--card);stroke:var(--line);stroke-width:1.2}
+svg .box-soft{fill:var(--bg-soft);stroke:var(--line);stroke-width:1.2}
+svg .box-acc{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.2}
+svg .box-warn{fill:var(--warn-soft);stroke:var(--warn);stroke-width:1.2}
+svg .box-ok{fill:var(--ok-soft);stroke:var(--ok);stroke-width:1.2}
+svg .box-pur{fill:var(--purple-soft);stroke:var(--purple);stroke-width:1.2}
+svg .box-dan{fill:var(--danger-soft);stroke:var(--danger);stroke-width:1.2}
+svg .life{stroke:var(--line);stroke-width:1.2;stroke-dasharray:5 5;fill:none}
+svg .flow{stroke:var(--fg-mute);stroke-width:1.4;fill:none}
+svg .flow-d{stroke:var(--fg-mute);stroke-width:1.4;fill:none;stroke-dasharray:5 4}
+
+/* ── HTML blocks (usable outside the SVG) ─────────────────────────────── */
+table{width:100%;border-collapse:collapse;font-size:13.5px;margin:16px 0}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:var(--bg-soft);font-weight:600;font-size:13px;color:var(--fg-mute)}
+tbody tr:hover{background:var(--bg-soft)}
+td code{font-size:12.5px;background:var(--bg-soft);padding:1px 5px;border-radius:5px}
+.tag{display:inline-block;font-size:11.5px;padding:1px 8px;border-radius:999px;
+  border:1px solid var(--line);color:var(--fg-mute);white-space:nowrap}
+.tag.acc{color:var(--accent);border-color:var(--accent);background:var(--accent-soft)}
+.tag.ok{color:var(--ok);border-color:var(--ok);background:var(--ok-soft)}
+.tag.warn{color:var(--warn);border-color:var(--warn);background:var(--warn-soft)}
+.tag.pur{color:var(--purple);border-color:var(--purple);background:var(--purple-soft)}
+.tag.dan{color:var(--danger);border-color:var(--danger);background:var(--danger-soft)}
+footer{margin-top:56px;padding-top:18px;border-top:1px solid var(--line);
+  color:var(--fg-mute);font-size:12.5px;line-height:1.8}
+@media (max-width:720px){#themeBtn{position:static;margin-top:14px}h1{font-size:22px}}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <button id="themeBtn" type="button">☾ 暗色</button>
+    <h1>{{TITLE}}</h1>
+    <p class="sub">{{SUBTITLE}}</p>
+    <div class="chips">{{CHIPS}}</div>
+  </div>
+</header>
+
+<nav class="toc">
+  <div class="wrap">
+    <a href="#overview">① 概览</a>
+    <a href="#transcript">② 对话过程</a>
+  </div>
+</nav>
+
+<div class="wrap">
+
+<section id="overview">
+  <h2><span class="n">①</span>概览</h2>
+  <figure class="diagram">{{OVERVIEW}}</figure>
+</section>
+
+<section id="transcript">
+  <h2><span class="n">②</span>对话过程</h2>
+  <figure class="diagram">{{TRANSCRIPT}}</figure>
+</section>
+
+<footer>{{FOOTER}}</footer>
+
+</div>
+
+<script type="application/json" id="verbatim">{{VERBATIM_JSON}}</script>
+<script>
+(function(){
+  var root=document.documentElement, btn=document.getElementById('themeBtn');
+  var saved=null; try{saved=localStorage.getItem('session-report-theme')}catch(e){}
+  var sysDark=window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  set(saved || (sysDark?'dark':'light'));
+  function set(t){ root.setAttribute('data-theme',t); btn.textContent = t==='dark' ? '☀︎ 亮色' : '☾ 暗色'; }
+  btn.addEventListener('click',function(){
+    var t = root.getAttribute('data-theme')==='dark' ? 'light':'dark';
+    set(t); try{localStorage.setItem('session-report-theme',t)}catch(e){}
+  });
+})();
+</script>
+</body>
+</html>
