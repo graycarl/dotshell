@@ -9,7 +9,9 @@ Usage:
     extract.py                          # digest of the newest session for the cwd
     extract.py --session .shell         # newest session whose cwd matches
     extract.py --session 01a120ea       # by session id prefix
+    extract.py --session report-demo    # by session display name (/name, --name)
     extract.py --session /path/x.jsonl  # by file
+    extract.py --name report-demo       # force display-name lookup only
     extract.py --json                   # full structured facts
     extract.py --turn 3,7               # full detail for those turns
     extract.py --list                   # list candidate sessions
@@ -30,6 +32,7 @@ from collections import Counter, defaultdict
 from datetime import datetime
 
 SESSIONS_ROOT = os.environ.get("PI_SESSION_DIR") or os.path.expanduser("~/.pi/agent/sessions")
+OUT_DIR = os.environ.get("SESSION_TO_HTML_OUTDIR") or "~/Inbox"
 
 QUESTION_HINTS = ("？", "?", "是否", "要不要", "需要你", "请确认", "你希望",
                   "哪个", "怎么选", "拍板", "确认一下", "要不要调整")
@@ -47,12 +50,82 @@ def _newest(paths):
     return sorted(paths, key=lambda p: os.path.getmtime(p), reverse=True)
 
 
+# ─── session display names ───────────────────────────────────────────────────
+
+def iter_name_entries(path: str):
+    """Yield the `session_info` names of one session, in file order.
+
+    The display name lives in `session_info` entries, set via `/name`, `--name`,
+    or `pi.setSessionName()`. A `session_info` without a name clears it. Only
+    lines mentioning `session_info` are JSON-parsed, so scanning a big session
+    stays cheap.
+    """
+    with open(path, "r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if "session_info" not in line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if entry.get("type") == "session_info":
+                yield (entry.get("name") or "").strip()
+
+
+def session_name(path: str) -> str:
+    """Current display name of one session (last `session_info` wins)."""
+    current = ""
+    for name in iter_name_entries(path):
+        current = name
+    return current
+
+
+def scan_session_names():
+    """Map every named session file -> {"current": name, "names": [history]}."""
+    index = {}
+    for path in glob.glob(os.path.join(SESSIONS_ROOT, "*", "*.jsonl")):
+        current, history = "", []
+        for name in iter_name_entries(path):
+            current = name
+            if name:
+                history.append(name)
+        if current or history:
+            index[path] = {"current": current, "names": history}
+    return index
+
+
+def match_by_name(query: str):
+    """Resolve a session display name. Exact current name > exact former name >
+    substring, so a reused name can be disambiguated by the caller."""
+    needle = query.strip().lower()
+    if not needle:
+        return "none", []
+    index = scan_session_names()
+    tiers = [
+        ([p for p, v in index.items() if v["current"].lower() == needle], ""),
+        ([p for p, v in index.items() if v["current"].lower() != needle
+          and any(n.lower() == needle for n in v["names"])], "former "),
+        ([p for p, v in index.items() if needle in v["current"].lower()], ""),
+        ([p for p, v in index.items() if needle not in v["current"].lower()
+          and any(needle in n.lower() for n in v["names"])], "former "),
+    ]
+    for hits, kind in tiers:
+        if hits:
+            if kind:
+                print(f"note: {query!r} matched a former session name, not the current one",
+                      file=sys.stderr)
+            return "sname", _newest(hits)
+    return "none", []
+
+
 def find_sessions(arg: str | None):
     """Resolve an argument to session files, newest first.
 
-    Returns (kind, paths). `kind` is "file" | "id" | "project" | "name" | "none".
-    Only an id prefix can be genuinely ambiguous; a project or loose name always
-    resolves to the newest session of the best matching directory.
+    Returns (kind, paths). `kind` is "file" | "id" | "project" | "name" |
+    "sname" | "none". `sname` is a session display name; only an id prefix or a
+    display name can be genuinely ambiguous (both list candidates and stop).
+    A project or a loose session-directory name always resolves to the newest
+    session of the best matching directory.
     """
     if arg is None:
         arg = os.getcwd()
@@ -64,10 +137,11 @@ def find_sessions(arg: str | None):
     if re.fullmatch(r"[0-9a-fA-F]{6,}", arg):
         return "id", _newest(glob.glob(os.path.join(SESSIONS_ROOT, "*", f"*{arg}*.jsonl")))
 
+    # the exact project directory of a real path
     if os.path.isdir(arg):
         directory = os.path.join(SESSIONS_ROOT, slug_for_cwd(arg))
         if os.path.isdir(directory):
-            return _newest(glob.glob(os.path.join(directory, "*.jsonl")))
+            return "project", _newest(glob.glob(os.path.join(directory, "*.jsonl")))
 
     # loose name: match against session directory names (e.g. ".shell", "Lumi")
     for guess in (arg, None if arg.startswith("/") else os.path.join("~", arg)):
@@ -81,30 +155,41 @@ def find_sessions(arg: str | None):
     # `--...-.shell-apps-pi--`), so the shortest name wins: it is the one whose
     # path ends at the needle.
     needle = arg.strip("-/. ").lower()
-    if not needle:
-        return "none", []
-    matched = [d for d in glob.glob(os.path.join(SESSIONS_ROOT, "*/"))
-               if needle in os.path.basename(d.rstrip("/")).lower()]
-    if not matched:
-        return "none", []
-    matched.sort(key=lambda d: (len(d), d))
-    if len(matched) > 1:
-        others = ", ".join(os.path.basename(d.rstrip("/")) for d in matched[1:4])
-        print(f"note: {arg!r} also matched {others} — using the shortest match", file=sys.stderr)
-    return "name", _newest(glob.glob(os.path.join(matched[0], "*.jsonl")))
+    if needle:
+        matched = [d for d in glob.glob(os.path.join(SESSIONS_ROOT, "*/"))
+                   if needle in os.path.basename(d.rstrip("/")).lower()]
+        if matched:
+            matched.sort(key=lambda d: (len(d), d))
+            if len(matched) > 1:
+                others = ", ".join(os.path.basename(d.rstrip("/")) for d in matched[1:4])
+                print(f"note: {arg!r} also matched {others} — using the shortest match",
+                      file=sys.stderr)
+            return "name", _newest(glob.glob(os.path.join(matched[0], "*.jsonl")))
+
+    # last resort: the session display name (set via /name, --name, or
+    # pi.setSessionName()). Skipped for path-shaped arguments.
+    if "/" not in arg and not arg.startswith("~"):
+        kind, paths = match_by_name(arg)
+        if kind != "none":
+            return kind, paths
+
+    return "none", []
 
 
 def describe_candidate(path: str) -> str:
     """One line describing a session file, for the disambiguation list."""
     meta = read_header(path)
     size = os.path.getsize(path) / 1024
+    sid = (meta.get("id") or "?")[:8]
+    name = session_name(path)
     first = ""
     for entry in iter_entries(path):
         if entry.get("type") == "message" and entry.get("message", {}).get("role") == "user":
             first = one_line(text_of(entry["message"].get("content")))[:52]
             break
+    label = f"name={name!r}" if name else "name=—"
     return (f"{meta.get('timestamp', '?')[:16].replace('T', ' ')}Z  "
-            f"{meta.get('cwd', '?'):<34} {size:7.0f} KB  {first}")
+            f"{sid}  {label:<24} {meta.get('cwd', '?'):<30} {size:6.0f} KB  {first}")
 
 
 def read_header(path: str) -> dict:
@@ -112,6 +197,28 @@ def read_header(path: str) -> dict:
         if entry.get("type") == "session":
             return entry
     return {}
+
+
+def slugify(text: str) -> str:
+    """`message max -> 200` -> `message-max-200`; CJK is kept as-is."""
+    slug = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "-", (text or "").strip().lower())
+    return re.sub(r"-{2,}", "-", slug).strip("-")
+
+
+def default_outfile(session: dict) -> str:
+    """Suggested export path: `~/Inbox/<session name>.html`, never one that
+    already exists (a `-2` suffix is added when needed). Falls back to the cwd
+    leaf when the session has no name."""
+    stem = (slugify(session.get("name") or "")
+            or slugify(os.path.basename(str(session.get("cwd") or "")))
+            or "session")
+    path = os.path.expanduser(os.path.join(OUT_DIR, stem + ".html"))
+    serial = 2
+    while os.path.exists(path) and serial < 100:
+        path = os.path.expanduser(os.path.join(OUT_DIR, f"{stem}-{serial}.html"))
+        serial += 1
+    home = os.path.expanduser("~")
+    return "~" + path[len(home):] if path.startswith(home + os.sep) else path
 
 
 def iter_entries(path: str):
@@ -258,9 +365,15 @@ def branch_summary(entries, nodes, children, on_branch):
                 if node.get("type") == "message" and msg.get("role") == "user":
                     first_user = one_line(text_of(msg.get("content")))
                     break
+            # count message entries only — model_change / thinking_level_change
+            # sit in the subtree too but are not messages, and the digest counts
+            # side_messages as `total_messages - branch_messages` (messages only).
+            message_count = sum(
+                1 for node_id in subtree
+                if nodes.get(node_id, {}).get("type") == "message")
             branches.append({
                 "fork_at": parent.get("timestamp", ""),
-                "messages": len(subtree),
+                "messages": message_count,
                 "first_user_input": first_user,
             })
     return branches
@@ -378,10 +491,12 @@ def summarize(entries, path, nodes, children, turns, session, file_path):
     return {
         "session": {
             "id": session.get("id"),
+            "name": session.get("name") or "",
             "version": session.get("version"),
             "cwd": session.get("cwd"),
             "started_at": session.get("timestamp"),
             "file": file_path,
+            "outfile": default_outfile(session),
         },
         "model": {
             "last": models[-1] if models else None,
@@ -418,7 +533,10 @@ def render_digest(meta, turns):
     span = meta["span"]
     out = []
     out.append(f"# session {s['id']}")
+    if s.get("name"):
+        out.append(f"name     {s['name']}")
     out.append(f"file     {s['file']}")
+    out.append(f"outfile  {s['outfile']}   ← 默认导出位置（先跟用户确认再写）")
     out.append(f"cwd      {s['cwd']}")
     out.append(f"span     {span['from']} → {span['to']}   (UTC)")
     out.append(f"model    {meta['model']['last'] or '?'} · thinking {meta['model']['thinking'] or '?'}")
@@ -556,6 +674,11 @@ def load(session_path):
     nodes, children = build_tree(entries)
     path, leaf = branch_ids(entries, nodes)
     session = next((e for e in entries if e.get("type") == "session"), {})
+    name = ""
+    for entry in entries:
+        if entry.get("type") == "session_info":
+            name = (entry.get("name") or "").strip()
+    session = dict(session, name=name)
     turns = extract_turns(nodes, path)
     meta = summarize(entries, path, nodes, children, turns, session, session_path)
     branches = branch_summary(entries, nodes, children, set(path))
@@ -565,13 +688,17 @@ def load(session_path):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Extract dialogue facts from a pi session file.")
-    parser.add_argument("--session", help="file, session id prefix, project dir, or loose name")
+    parser.add_argument("--session", help="file, session id prefix, display name, project dir, or loose name")
+    parser.add_argument("--name", dest="session_name", help="session display name only (/name, --name)")
     parser.add_argument("--json", action="store_true", help="full structured facts")
     parser.add_argument("--turn", help="comma separated turn numbers, full detail")
     parser.add_argument("--list", action="store_true", help="list candidate sessions and exit")
     args = parser.parse_args(argv)
 
-    kind, candidates = find_sessions(args.session)
+    if args.session_name:
+        kind, candidates = match_by_name(args.session_name)
+    else:
+        kind, candidates = find_sessions(args.session)
     if args.list:
         if not candidates:
             print(f"no session found under {SESSIONS_ROOT}", file=sys.stderr)
@@ -580,12 +707,15 @@ def main(argv=None):
             print(describe_candidate(path))
         return 0
     if not candidates:
-        print(f"no session matched {args.session!r} under {SESSIONS_ROOT}", file=sys.stderr)
+        what = args.session_name if args.session_name else args.session
+        print(f"no session matched {what!r} under {SESSIONS_ROOT}", file=sys.stderr)
         print("hint: pass --list to see what is available", file=sys.stderr)
         return 1
-    if kind == "id" and len(candidates) > 1:
-        print(f"{len(candidates)} sessions matched the id prefix {args.session!r} — "
-              f"pass a longer prefix:", file=sys.stderr)
+    if kind in ("id", "sname") and len(candidates) > 1:
+        what = args.session_name if args.session_name else args.session
+        label = "session name" if kind == "sname" else "id prefix"
+        print(f"{len(candidates)} sessions matched the {label} {what!r} — "
+              f"pass an id prefix to pick one:", file=sys.stderr)
         for path in candidates[:10]:
             print("  " + describe_candidate(path), file=sys.stderr)
         return 2

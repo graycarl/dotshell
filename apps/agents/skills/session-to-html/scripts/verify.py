@@ -14,6 +14,7 @@ fails the check.
 
 Usage:
     verify.py output/report.html --session .shell
+    verify.py output/report.html --name report-demo
 """
 
 from __future__ import annotations
@@ -52,7 +53,8 @@ def first_difference(a: str, b: str) -> str:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("report", help="generated HTML report")
-    parser.add_argument("--session", help="session file / id prefix / project dir / loose name")
+    parser.add_argument("--session", help="session file / id prefix / display name / project dir")
+    parser.add_argument("--name", dest="session_name", help="session display name only (/name, --name)")
     args = parser.parse_args(argv)
 
     try:
@@ -72,12 +74,17 @@ def main(argv=None) -> int:
         print(f'<script id="verbatim"> is not valid JSON: {error}', file=sys.stderr)
         return 2
 
-    kind, candidates = extract.find_sessions(args.session)
+    if args.session_name:
+        kind, candidates = extract.match_by_name(args.session_name)
+    else:
+        kind, candidates = extract.find_sessions(args.session)
+    what = args.session_name if args.session_name else args.session
     if not candidates:
-        print(f"no session matched {args.session!r}", file=sys.stderr)
+        print(f"no session matched {what!r}", file=sys.stderr)
         return 2
-    if kind == "id" and len(candidates) > 1:
-        print("ambiguous session; pass a longer id prefix or a file path", file=sys.stderr)
+    if kind in ("id", "sname") and len(candidates) > 1:
+        print(f"ambiguous session {what!r} ({len(candidates)} matches); "
+              f"pass an id prefix or a file path", file=sys.stderr)
         return 2
 
     meta, turns, _, _ = extract.load(candidates[0])
@@ -98,7 +105,9 @@ def main(argv=None) -> int:
 
     missing = [i for i in by_index if i not in {x.get("i") for x in quoted.get("turns", [])}]
 
-    print(f"session  {meta['session']['id']}  ({os.path.basename(candidates[0])})")
+    print(f"session  {meta['session']['id']}"
+          + (f"  name={meta['session']['name']!r}" if meta["session"].get("name") else "")
+          + f"  ({os.path.basename(candidates[0])})")
     print(f"report   {args.report}")
     print(f"核对     {checked} 条原文 · 不一致 {len(failures)} 条 · 报告中缺失 {len(missing)} 条")
     if missing:

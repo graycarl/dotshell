@@ -2,20 +2,28 @@
 <!--
   session-to-html report template.
 
-  Replace these placeholders (all optional except TITLE and VERBATIM_JSON):
-    {{LANG}}           html lang attribute, default zh-CN
-    {{TITLE}}          <title> and <h1>
-    {{SUBTITLE}}       one or two sentences under the title (may contain HTML)
-    {{CHIPS}}          the <span class="chip">…</span> row
-    {{OVERVIEW}}       the overview SVG (or any HTML)
-    {{TRANSCRIPT}}     the dialogue transcript SVG (or any HTML)
-    {{VERBATIM_JSON}}  {"turns": [{"i": 1, "text": "<user text verbatim>"}]}
-                       — verified by scripts/verify.py, keep it exactly as-is
-    {{FOOTER}}         source, scope and artifact notes
+  Fill it with scripts/reportkit.py — either its Python API or a spec file:
+      python3 reportkit.py spec.json --out ~/Inbox/<session>.html
+  reportkit replaces the placeholders **outside HTML comments only**, which is why
+  this comment lists them without braces (a plain str.replace would otherwise
+  inject a second copy of every SVG, the chips, the footer and the verbatim JSON
+  into this comment).
+
+  Placeholders (all optional except TITLE and VERBATIM_JSON):
+    LANG              html lang attribute, default zh-CN
+    TITLE             <title> and <h1>
+    SUBTITLE          one or two sentences under the title (may contain HTML)
+    CHIPS             the <span class="chip">…</span> row
+    OVERVIEW          the overview SVG (or any HTML)
+    TRANSCRIPT        the dialogue transcript SVG (or any HTML)
+    VERBATIM_JSON     {"turns": [{"i": 1, "text": "<user text verbatim>"}]}
+                      — read by scripts/verify.py, keep it exactly as-is
+    FOOTER            source, scope and artifact notes
 
   SVG helpers available as CSS classes: .h1s .h3s .tq .st .xs .mono .tqh .tout
   .qtext .ans .opt-on .dot .tnum, plus shapes .box .box-soft .box-acc .box-warn
-  .box-ok .box-pur .box-dan and connectors .life .flow .flow-d.
+  .box-ok .box-pur .box-dan .panel, marks .node .sep, and connectors .life .flow
+  .flow-d.
 -->
 <html lang="{{LANG}}" data-theme="light">
 <head>
@@ -95,6 +103,9 @@ svg .box-warn{fill:var(--warn-soft);stroke:var(--warn);stroke-width:1.2}
 svg .box-ok{fill:var(--ok-soft);stroke:var(--ok);stroke-width:1.2}
 svg .box-pur{fill:var(--purple-soft);stroke:var(--purple);stroke-width:1.2}
 svg .box-dan{fill:var(--danger-soft);stroke:var(--danger);stroke-width:1.2}
+svg .panel{fill:var(--bg-soft);stroke:var(--line);stroke-width:1.2}
+svg .node{fill:var(--accent)}
+svg .sep{stroke:var(--line);stroke-width:1;fill:none}
 svg .life{stroke:var(--line);stroke-width:1.2;stroke-dasharray:5 5;fill:none}
 svg .flow{stroke:var(--fg-mute);stroke-width:1.4;fill:none}
 svg .flow-d{stroke:var(--fg-mute);stroke-width:1.4;fill:none;stroke-dasharray:5 4}

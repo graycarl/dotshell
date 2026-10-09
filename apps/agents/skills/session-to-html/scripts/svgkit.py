@@ -18,6 +18,12 @@ from __future__ import annotations
 
 import html
 
+# `char_width` is an estimate.  At the usual 12.5px the real advance on macOS is
+# roughly 5% wider than measured, which made long lines touch the card border.
+# Every wrap therefore shrinks the usable width by this factor (override per call
+# with `wrap(..., safety=1.0)`).
+SAFETY = 1.06
+
 # ─── measuring ───────────────────────────────────────────────────────────────
 
 def char_width(ch: str) -> float:
@@ -63,10 +69,13 @@ def tokenize(text: str):
     return tokens
 
 
-def wrap(text: str, width_px: float, font: float = 12.5):
+def wrap(text: str, width_px: float, font: float = 12.5, safety: float = None):
     """Greedy wrap to `width_px`. Never breaks a latin token unless that token
-    alone is wider than a whole line (then it is hard-split)."""
-    limit = width_px / font
+    alone is wider than a whole line (then it is hard-split).
+
+    `safety` (default `SAFETY`) reserves a little width for the estimation error
+    of `char_width`."""
+    limit = width_px / (font * (SAFETY if safety is None else safety))
     lines, current, used = [], "", 0.0
     for token in tokenize(text or ""):
         size = sum(char_width(c) for c in token)
@@ -198,6 +207,82 @@ def card_height(n_lines: int, *, pad: float = 14.0, header: float = 0.0,
                 line_h: float = 19.0, extra: float = 0.0) -> float:
     """Height of a card holding `n_lines` wrapped text lines."""
     return pad * 2 + header + n_lines * line_h + extra
+
+
+# ─── text blocks: wrap → measure → draw, all in one place ───────────────────
+
+
+def wrap_text(text, width_px: float, font: float = 12.5) -> list:
+    """Multi-paragraph text (`\n` separated, blank lines kept) → wrapped lines."""
+    out = []
+    for raw in str(text).split("\n"):
+        if not raw.strip():
+            out.append("")
+        else:
+            out.extend(wrap(raw, width_px, font))
+    while out and not out[0]:
+        out.pop(0)
+    while out and not out[-1]:
+        out.pop()
+    return out
+
+
+def wrap_items(items, width_px: float, font: float = 12.5) -> list:
+    """`[(cls, text)]` → `[(cls, line)]`.  A `("gap", _)` item yields a blank
+    row, a bare string is body text.  Mixing classes lets one card carry a muted
+    sub-line (`xs`) and normal prose (`tq`) without hand-measuring either."""
+    out = []
+    for item in items:
+        cls, value = item if isinstance(item, tuple) else ("tq", item)
+        if cls == "gap":
+            out.append(("tq", ""))
+            continue
+        for line in wrap_text(value, width_px, font):
+            out.append((cls, line))
+    return out
+
+
+def draw(x, y, items, line_h: float = 19.0, cls: str = "tq"):
+    """Render `[(cls, line)]` (or plain strings) top-down.  Returns (markup, next_y)."""
+    markup, cursor = [], y
+    for item in items:
+        line_cls, value = item if isinstance(item, tuple) else (cls, item)
+        if value:
+            markup.append(text(x, cursor, value, line_cls))
+        cursor += line_h
+    return "".join(markup), cursor
+
+
+def text_card(x, y, width, title, items, cls: str = "box-soft", *, pad: float = 14.0,
+              title_gap: float = 20.0, line_h: float = 19.0, title_cls: str = "h3s",
+              font: float = 12.5, title_rule: bool = False):
+    """A titled card that wraps and measures its own text, so the inner width can
+    never drift from the padding.  Returns (markup, height).
+
+    >>> markup, h = k.text_card(x, y, 760, "USER · 原文", [user_text], cls="box-acc")
+    """
+    rows = wrap_items(items, width - 2 * pad, font)
+    height = pad * 2 + title_gap + len(rows) * line_h
+    markup = [card(x, y, width, height, cls=cls, rx=10)]
+    markup.append(text(x + pad, y + pad + 12, title, title_cls))
+    if title_rule:
+        markup.append(line(x + pad, y + pad + title_gap - 5, x + width - pad,
+                           y + pad + title_gap - 5, "sep"))
+    markup.append(draw(x + pad, y + pad + title_gap + 11, rows, line_h)[0])
+    return "".join(markup), height
+
+
+def sep(x1, x2, y) -> str:
+    """Horizontal hairline inside a panel / card."""
+    return line(x1, y, x2, y, "sep")
+
+
+def node(cx, cy, label: str = "", r: float = 13.5) -> str:
+    """Accent-filled node dot with an optional label (a turn number, a phase)."""
+    markup = circle(cx, cy, r, "node")
+    if label:
+        markup += text(cx, cy + 3.6, label, "tnum", anchor="middle")
+    return markup
 
 
 def sample() -> str:
