@@ -2,9 +2,16 @@
  * Predict Input - show the model's guess for the user's next message as ghost text.
  *
  * After every settled agent run the extension sends the last user message and the
- * assistant reply to a (ideally fast) model, and renders the predicted next user
- * message as dim virtual text inside the input box. Tab accepts the prediction and
- * turns it into real text; typing anything else dismisses it.
+ * assistant reply to a (ideally fast) model and renders the top prediction as dim
+ * virtual text inside the input box, with a `⇥ N` hint when more candidates exist.
+ *
+ *   Enter   accept the top suggestion into the input (does not submit)
+ *   Tab     open the autocomplete list with every candidate (↑/↓ to pick, Enter/Tab to apply)
+ *   typing  dismiss the suggestions
+ *
+ * The candidates only exist while the input is empty, so the native autocomplete
+ * (slash commands, @-paths, files) is untouched: with input or without candidates
+ * the extension delegates to the wrapped provider.
  *
  * Config (read once, from settings.json; unknown keys are passed through):
  *
@@ -26,18 +33,28 @@
  * ctx.ui.setEditorComponent(), the ghost text is lost.
  */
 import { CustomEditor, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { CURSOR_MARKER, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import {
+  CURSOR_MARKER,
+  matchesKey,
+  truncateToWidth,
+  type AutocompleteItem,
+  type AutocompleteProvider,
+} from "@earendil-works/pi-tui";
 import type { Api, Model } from "@earendil-works/pi-ai";
 
 const MAX_CONTEXT_CHARS = 4000;
-const MAX_PREDICTION_CHARS = 300;
+const MAX_SUGGESTION_CHARS = 300;
+const MAX_SUGGESTIONS = 8;
 
 const SYSTEM_PROMPT = [
-  "You predict the user's next message in a coding-agent chat.",
+  "You predict the user's next messages in a coding-agent chat.",
   "You are given the last user message and the assistant's reply.",
-  "Output ONLY the single most likely next user message, written in the user's language.",
-  "No quotes, no markdown fences, no explanation, no preamble.",
-  "Keep it under 200 characters and on one line.",
+  "Output the most likely next user message first, then only the closest alternatives, one per line.",
+  "Usually 1 to 4 candidates are the right amount; 8 is the hard maximum, not a target.",
+  "Never pad the list: if only one message is plausible, output just that one.",
+  "Write them in the user's language.",
+  "No numbering, no bullets, no quotes, no markdown fences, no explanations.",
+  "Keep each line under 200 characters.",
   "If nothing sensible can be predicted, output nothing.",
 ].join(" ");
 
@@ -52,43 +69,69 @@ interface Turn {
   assistant: string;
 }
 
+/** Autocomplete item produced from a prediction; marked so applyCompletion can recognize it. */
+interface PredictItem extends AutocompleteItem {
+  __predict?: true;
+}
+
 // ─── Editor ──────────────────────────────────────────────────────────────────
 
 /**
- * A CustomEditor that renders an optional dim "ghost" suggestion right after the
- * cursor. Ghost text is only shown while the editor is empty; any other key clears
- * it, Tab accepts it.
+ * A CustomEditor that renders the top prediction as a dim ghost right after the
+ * cursor. Enter accepts it, Tab opens the autocomplete list with every candidate,
+ * and any edit that makes the input non-empty drops the candidates.
  */
 class PredictEditor extends CustomEditor {
-  private ghostRaw: string | undefined;
+  private suggestions: string[] = [];
   private ghostStyled: string | undefined;
 
-  setGhost(raw: string | undefined, styled?: string): void {
-    this.ghostRaw = raw;
-    this.ghostStyled = raw ? (styled ?? raw) : undefined;
+  setSuggestions(list: string[], styledTop?: string): void {
+    this.suggestions = list;
+    this.ghostStyled = list.length > 0 ? (styledTop ?? list[0]) : undefined;
     this.tui.requestRender();
   }
 
-  clearGhost(): void {
-    if (this.ghostRaw === undefined && this.ghostStyled === undefined) return;
-    this.ghostRaw = undefined;
+  clearSuggestions(): void {
+    if (this.suggestions.length === 0 && this.ghostStyled === undefined) return;
+    this.suggestions = [];
     this.ghostStyled = undefined;
     this.tui.requestRender();
   }
 
+  /** Single source of truth for the autocomplete provider. */
+  getSuggestionList(): string[] {
+    return this.suggestions;
+  }
+
+  private acceptTop(): void {
+    const top = this.suggestions[0];
+    if (!top) return;
+    this.setText(top);
+    this.clearSuggestions();
+  }
+
   handleInput(data: string): void {
-    if (this.ghostRaw && this.getText().length === 0 && matchesKey(data, "tab")) {
-      this.setText(this.ghostRaw);
-      this.clearGhost();
+    // Empty input + visible ghost + Enter -> accept instead of submitting empty.
+    if (
+      this.suggestions.length > 0 &&
+      this.getText().length === 0 &&
+      !this.isShowingAutocomplete() &&
+      matchesKey(data, "enter")
+    ) {
+      this.acceptTop();
       return;
     }
-    if (this.ghostRaw) this.clearGhost();
+
+    // Tab needs no special case: the base editor triggers autocomplete, our
+    // provider answers it while the input is empty.
     super.handleInput(data);
+
+    if (this.suggestions.length > 0 && this.getText().length > 0) this.clearSuggestions();
   }
 
   render(width: number): string[] {
     const lines = super.render(width);
-    if (!this.ghostStyled) return lines;
+    if (!this.ghostStyled || this.isShowingAutocomplete()) return lines;
 
     const index = lines.findIndex((line) => line.includes(CURSOR_MARKER));
     if (index === -1) return lines;
@@ -166,22 +209,34 @@ function buildPrompt(turn: Turn): string {
   ].join("\n");
 }
 
-function cleanPrediction(text: string): string {
-  const withoutFences = text
+function cleanSuggestionLine(line: string): string {
+  const withoutFences = line
     .trim()
     .replace(/^```[a-zA-Z0-9_-]*\s*/, "")
     .replace(/\s*```$/, "");
-  const firstLine =
-    withoutFences
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .find((line) => line.length > 0) ?? "";
-  const stripped = firstLine
+  const stripped = withoutFences
+    .replace(/^\s*(?:\d+[.)]|[-*•·])\s+/, "")
     .replace(/^["'“”‘’`]+/, "")
     .replace(/["'“”‘’`]+$/, "")
     .replace(/^(?:user|用户)\s*[:：]\s*/i, "")
     .trim();
-  return stripped.length > MAX_PREDICTION_CHARS ? stripped.slice(0, MAX_PREDICTION_CHARS) : stripped;
+  return stripped.length > MAX_SUGGESTION_CHARS ? stripped.slice(0, MAX_SUGGESTION_CHARS) : stripped;
+}
+
+/** Split a model response into up to MAX_SUGGESTIONS de-duplicated one-line candidates. */
+function parseSuggestions(text: string): string[] {
+  const body = text
+    .trim()
+    .replace(/^```[a-zA-Z0-9_-]*\s*/, "")
+    .replace(/\s*```$/, "");
+  const suggestions: string[] = [];
+  for (const line of body.split(/\r?\n/)) {
+    const cleaned = cleanSuggestionLine(line);
+    if (!cleaned || suggestions.includes(cleaned)) continue;
+    suggestions.push(cleaned);
+    if (suggestions.length >= MAX_SUGGESTIONS) break;
+  }
+  return suggestions;
 }
 
 // ─── Extension ───────────────────────────────────────────────────────────────
@@ -218,6 +273,30 @@ export default function (pi: ExtensionAPI) {
     requestToken++;
   };
 
+  // Reuse the native autocomplete: while the input is empty and candidates exist,
+  // Tab (force) receives them; everything else is delegated untouched.
+  const buildAutocompleteProvider = (current: AutocompleteProvider): AutocompleteProvider => ({
+    async getSuggestions(lines, cursorLine, cursorCol, options) {
+      const empty = lines.every((line) => line.length === 0);
+      const list = editor?.getSuggestionList() ?? [];
+      if (empty && list.length > 0) {
+        const items: PredictItem[] = list.map((value) => ({ value, label: value, __predict: true }));
+        return { items, prefix: "" };
+      }
+      return current.getSuggestions(lines, cursorLine, cursorCol, options);
+    },
+    applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
+      if ((item as PredictItem).__predict) {
+        editor?.clearSuggestions();
+        return { lines: [item.value], cursorLine: 0, cursorCol: item.value.length };
+      }
+      return current.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
+    },
+    shouldTriggerFileCompletion(lines, cursorLine, cursorCol) {
+      return current.shouldTriggerFileCompletion?.(lines, cursorLine, cursorCol) ?? true;
+    },
+  });
+
   pi.on("session_start", (_event, ctx) => {
     loadConfig();
     if (ctx.mode !== "tui") return;
@@ -226,11 +305,12 @@ export default function (pi: ExtensionAPI) {
       editor = instance;
       return instance;
     });
+    ctx.ui.addAutocompleteProvider(buildAutocompleteProvider);
   });
 
   pi.on("agent_start", () => {
     cancel();
-    editor?.clearGhost();
+    editor?.clearSuggestions();
   });
 
   // Fire and forget: awaiting here would stall the settled/notification path.
@@ -267,15 +347,16 @@ export default function (pi: ExtensionAPI) {
           {
             signal: controller.signal,
             cacheRetention: "none",
-            maxTokens: 256,
+            maxTokens: 512,
             reasoning: "off",
           },
         );
         if (token !== requestToken || controller.signal.aborted) return;
-        const prediction = cleanPrediction(extractText(response.content));
-        if (!prediction) return;
+        const suggestions = parseSuggestions(extractText(response.content));
+        if (suggestions.length === 0) return;
         if (!editor || editor.getText().length > 0) return;
-        editor.setGhost(prediction, theme.fg("dim", prediction));
+        const hint = suggestions.length > 1 ? theme.fg("muted", ` ⇥ ${suggestions.length}`) : "";
+        editor.setSuggestions(suggestions, theme.fg("dim", suggestions[0]) + hint);
       } catch {
         // Prediction is best-effort; ignore failures.
       } finally {
@@ -299,7 +380,7 @@ export default function (pi: ExtensionAPI) {
         enabled = !enabled;
         if (!enabled) {
           cancel();
-          editor?.clearGhost();
+          editor?.clearSuggestions();
         }
         ctx.ui.notify(`Next-input prediction ${enabled ? "enabled" : "disabled"}`, "info");
         return;
@@ -314,7 +395,7 @@ export default function (pi: ExtensionAPI) {
       if (sub === "off") {
         enabled = false;
         cancel();
-        editor?.clearGhost();
+        editor?.clearSuggestions();
         ctx.ui.notify("Next-input prediction disabled", "info");
         return;
       }
