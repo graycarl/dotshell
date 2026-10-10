@@ -15,10 +15,14 @@ YAML 文件根节点是消息列表，每项含 role / content：
     - role: user
       content: 明天呢？
 
+默认启用模型 thinking，思考过程以灰色输出到 stderr，最终回复输出到 stdout
+（无颜色、可直接管道）。用 --no-thinking 关闭 thinking。
+
 用法：
   uv run tools/llm-chat.py messages.yaml
   cat messages.yaml | uv run tools/llm-chat.py -          # 从 stdin 读
   uv run tools/llm-chat.py messages.yaml --model deepseek-v4-pro --temperature 0.7
+  uv run tools/llm-chat.py messages.yaml --no-thinking
 
 配置（优先级：CLI 参数 > 环境变量 LLM_API_KEY > tools/auth.json > 内置默认）：
   tools/auth.json: {"api_key": "...", "base_url": "...", "model": "..."}
@@ -27,6 +31,7 @@ YAML 文件根节点是消息列表，每项含 role / content：
 import argparse
 import json
 import os
+import shutil
 import sys
 import urllib.error
 import urllib.request
@@ -39,6 +44,9 @@ API_KEY_ENV = "LLM_API_KEY"
 DEFAULT_BASE_URL = "https://api.deepseek.com/v1"
 DEFAULT_MODEL = "deepseek-flash"
 VALID_ROLES = {"system", "user", "assistant"}
+REASONING_FIELDS = ("reasoning_content", "reasoning", "reasoning_text")
+GRAY = "\033[90m"
+RESET = "\033[0m"
 REQUEST_TIMEOUT = 300
 
 
@@ -73,7 +81,12 @@ def resolve_config(args: argparse.Namespace) -> dict:
             f"或在 {AUTH_FILE} 中填写 api_key。"
         )
 
-    config = {"api_key": api_key, "base_url": base_url, "model": model}
+    config = {
+        "api_key": api_key,
+        "base_url": base_url,
+        "model": model,
+        "thinking": args.thinking,
+    }
     if args.temperature is not None:
         config["temperature"] = args.temperature
     if args.max_tokens is not None:
@@ -116,13 +129,41 @@ def load_messages(source: str) -> list[dict]:
     return messages
 
 
-def stream_chat(config: dict, messages: list[dict]) -> None:
-    """POST /chat/completions with stream=true and print deltas to stdout."""
-    url = config["base_url"].rstrip("/") + "/chat/completions"
-    payload = {"model": config["model"], "messages": messages, "stream": True}
+def thinking_rule(label: str = "") -> str:
+    """A horizontal rule sized to the terminal, optionally with a label."""
+    width = shutil.get_terminal_size((60, 24)).columns
+    if not label:
+        return "─" * width
+    prefix = f"── {label} "
+    return prefix + "─" * max(0, width - len(prefix))
+
+
+def build_payload(config: dict, messages: list[dict]) -> dict:
+    """Assemble the /chat/completions request body."""
+    thinking = config["thinking"]
+    # DeepSeek 要求开启 thinking 时，历史 assistant 消息必须带 reasoning_content 字段。
+    prepared = []
+    for message in messages:
+        if thinking and message["role"] == "assistant":
+            message = {"reasoning_content": "", **message}
+        prepared.append(message)
+
+    payload = {
+        "model": config["model"],
+        "messages": prepared,
+        "stream": True,
+        "thinking": {"type": "enabled" if thinking else "disabled"},
+    }
     for key in ("temperature", "max_tokens"):
         if key in config:
             payload[key] = config[key]
+    return payload
+
+
+def stream_chat(config: dict, messages: list[dict]) -> None:
+    """POST /chat/completions and stream thinking (stderr, gray) + reply (stdout)."""
+    url = config["base_url"].rstrip("/") + "/chat/completions"
+    payload = build_payload(config, messages)
 
     request = urllib.request.Request(
         url,
@@ -133,6 +174,16 @@ def stream_chat(config: dict, messages: list[dict]) -> None:
         },
         method="POST",
     )
+
+    gray, reset = (GRAY, RESET) if sys.stderr.isatty() else ("", "")
+    thinking_open = False
+
+    def close_thinking() -> None:
+        nonlocal thinking_open
+        if thinking_open:
+            sys.stderr.write("\n" + thinking_rule() + reset + "\n")
+            sys.stderr.flush()
+            thinking_open = False
 
     try:
         with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:
@@ -148,8 +199,21 @@ def stream_chat(config: dict, messages: list[dict]) -> None:
                 except json.JSONDecodeError:
                     continue
                 for choice in chunk.get("choices") or []:
-                    content = (choice.get("delta") or {}).get("content")
+                    delta = choice.get("delta") or {}
+                    reasoning = next(
+                        (delta[f] for f in REASONING_FIELDS
+                         if isinstance(delta.get(f), str) and delta[f]),
+                        None,
+                    )
+                    if reasoning and config["thinking"]:
+                        if not thinking_open:
+                            sys.stderr.write(gray + thinking_rule("thinking") + "\n")
+                            thinking_open = True
+                        sys.stderr.write(reasoning)
+                        sys.stderr.flush()
+                    content = delta.get("content")
                     if content:
+                        close_thinking()
                         sys.stdout.write(content)
                         sys.stdout.flush()
     except urllib.error.HTTPError as exc:
@@ -157,6 +221,7 @@ def stream_chat(config: dict, messages: list[dict]) -> None:
     except urllib.error.URLError as exc:
         fail(f"网络请求失败: {exc.reason}")
     finally:
+        close_thinking()
         sys.stdout.write("\n")
         sys.stdout.flush()
 
@@ -191,6 +256,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--api-key", help="覆盖 API key")
     parser.add_argument("--temperature", type=float, help="采样温度")
     parser.add_argument("--max-tokens", type=int, help="最大生成 token 数")
+    parser.add_argument(
+        "--thinking", action=argparse.BooleanOptionalAction, default=True,
+        help="启用模型 thinking（默认启用；用 --no-thinking 关闭）",
+    )
     return parser
 
 
