@@ -121,6 +121,9 @@ $ bash ~/.shell/tools/pwgen.sh
 
 # TOTP 验证码
 $ uv run ~/.shell/tools/totp.py
+
+# 从 YAML 消息历史调用 LLM（流式输出）
+$ uv run ~/.shell/tools/llm-chat.py messages.yaml
 ```
 
 ### Python 虚拟环境自动切换
