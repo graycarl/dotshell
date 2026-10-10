@@ -17,6 +17,7 @@ directly to print a sample SVG and eyeball the layout::
 from __future__ import annotations
 
 import html
+import sys
 
 # `char_width` is an estimate.  At the usual 12.5px the real advance on macOS is
 # roughly 5% wider than measured, which made long lines touch the card border.
@@ -165,6 +166,18 @@ def path(d: str, cls: str = "", extra: str = "") -> str:
             + (f" {extra}" if extra else "") + '/>')
 
 
+def group(markup: str, dx: float = 0.0, dy: float = 0.0, extra: str = "") -> str:
+    """Wrap `markup` in a translated group.
+
+    A `raw` spec block draws in local coordinates; `reportkit` translates it
+    into place with this, so the figure author never has to know the global
+    cursor."""
+    attrs = f'transform="translate({dx:.1f},{dy:.1f})"'
+    if extra:
+        attrs += f" {extra}"
+    return f"<g {attrs}>{markup}</g>"
+
+
 def text(x, y, content, cls: str = "", anchor: str = "", extra: str = "") -> str:
     return (f'<text x="{x:.1f}" y="{y:.1f}"'
             + (f' text-anchor="{anchor}"' if anchor else "")
@@ -305,5 +318,73 @@ def sample() -> str:
     return svg(880, y + 10, "".join(body), "svgkit sample")
 
 
-if __name__ == "__main__":
+def _read_text(value: str) -> str:
+    """`-` reads stdin; a literal `\\n` in the argument becomes a newline."""
+    if value == "-":
+        return sys.stdin.read().rstrip("\n")
+    return value.replace("\\n", "\n")
+
+
+def main(argv=None) -> int:
+    """CLI so a hand-drawn figure can be measured instead of guessed at.
+
+        python3 svgkit.py wrap "长文本…" --width 800
+        python3 svgkit.py card --title "T1 · 阶段" --text "…" --width 800 --cls box-acc
+        python3 svgkit.py sample
+
+    `wrap` prints one output line per line and reports the block height on
+    stderr; `card` prints paste-ready `<g>` markup with the height in a trailing
+    comment.  Use them inside a `raw` spec block.
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = parser.add_subparsers(dest="cmd")
+    sub.add_parser("sample", help="print the sample document (also the default)")
+
+    p_wrap = sub.add_parser("wrap", help="wrap text, one output line per line")
+    p_wrap.add_argument("text", help="text to wrap ('-' reads stdin; \\n = newline)")
+    p_wrap.add_argument("--width", type=float, required=True, help="usable width in px")
+    p_wrap.add_argument("--font", type=float, default=12.5)
+    p_wrap.add_argument("--line-h", type=float, default=19.0)
+    p_wrap.add_argument("--indent", default="", help="prefix printed on every line")
+
+    p_card = sub.add_parser("card", help="print a measured text card as SVG markup")
+    p_card.add_argument("--text", required=True, help="card body ('-' reads stdin)")
+    p_card.add_argument("--width", type=float, required=True)
+    p_card.add_argument("--title", default="")
+    p_card.add_argument("--cls", default="box-soft")
+    p_card.add_argument("--font", type=float, default=12.5)
+    p_card.add_argument("--line-h", type=float, default=19.0)
+
+    args = parser.parse_args(argv)
+
+    if args.cmd == "wrap":
+        lines = wrap_text(_read_text(args.text), args.width, args.font)
+        for line in lines:
+            print(f"{args.indent}{line}")
+        print(f"# height {len(lines) * args.line_h:.1f} = {len(lines)} 行 × "
+              f"{args.line_h:g}  （首行 y≈{args.line_h:g}，逐行 +{args.line_h:g}）",
+              file=sys.stderr)
+        return 0
+
+    if args.cmd == "card":
+        text = _read_text(args.text)
+        if args.title:
+            markup, height = text_card(0, 0, args.width, args.title, [text], cls=args.cls,
+                                       line_h=args.line_h, font=args.font)
+        else:
+            rows = wrap_items([text], args.width - 28, args.font)
+            height = 28.0 + len(rows) * args.line_h
+            markup = (card(0, 0, args.width, height, cls=args.cls, rx=10)
+                      + draw(14, 26, rows, args.line_h)[0])
+        print(group(markup))
+        print(f"<!-- height {height:.1f} -->")
+        return 0
+
     print(sample())
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

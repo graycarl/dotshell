@@ -8,9 +8,10 @@ footer — plus the template filling, so a report is data instead of 300 lines o
 geometry.  Editing a report (drop a turn, expand one into sub-structure, move it
 to another file) becomes a one-line change and a re-render.
 
-The five *diagrams* (timeline strip, fork, pipeline, swatches, tiles) live in
-`artkit.py`; a spec can use them directly as transcript blocks and nobody has to
-write Python for a vivid report.
+Two preset diagrams (a `timeline` strip and `fork`) live in `artkit.py`;
+everything else is drawn freely: a `raw` block takes inner SVG markup authored
+by the model — in local coordinates — and this module frames and places it.  So
+a report can follow the story's shape instead of the other way round.
 
 Two ways to use it::
 
@@ -58,17 +59,9 @@ Spec format (`spec.json`), every key optional except `title`/`verbatim`::
          "merge": "T2 · 4 路合并进 dev",
          "lanes": [{"head": "W1 · config/", "meta": "wt-config · feat/config",
                     "line": "…", "sub": "…"}]},
-        {"kind": "pipeline", "title": "…", "foot": "→ …",
-         "stages": [{"head": "① …", "sub": "…", "items": ["…"],
-                     "badge": "∥ 3 路并行 · 同时开工"}]},
-        {"kind": "swatches", "title": "…", "cls": "box-warn",
-         "before": {"title": "改之前",
-                    "rows": [{"hex": "#F1F3F5", "text": "…", "why": "…"}]},
-         "after": {"title": "改之后", "big": ["25", "→ 0 处硬编码颜色"],
-                   "items": ["…"], "foot": "…"}},
-        {"kind": "tiles", "title": "…", "per_row": 3, "alert": "未完成：…",
-         "tiles": [{"n": "119", "unit": "文件", "caption": "…"}],
-         "notes": ["文档：…"]}
+        {"kind": "raw", "title": "T2 · 三阶段（形状自由画）", "height": 260,
+         "body": "<g>… 局部坐标 x 0…930 …</g>",
+         "body_file": "片段文件路径（可选，优先于 body）"}
       ],
       "footer": ["<p><b>数据来源</b>…</p>"],
       "verbatim": [{"i": 1, "text": "<用户原文>"}]
@@ -76,10 +69,10 @@ Spec format (`spec.json`), every key optional except `title`/`verbatim`::
 
 `items` entries are either a string (body text, class `tq`) or
 `["cls", "text"]`; `cls` may be `tq` / `tqh` / `st` / `xs` / `mono` / `h3s` /
-`gap` (a `gap` item inserts a blank row).  The diagram kinds (`timeline` /
-`fork` / `pipeline` / `swatches` / `tiles`) are rendered by `artkit.py`; their
-payload keys are listed in SKILL.md §"图形层".  `timeline` rows come from
-`extract.py --timeline`.
+`gap` (a `gap` item inserts a blank row).  The two preset diagram kinds
+(`timeline` / `fork`) are rendered by `artkit.py`; their payload keys are listed
+in SKILL.md §4.  `timeline` rows come from `extract.py --timeline`; everything
+else is a `raw` block (see `Doc.raw`), whose SVG body is authored per report.
 
 Chrome: a `turn` block with `index` and `user` feeds `verbatim` automatically, so
 the verify.py block cannot drift from the rendered cards.  Chips are NOT derived
@@ -174,6 +167,7 @@ class Doc:
         self._verbatim = list(verbatim or [])
         self._timeline = list(timeline or [])
         self._timeline_note = timeline_note
+        self._spec_dir = ""
 
     # ── overview ─────────────────────────────────────────────────────────
     def node(self, label, time="", dur="", user="", result="", sub=(), pause_after=None):
@@ -223,7 +217,7 @@ class Doc:
     # ── diagram blocks ───────────────────────────────────────────────────
     def art(self, kind, **data):
         """Add a diagram block.  `kind` ∈ `artkit.RENDERERS`; the rest of `data`
-        is that renderer's payload (see artkit's docstrings / SKILL.md §图形层)."""
+        is that renderer's payload (see artkit's docstrings / SKILL.md §4)."""
         if kind not in a.RENDERERS:
             raise ValueError(f"unknown art kind: {kind!r} (known: {', '.join(a.RENDERERS)})")
         self.blocks.append(dict(kind="art", art=kind, **data))
@@ -233,17 +227,26 @@ class Doc:
         """One trunk → n parallel lanes → one merge point (parallel work)."""
         return self.art("fork", title=title, lanes=list(lanes), **data)
 
-    def pipeline(self, title, stages, **data):
-        """Ordered stages with arrows; a stage may carry a `badge` (e.g. ∥ 3 路并行)."""
-        return self.art("pipeline", title=title, stages=list(stages), **data)
+    def raw(self, title="", body="", body_file=None, height=0, cls="box",
+            title_rule=True):
+        """A freely drawn SVG figure — the escape hatch from preset shapes.
 
-    def swatches(self, title, before, after, **data):
-        """Before/after colour forensics — the only place literal hexes are right."""
-        return self.art("swatches", title=title, before=before, after=after, **data)
+        `body` is **inner** SVG markup drawn in local coordinates (origin = the
+        figure's top-left, x within `0 … width`); this module translates it into
+        place.  Pass `body_file` instead to read the markup from a file — handy
+        because escaping a whole multi-line fragment inside JSON is painful.
+        `height` is the local height of the drawing and is required (the module
+        can't measure arbitrary geometry).  With a `title` it draws the usual
+        panel shell; without one it embeds the markup bare.  The body must not
+        contain an outer `<svg>` element.
 
-    def tiles(self, title, tiles, **data):
-        """Big-number dashboard (delivery totals, verification counts)."""
-        return self.art("tiles", title=title, tiles=list(tiles), **data)
+        Measure text with `svgkit.py wrap` / `svgkit.py card` before drawing, so
+        nothing overflows; colour comes from the template's classes.
+        """
+        self.blocks.append(dict(kind="raw", title=title, body=body,
+                                body_file=body_file, height=float(height or 0),
+                                cls=cls, title_rule=title_rule))
+        return self
 
     # ── verbatim ─────────────────────────────────────────────────────────
     def verbatim(self):
@@ -351,6 +354,10 @@ class Doc:
                 body.append(k.card(T_CARD, y, 430, 26, cls="box", rx=8))
                 body.append(k.text(T_CARD + 14, y + 18, "⏸ " + block["text"], "xs"))
                 y += 26 + 16
+            elif kind == "raw":
+                markup, height = self._raw_block(block, y, width)
+                body.append(markup)
+                y += height + 12
             elif kind == "art":
                 markup, height = a.render(block["art"], y, T_CARD, width, block)
                 body.append(markup)
@@ -373,6 +380,34 @@ class Doc:
                 raise ValueError(f"unknown block kind: {kind!r}")
         body.insert(0, k.line(T_LIFE, 17, T_LIFE, y - 22, "life"))
         return k.svg(self.width, y, "".join(body), self.title + " 对话过程")
+
+    def _raw_block(self, block, y, width):
+        """Read a `raw` block's body, draw it in local coords, frame if titled."""
+        body = block.get("body") or ""
+        if block.get("body_file"):
+            path = os.path.expanduser(block["body_file"])
+            if not os.path.isabs(path) and self._spec_dir:
+                path = os.path.join(self._spec_dir, path)
+            with open(path, encoding="utf-8") as handle:
+                body = handle.read()
+        if not body.strip():
+            raise ValueError("raw block has neither `body` nor `body_file` "
+                             f"(title={block.get('title', '')!r})")
+        if "<svg" in body.lower():
+            raise ValueError("raw block `body` must be an inner SVG fragment, not a "
+                             "full <svg> element (a nested SVG scales to nothing) "
+                             f"(title={block.get('title', '')!r})")
+        height = float(block.get("height") or 0)
+        if height <= 0:
+            raise ValueError("raw block needs a positive `height` "
+                             f"(title={block.get('title', '')!r})")
+        if block.get("title"):
+            frame = a.frame(y, T_CARD, width, block["title"], height,
+                            k.group(body, T_CARD, y + 38.0),
+                            cls=block.get("cls", "box"),
+                            title_rule=block.get("title_rule", True))
+            return frame
+        return k.group(body, T_CARD, y), height
 
     def _panel_block(self, block, y):
         width = self.width - T_CARD - 4
@@ -472,7 +507,7 @@ class Doc:
         return path
 
     @classmethod
-    def from_spec(cls, spec):
+    def from_spec(cls, spec, spec_dir=""):
         doc = cls(title=spec.get("title", "session report"),
                   subtitle=spec.get("subtitle", ""),
                   chips=spec.get("chips", ()),
@@ -481,6 +516,7 @@ class Doc:
                   verbatim=spec.get("verbatim"),
                   timeline=spec.get("timeline"),
                   timeline_note=spec.get("timeline_note", ""))
+        doc._spec_dir = spec_dir
         for node in spec.get("overview", []):
             doc.node(node.get("label", ""), time=node.get("time", ""),
                      dur=node.get("dur", ""), user=node.get("user", ""),
@@ -508,6 +544,11 @@ class Doc:
                        cls=block.get("cls", "box-ok"))
             elif kind == "gap":
                 doc.gap(block.get("text", ""))
+            elif kind == "raw":
+                doc.raw(title=block.get("title", ""), body=block.get("body", ""),
+                        body_file=block.get("body_file"), height=block.get("height", 0),
+                        cls=block.get("cls", "box"),
+                        title_rule=block.get("title_rule", True))
             elif kind in a.RENDERERS or kind == "art":
                 data = {key: value for key, value in block.items() if key != "kind"}
                 doc.art(data.pop("art", kind), **data)
@@ -525,12 +566,14 @@ def main(argv=None) -> int:
 
     with open(args.spec, encoding="utf-8") as handle:
         spec = json.load(handle)
-    doc = Doc.from_spec(spec)
+    doc = Doc.from_spec(spec, spec_dir=os.path.dirname(os.path.abspath(args.spec)))
     path = doc.write(args.out, template=args.template)
     size = os.path.getsize(path)
+    art = sum(1 for b in doc.blocks if b["kind"] == "art")
+    raw = sum(1 for b in doc.blocks if b["kind"] == "raw")
     print(f"wrote {path}  ({size / 1024:.1f} KB) · "
           f"轮 {sum(1 for b in doc.blocks if b['kind'] == 'turn')} · "
-          f"图形 {sum(1 for b in doc.blocks if b['kind'] == 'art')}"
+          f"图形 {art + raw}（fork {art} · raw {raw}）"
           + (" + 时间轴" if doc._timeline else "") + " · "
           f"概览节点 {len(doc.nodes)} · verbatim {len(doc.verbatim()['turns'])} 条")
     return 0
