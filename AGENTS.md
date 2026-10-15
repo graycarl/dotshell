@@ -108,12 +108,17 @@ bash apps/pi/setup.sh
 ```
 apps/agents/skills/
 ├── agent-browser/       # 浏览器自动化（agent-browser CLI）
+├── ask-page/            # 把内容做成可交互网页给用户确认/批注（产物落 .pi/ask-page/）
+├── brainstorm/          # 创意发散
 ├── context7/            # 库文档查询
 ├── exa-search/          # 互联网搜索
 ├── github/              # GitHub CLI
+├── harmonyos-project-init/ # 鸿蒙工程初始化
+├── mowen/               # 墨问笔记
 ├── plan/                # 方案设计
 ├── research/            # 问题研究
-├── workflowy-cli/       # Workflowy API 操作
+├── session-to-html/     # session → HTML 报告
+└── workflowy-cli/       # Workflowy API 操作
 ```
 
 **auth.json 约定**：需要 API Key 的 skill 使用 `auth.json` 文件（被 `.gitignore` 排除），模板为 `auth.json.tpl`。
