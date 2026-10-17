@@ -9,7 +9,6 @@
  *
  * Declarative hooks (see SKILL.md):
  *   [data-pi-anchor="name"]                    clickable, becomes one comment
- *   [data-pi-choice="decision"]                button group
  *   [data-pi-submit] / [data-ap-copy]          copy the result
  *   [data-ap-comments] / [data-ap-count]       comment list / counter
  *   [data-ap-clear] / [data-ap-reload]         clear all / reload from disk
@@ -46,7 +45,7 @@
   var KEY = KEY_PREFIX + PAGE_ID;
 
   // ── state ──────────────────────────────────────────────────────────────
-  var state = { pageId: PAGE_ID, comments: [], choices: {}, submittedAt: null };
+  var state = { pageId: PAGE_ID, comments: [], submittedAt: null };
   var storageOK = true;
 
   function nowIso() { return new Date().toISOString().replace(/\.\d+Z$/, "Z"); }
@@ -108,7 +107,6 @@
           };
         });
       }
-      if (draft.choices && typeof draft.choices === "object") state.choices = draft.choices;
       if (draft.submittedAt) state.submittedAt = draft.submittedAt;
     } catch (err) {
       // A corrupt draft must never break the page.
@@ -129,21 +127,6 @@
       if (id && !map[id]) map[id] = el;
     });
     return map;
-  }
-
-  function choiceMeta(name) {
-    var el = document.querySelector('[data-pi-choice="' + name + '"]');
-    if (!el) return { options: [], labels: [] };
-    return {
-      options: (el.getAttribute("data-pi-options") || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean),
-      labels: (el.getAttribute("data-pi-labels") || "").split("|").map(function (s) { return s.trim(); })
-    };
-  }
-
-  function choiceLabel(name, value) {
-    var meta = choiceMeta(name);
-    var at = meta.options.indexOf(value);
-    return (at >= 0 && meta.labels[at]) || "";
   }
 
   // ── comments ───────────────────────────────────────────────────────────
@@ -171,16 +154,9 @@
     render();
   }
 
-  function setChoice(name, value) {
-    state.choices[name] = value;
-    save();
-    render();
-  }
-
   // ── rendering ──────────────────────────────────────────────────────────
   function render() {
     renderComments();
-    renderChoices();
     markAnchors();
   }
 
@@ -261,56 +237,6 @@
       el.classList.toggle("ap-anchored", !!used[id]);
       el.classList.add("ap-anchorable");
       el.title = el.title || "点击添加批注";
-    });
-  }
-
-  // ── choice widgets ─────────────────────────────────────────────────────
-  function renderChoices() {
-    $$("[data-pi-choice]").forEach(setupChoice);
-  }
-
-  function setupChoice(el) {
-    var name = el.getAttribute("data-pi-choice");
-    var multiple = el.getAttribute("data-pi-multiple") === "true";
-    var meta = choiceMeta(name);
-
-    if (el.getAttribute("data-ap-ready") !== "1") {
-      el.setAttribute("data-ap-ready", "1");
-      el.classList.add("ap-choice");
-      el.textContent = "";
-      meta.options.forEach(function (value, index) {
-        var btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "ap-choice-opt";
-        btn.setAttribute("data-value", value);
-        btn.textContent = meta.labels[index] || value;
-        btn.addEventListener("click", function () {
-          if (multiple) {
-            var list = Array.isArray(state.choices[name]) ? state.choices[name].slice() : [];
-            var at = list.indexOf(value);
-            if (at === -1) list.push(value); else list.splice(at, 1);
-            setChoice(name, list);
-          } else {
-            setChoice(name, value);
-          }
-        });
-        el.appendChild(btn);
-      });
-      if (el.hasAttribute("data-pi-default") && state.choices[name] === undefined) {
-        var preset = el.getAttribute("data-pi-default");
-        state.choices[name] = multiple ? preset.split(",").map(function (s) { return s.trim(); }) : preset;
-        save();
-      }
-    }
-
-    var current = state.choices[name];
-    $$(".ap-choice-opt", el).forEach(function (btn) {
-      var value = btn.getAttribute("data-value");
-      var active = multiple
-        ? Array.isArray(current) && current.indexOf(value) !== -1
-        : current === value;
-      btn.classList.toggle("ap-choice-active", !!active);
-      btn.setAttribute("aria-pressed", active ? "true" : "false");
     });
   }
 
@@ -417,26 +343,10 @@
   }
 
   // ── export ─────────────────────────────────────────────────────────────
-  function decisionLabel(value) {
-    var label = choiceLabel("decision", value);
-    return label && label !== value ? label + "（" + value + "）" : value;
-  }
-
   function buildExport() {
     var nodes = anchorNodes();
     var lines = [];
     lines.push("<!-- ask-page-result · pageId=" + PAGE_ID + " · " + nowIso() + " -->");
-    lines.push("");
-    lines.push("结论：" + (state.choices.decision ? decisionLabel(state.choices.decision) : "未选择"));
-
-    var others = Object.keys(state.choices).filter(function (k) { return k !== "decision"; });
-    if (others.length) {
-      lines.push("其他选择：" + others.map(function (k) {
-        var v = state.choices[k];
-        return k + "=" + (Array.isArray(v) ? v.join(",") : v);
-      }).join("；"));
-    }
-
     if (state.comments.length) {
       lines.push("");
       lines.push("## 批注（" + state.comments.length + " 条）");
@@ -489,22 +399,31 @@
     done(legacyCopy(text));
   }
 
-  function showManualCopy(text) {
+  function showPreview(text, how) {
     var overlay = $("[data-ap-overlay]");
     if (!overlay) {
       window.prompt("复制下面的内容，粘到对话里：", text);
       return;
     }
+    var copied = how !== "manual";
+    var title = $("[data-ap-modal-title]", overlay);
+    var note = $("[data-ap-modal-note]", overlay);
+    if (title) title.textContent = copied ? "已复制到剪贴板" : "浏览器拦住了自动复制";
+    if (note) {
+      note.textContent = copied
+        ? "下面是这次复制的内容，直接粘回对话即可。"
+        : "下面的内容已经全选，按 ⌘C / Ctrl+C 复制，然后粘到对话里。";
+    }
     var area = $("textarea", overlay);
-    if (area) { area.value = text; }
+    if (area) area.value = text;
     overlay.classList.add("show");
     if (area) {
       area.focus();
-      area.select();
+      if (copied) area.setSelectionRange(0, 0); else area.select();
     }
   }
 
-  function hideManualCopy() {
+  function hidePreview() {
     var overlay = $("[data-ap-overlay]");
     if (overlay) overlay.classList.remove("show");
   }
@@ -513,12 +432,8 @@
   function submit() {
     var text = buildExport();
     copyText(text, function (how) {
-      if (how === "manual") {
-        markSubmitted();
-        showManualCopy(text);
-        return;
-      }
       markSubmitted();
+      showPreview(text, how);
       showBanner(how);
     });
   }
@@ -666,10 +581,10 @@
 
     $$("[data-ap-overlay]").forEach(function (overlay) {
       $$("[data-ap-close]", overlay).forEach(function (el) {
-        el.addEventListener("click", hideManualCopy);
+        el.addEventListener("click", hidePreview);
       });
       overlay.addEventListener("click", function (ev) {
-        if (ev.target === overlay) hideManualCopy();
+        if (ev.target === overlay) hidePreview();
       });
       var area = $("textarea", overlay);
       if (area) {
@@ -684,7 +599,7 @@
           ev.preventDefault();
           submit();
         }
-        if (ev.key === "Escape") hideManualCopy();
+        if (ev.key === "Escape") hidePreview();
       });
     }
 
@@ -713,7 +628,6 @@
     pageId: PAGE_ID,
     state: state,
     comment: addComment,
-    choice: setChoice,
     submit: submit,
     exportText: buildExport,
     reload: reloadLatest,

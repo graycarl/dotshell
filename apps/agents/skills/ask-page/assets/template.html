@@ -19,7 +19,7 @@
 <header class="ap-head">
   <div class="ap-eyebrow">ask-page</div>
   <h1>{{TITLE}}</h1>
-  <p class="ap-sub">读完在底部给个结论；想具体指出问题，就点正文里带下划线的段落写批注。写完后点「复制结果」，把结果粘回对话。</p>
+  <p class="ap-sub">想指出问题，就点正文里带下划线的段落写批注。写完后点「复制结果」，确认预览内容后粘回对话。</p>
   <div class="ap-meta">
     <span data-ap-status>草稿保存在本机浏览器，刷新不会丢</span>
     <button type="button" class="ap-link" data-ap-reload>↻ 载入最新内容</button>
@@ -36,9 +36,6 @@
     <div class="ap-panel">
       <div class="ap-panel-head">批注 <span class="ap-count"><span data-ap-count>0</span> 条</span></div>
       <div data-ap-comments></div>
-      <div class="ap-panel-foot">
-        <button type="button" class="ap-btn ghost" data-ap-clear>清空全部</button>
-      </div>
     </div>
   </aside>
 </div>
@@ -46,8 +43,7 @@
 <footer class="ap-bar">
   <div class="ap-bar-in">
     <div class="ap-bar-left">
-      <span class="ap-lbl">结论</span>
-      <div data-pi-choice="decision" data-pi-options="approve,revise,reject" data-pi-labels="通过 | 需要修改 | 否决"></div>
+      <button type="button" class="ap-btn ghost" data-ap-clear>清空全部批注</button>
     </div>
     <div class="ap-bar-right">
       <span class="ap-lbl">复制后粘回对话</span>
@@ -58,11 +54,12 @@
 
 <div class="ap-overlay" data-ap-overlay>
   <div class="ap-modal">
-    <h2>浏览器拦住了自动复制</h2>
-    <p>下面的内容已经全选，按 ⌘C / Ctrl+C 复制，然后粘到对话里。</p>
+    <h2 data-ap-modal-title>已复制到剪贴板</h2>
+    <p data-ap-modal-note>下面是这次复制的内容，直接粘回对话即可。</p>
     <textarea readonly spellcheck="false"></textarea>
     <div class="ap-modal-actions">
-      <button type="button" class="ap-btn" data-ap-close>关闭</button>
+      <button type="button" class="ap-btn" data-ap-copy>再复制一次</button>
+      <button type="button" class="ap-btn primary" data-ap-close>关闭</button>
     </div>
   </div>
 </div>

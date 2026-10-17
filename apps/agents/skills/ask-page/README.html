@@ -99,7 +99,7 @@
     <div class="eyebrow">skill · ask-page</div>
     <h1>一份 HTML，<br>把「审阅」从终端里拿出来</h1>
     <p class="lede">
-      Agent 写正文 → 脚本拼成一份<b>自包含的本地网页</b> → 用户在浏览器里逐条批注、给结论 →
+      Agent 写正文 → 脚本拼成一份<b>自包含的本地网页</b> → 用户在浏览器里逐条批注 →
       点「复制结果」→ 粘回对话。没有服务进程、没有端口、没有令牌，产物就是<b>一个文件</b>。
     </p>
     <div class="chips">
@@ -172,7 +172,7 @@
       <rect x="820" y="130" width="78" height="24" rx="6" fill="var(--card)" stroke="var(--line)"/>
       <rect x="820" y="160" width="78" height="20" rx="6" fill="none" stroke="var(--line)" stroke-dasharray="3 3"/>
       <rect x="564" y="200" width="344" height="36" rx="9" fill="var(--code-bg)" stroke="var(--line)"/>
-      <text x="578" y="223" font-size="12" fill="var(--fg)">通过 · 需要修改 · 否决</text>
+      <text x="578" y="223" font-size="12" fill="var(--muted)">批注会汇总到右侧面板</text>
       <rect x="852" y="206" width="52" height="24" rx="7" fill="var(--accent)"/>
       <text x="878" y="223" font-size="12" fill="#fff" text-anchor="middle">复制</text>
       <text x="735" y="279" font-size="11.5" fill="var(--muted)" text-anchor="middle">点「复制结果」→ 剪贴板里是一段 Markdown → 粘回对话</text>
@@ -238,7 +238,7 @@
 
       <text x="20" y="158" font-size="11.5" fill="var(--muted)">审阅期 → 回传期</text>
       <rect x="722" y="168" width="198" height="76" rx="12" fill="var(--card)" stroke="var(--browser)" stroke-width="1.5"/>
-      <text x="821" y="194" font-size="13.5" font-weight="700" fill="var(--browser)" text-anchor="middle">批注 + 结论</text>
+      <text x="821" y="194" font-size="13.5" font-weight="700" fill="var(--browser)" text-anchor="middle">批注</text>
       <text x="821" y="214" font-size="11.5" fill="var(--muted)" text-anchor="middle">写进 localStorage</text>
       <text x="821" y="232" font-size="11.5" fill="var(--muted)" text-anchor="middle">点「复制结果」</text>
 
@@ -311,7 +311,7 @@
         <text x="448" y="163" text-anchor="middle">③ open file://…</text>
 
         <text x="590" y="204" fill="var(--browser)">④ 用户阅读 → 逐条批注</text>
-        <text x="590" y="222" fill="var(--browser)">选择结论 → 点「复制结果」</text>
+        <text x="590" y="222" fill="var(--browser)">点「复制结果」→ 弹出预览</text>
 
         <rect x="486" y="238" width="180" height="26" rx="7" fill="var(--accent-soft)" stroke="var(--line)"/>
         <text x="576" y="256" text-anchor="middle" font-size="11">剪贴板 = 一段 Markdown</text>
@@ -513,8 +513,6 @@
     <div class="anatomy">
       <span class="ln hl-sent">&lt;!-- ask-page-result · pageId=plan · 2026-05-01T12:00Z --&gt;</span>
       <span class="ln"> </span>
-      <span class="ln hl-dec">结论：需要修改（revise）</span>
-      <span class="ln"> </span>
       <span class="ln hl-head">## 批注（2 条）</span>
       <span class="ln"> </span>
       <span class="ln hl-head">### [plan-3] 方案要点 3 · 回滚</span>
@@ -529,26 +527,22 @@
     </div>
     <div class="legend">
       <span><i style="background:var(--muted)"></i>哨兵：界定「这是一份结果」</span>
-      <span><i style="background:var(--accent)"></i>结论：用户的判断</span>
       <span><i style="background:var(--ok)"></i>批注块：<code>[anchor]</code> + 标签</span>
       <span><i style="background:var(--warn)"></i>圈选原文：用户选中的句子</span>
     </div>
-    <figcaption>图 7 · 解析只需三条规则，写在 SKILL.md 里就够。</figcaption>
+    <figcaption>图 7 · 解析只需两条规则，写在 SKILL.md 里就够。</figcaption>
   </figure>
 
-  <h3>三条解析规则</h3>
+  <h3>两条解析规则</h3>
   <ol>
     <li>取 <code>&lt;!-- ask-page-result</code> 与 <code>&lt;!-- /ask-page-result --&gt;</code> 之间的内容</li>
-    <li><code>结论：</code> 那一行是用户的选择（可能是 <code>未选择</code>，也可能是 <code>通过（approve）</code> 这种「标签（值）」）</li>
     <li>每个 <code>### [锚点] 标签</code> 起一条批注：正文到下一个 <code>&gt;</code> 行 / 下一个 <code>### [</code> / 哨兵为止</li>
   </ol>
 
   <table>
     <tr><th>情况</th><th>输出长什么样</th></tr>
-    <tr><td>只给结论、没写批注</td><td>只有 <code>结论：通过（approve）</code>，整个 <code>## 批注</code> 小节省略</td></tr>
-    <tr><td>完全没选结论</td><td><code>结论：未选择</code>，批注照常导出</td></tr>
+    <tr><td>一条批注都没写</td><td>只有哨兵两行，中间空 —— 说明用户没意见</td></tr>
     <tr><td>anchor 在新页面里消失了</td><td>标题变成 <code>### [plan-9] 标签 ⚠ 位置已失效</code>，批注仍然导出</td></tr>
-    <tr><td>还有其他选择题</td><td>多一行 <code>其他选择：priority=high</code></td></tr>
   </table>
 
   <div class="callout"><b>为什么不给一个「纯 JSON」的兜底按钮？</b> 因为它会让 agent 有时拿到结构化、有时拿到文本，反而增加判断成本。出口只有一个，规则就只有一套。</div>
@@ -603,56 +597,44 @@
   <p class="sec-sub">Agent 不写 JS。它只在正文里放 <code>data-pi-*</code> 标记，内联的脚本负责把标记变成交互、再变成导出文本。</p>
 
   <figure>
-    <svg viewBox="0 0 940 330" role="img" aria-label="标记到导出结果的映射">
+    <svg viewBox="0 0 940 276" role="img" aria-label="标记到导出结果的映射">
       <defs>
         <marker id="a9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/>
         </marker>
       </defs>
       <text x="24" y="26" font-size="12.5" font-weight="700" fill="var(--muted)">你写的正文</text>
-      <text x="560" y="26" font-size="12.5" font-weight="700" fill="var(--muted)">导出结果里</text>
+      <text x="560" y="26" font-size="12.5" font-weight="700" fill="var(--muted)">于是就得到</text>
 
       <g font-family="ui-monospace,Menlo,monospace" font-size="11.6">
-        <rect x="20" y="40" width="360" height="42" rx="9" fill="var(--code-bg)" stroke="var(--line)"/>
-        <text x="36" y="66" fill="var(--accent)">data-pi-anchor="plan-3"</text>
-        <rect x="20" y="94" width="360" height="42" rx="9" fill="var(--code-bg)" stroke="var(--line)"/>
-        <text x="36" y="120" fill="var(--accent)">data-pi-choice="decision"</text>
-        <rect x="20" y="148" width="360" height="42" rx="9" fill="var(--code-bg)" stroke="var(--line)"/>
-        <text x="36" y="174" fill="var(--accent)">data-pi-labels="通过 | 修改 | 否决"</text>
-        <rect x="20" y="202" width="360" height="42" rx="9" fill="var(--code-bg)" stroke="var(--line)"/>
-        <text x="36" y="228" fill="var(--accent)">data-pi-default="approve"</text>
-        <rect x="20" y="256" width="360" height="42" rx="9" fill="var(--code-bg)" stroke="var(--line)"/>
-        <text x="36" y="282" fill="var(--accent)">script[type="text/markdown"]</text>
+        <rect x="20" y="40" width="360" height="46" rx="9" fill="var(--code-bg)" stroke="var(--line)"/>
+        <text x="36" y="68" fill="var(--accent)">data-pi-anchor="plan-3"</text>
+
+        <rect x="20" y="112" width="360" height="46" rx="9" fill="var(--code-bg)" stroke="var(--line)"/>
+        <text x="36" y="140" fill="var(--accent)">script[type="text/markdown"]</text>
+
+        <rect x="20" y="184" width="360" height="46" rx="9" fill="var(--code-bg)" stroke="var(--line)"/>
+        <text x="36" y="212" fill="var(--accent)">data-ap-copy（复制按钮）</text>
       </g>
 
       <g stroke="var(--accent)" stroke-width="1.6" stroke-dasharray="5 4">
-        <path d="M382 61 L556 61" marker-end="url(#a9)"/>
-        <path d="M382 115 L556 115" marker-end="url(#a9)"/>
-        <path d="M382 169 L556 169" marker-end="url(#a9)"/>
-        <path d="M382 223 L556 223" marker-end="url(#a9)"/>
-        <path d="M382 277 L556 277" marker-end="url(#a9)"/>
+        <path d="M382 63 L556 63" marker-end="url(#a9)"/>
+        <path d="M382 135 L556 135" marker-end="url(#a9)"/>
+        <path d="M382 207 L556 207" marker-end="url(#a9)"/>
       </g>
 
       <g font-family="ui-monospace,Menlo,monospace" font-size="11.2" fill="var(--fg)">
-        <rect x="560" y="40" width="356" height="42" rx="9" fill="var(--card)" stroke="var(--line)"/>
-        <text x="574" y="58">### [plan-3] 方案要点 3 · 回滚</text>
-        <text x="574" y="74" fill="var(--muted)">标签取该块首行文字，截 40 字</text>
+        <rect x="560" y="40" width="356" height="46" rx="9" fill="var(--card)" stroke="var(--line)"/>
+        <text x="574" y="60">### [plan-3] 方案要点 3 · 回滚</text>
+        <text x="574" y="77" fill="var(--muted)">标签取该块首行文字，截 40 字</text>
 
-        <rect x="560" y="94" width="356" height="42" rx="9" fill="var(--card)" stroke="var(--line)"/>
-        <text x="574" y="112">结论：需要修改（revise）</text>
-        <text x="574" y="128" fill="var(--muted)">choices.decision → 首行</text>
+        <rect x="560" y="112" width="356" height="46" rx="9" fill="var(--card)" stroke="var(--line)"/>
+        <text x="574" y="132">就地渲染成 HTML</text>
+        <text x="574" y="149" fill="var(--muted)">约 60 行，离线、无依赖</text>
 
-        <rect x="560" y="148" width="356" height="42" rx="9" fill="var(--card)" stroke="var(--line)"/>
-        <text x="574" y="166">通过 / 需要修改 / 否决</text>
-        <text x="574" y="182" fill="var(--muted)">按钮文案，值仍是 approve/revise/reject</text>
-
-        <rect x="560" y="202" width="356" height="42" rx="9" fill="var(--card)" stroke="var(--line)"/>
-        <text x="574" y="220">预选中，用户不改就按它导出</text>
-        <text x="574" y="236" fill="var(--muted)">加载时写入草稿</text>
-
-        <rect x="560" y="256" width="356" height="42" rx="9" fill="var(--card)" stroke="var(--line)"/>
-        <text x="574" y="274">就地渲染成 HTML</text>
-        <text x="574" y="290" fill="var(--muted)">约 60 行，离线、无依赖</text>
+        <rect x="560" y="184" width="356" height="46" rx="9" fill="var(--accent-soft)" stroke="var(--accent)"/>
+        <text x="574" y="204" fill="var(--accent)">写剪贴板 + 弹出预览</text>
+        <text x="574" y="221" fill="var(--muted)">预览里就是即将粘回去的全文</text>
       </g>
     </svg>
     <figcaption>图 9 · 标记只负责「交互」，导出格式由脚本统一生成。</figcaption>
@@ -781,7 +763,7 @@
     <li><b>stdout 只有一行 JSON</b>（<code>built</code> / <code>opened</code> / <code>list</code> / <code>error</code>），进度都在 stderr。</li>
     <li><b>id 和 anchor 都是跨轮次契约</b>：换 id 丢草稿，换 anchor 丢位置。</li>
     <li><b>agent 写完页面就结束本轮</b>，不要试图等待 —— 没有东西可等。</li>
-    <li><b>用户可能只点结论、只写批注、或者什么都不点就关掉</b>，三种都要能处理。</li>
+    <li><b>用户可能只写几条批注，也可能什么都不写就关掉</b>，两种都要能处理。</li>
     <li><b><code>new</code> 会覆盖 <code>plan.html</code>，但不动 localStorage</b>；刷新后草稿还在。</li>
     <li><b>别在脚本里写字面量 <code>&lt;/script&gt;</code></b>（包括注释），否则页面静默失效；构建期会拦。</li>
     <li><b>页面不联网也离线可用</b>，所以样式、图标、字体都必须内联或用系统字体。</li>

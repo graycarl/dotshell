@@ -100,7 +100,6 @@ aside.ap-side{position:sticky;top:18px;display:flex;flex-direction:column;gap:14
 .ap-panel{background:var(--ap-card);border:1px solid var(--ap-line);border-radius:14px;padding:14px 16px}
 .ap-panel-head{font-size:13px;font-weight:700;display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
 .ap-panel-head .ap-count{font-weight:400;color:var(--ap-muted)}
-.ap-panel-foot{margin-top:12px;display:flex;gap:8px}
 .ap-empty{color:var(--ap-muted);font-size:13px;line-height:1.5}
 
 .ap-comment{border-left:3px solid var(--ap-accent);padding:2px 0 2px 10px;margin:0 0 14px}
@@ -158,15 +157,6 @@ aside.ap-side{position:sticky;top:18px;display:flex;flex-direction:column;gap:14
 .ap-bar-left{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 .ap-bar .ap-lbl{font-size:13px;color:var(--ap-muted)}
 .ap-bar-right{display:flex;gap:9px;align-items:center}
-
-/* ── choice group ───────────────────────────────────── */
-.ap-choice{display:flex;flex-wrap:wrap;gap:8px}
-.ap-choice-opt{
-  font:inherit;padding:6px 15px;border-radius:999px;border:1px solid var(--ap-line);
-  background:transparent;color:var(--ap-fg);cursor:pointer;
-}
-.ap-choice-opt:hover{border-color:var(--ap-accent)}
-.ap-choice-active{background:var(--ap-accent);border-color:transparent;color:#fff;font-weight:600}
 
 /* ── modal (manual copy fallback) ───────────────────── */
 .ap-overlay{
