@@ -52,12 +52,22 @@
     <tr><td>提示块</td><td>强调一句话</td><td><code>.callout</code></td></tr>
     <tr><td>Diff</td><td>审阅改动</td><td><code>.diff</code> + <code>.add/.del/.hunk</code></td></tr>
     <tr><td>卡片</td><td>并列摘要</td><td><code>.card-grid</code></td></tr>
+    <tr><td>选择题</td><td>让用户选一个 / 多个</td><td><code>data-pi-option</code></td></tr>
     <tr><td>引用</td><td>引述原文</td><td><code>&lt;blockquote&gt;</code></td></tr>
   </table>
 
   <h3 data-pi-anchor="c-quote">引用与分割线</h3>
   <blockquote>批注导出的格式刻意保持简单：哨兵 + 标题 + 正文。人和模型读的是同一份东西。</blockquote>
   <hr>
+
+  <h3 data-pi-anchor="c-option">选择题 <code>data-pi-option</code></h3>
+  <p>一个问题一组选项，单选；加 <code>data-pi-multiple="true"</code> 变多选。点已选中的项可以取消，答案会进导出结果的「选择」小节。</p>
+  <div data-pi-option="priority" data-pi-prompt="发布优先级"
+       data-pi-options="low,medium,high"
+       data-pi-labels="低 — 先内部试点 | 中 — 灰度 5% 看 30 分钟 | 高 — 直接全量"></div>
+  <div data-pi-option="envs" data-pi-prompt="目标环境（可多选）" data-pi-multiple="true"
+       data-pi-options="dev,staging,prod"
+       data-pi-labels="开发 | 预发 | 生产"></div>
 
   <h3 data-pi-anchor="c-md">Markdown 块（不想手写 HTML 时）</h3>
   <script type="text/markdown">
@@ -86,5 +96,5 @@ window.askPage.comment("plan-3", "这里要加回滚步骤");
     <div class="card"><b>② 复制结果 + 预览</b>右下角按钮把全文写进剪贴板，并在按钮上方弹出预览；被浏览器拦住时自动全选。</div>
     <div class="card"><b>③ ↻ 载入最新内容</b>agent 改完正文后点它，草稿原地保留。</div>
   </div>
-  <div class="callout" data-pi-anchor="ui-tip">批注存在本机浏览器里（key 是 <code>ask-page:&lt;id&gt;</code>），关掉页面也不会丢；想清空就点左下角「清空全部批注」。</div>
+  <div class="callout" data-pi-anchor="ui-tip">批注存在本机浏览器里（key 是 <code>ask-page:&lt;id&gt;</code>），关掉页面也不会丢；想清空就点左下角「清空草稿」。</div>
 </section>

@@ -9,6 +9,7 @@
  *
  * Declarative hooks (see SKILL.md):
  *   [data-pi-anchor="name"]                    clickable, becomes one comment
+ *   [data-pi-option="name"]                    option list (radio / checkbox)
  *   [data-pi-submit] / [data-ap-copy]          copy the result
  *   [data-ap-comments] / [data-ap-count]       comment list / counter
  *   [data-ap-clear] / [data-ap-reload]         clear all / reload from disk
@@ -45,7 +46,7 @@
   var KEY = KEY_PREFIX + PAGE_ID;
 
   // ── state ──────────────────────────────────────────────────────────────
-  var state = { pageId: PAGE_ID, comments: [], submittedAt: null };
+  var state = { pageId: PAGE_ID, comments: [], options: {}, submittedAt: null };
   var storageOK = true;
 
   function nowIso() { return new Date().toISOString().replace(/\.\d+Z$/, "Z"); }
@@ -101,6 +102,14 @@
           };
         });
       }
+      if (draft.options && typeof draft.options === "object") {
+        Object.keys(draft.options).forEach(function (k) {
+          var v = draft.options[k];
+          if (typeof v === "string" || (Array.isArray(v) && v.every(function (x) { return typeof x === "string"; }))) {
+            state.options[k] = v;
+          }
+        });
+      }
       if (draft.submittedAt) state.submittedAt = draft.submittedAt;
     } catch (err) {
       // A corrupt draft must never break the page.
@@ -151,6 +160,7 @@
   // ── rendering ──────────────────────────────────────────────────────────
   function render() {
     renderComments();
+    renderOptions();
     markAnchors();
   }
 
@@ -232,6 +242,151 @@
       el.classList.add("ap-anchorable");
       el.title = el.title || "点击添加批注";
     });
+  }
+
+  // ── option lists ───────────────────────────────────────────────────────
+  // One question, N answers. Single select by default; data-pi-multiple="true"
+  // turns it into a checkbox list. Values live in state.options[name].
+  function optionMeta(el) {
+    function split(attr, sep) {
+      return (el.getAttribute(attr) || "").split(sep).map(function (s) { return s.trim(); });
+    }
+    return {
+      name: (el.getAttribute("data-pi-option") || "").trim(),
+      prompt: (el.getAttribute("data-pi-prompt") || "").trim(),
+      multiple: el.getAttribute("data-pi-multiple") === "true",
+      options: split("data-pi-options", ",").filter(Boolean),
+      labels: split("data-pi-labels", "|")
+    };
+  }
+
+  function setOption(name, value) {
+    if (value === null) delete state.options[name];
+    else state.options[name] = value;
+    save();
+    renderOptions();
+  }
+
+  function renderOptions() {
+    $$("[data-pi-option]").forEach(setupOption);
+  }
+
+  function setupOption(el) {
+    var meta = optionMeta(el);
+    if (!meta.name || !meta.options.length) return;
+
+    if (el.getAttribute("data-ap-ready") !== "1") {
+      el.setAttribute("data-ap-ready", "1");
+      el.classList.add("ap-opt");
+      el.setAttribute("role", meta.multiple ? "group" : "radiogroup");
+      if (meta.multiple) el.setAttribute("data-multiple", "true");
+      if (meta.prompt) el.setAttribute("aria-label", meta.prompt);
+      el.textContent = "";
+
+      if (meta.prompt) {
+        var prompt = document.createElement("div");
+        prompt.className = "ap-opt-prompt";
+        prompt.textContent = meta.prompt;
+        el.appendChild(prompt);
+      }
+
+      var list = document.createElement("div");
+      list.className = "ap-opt-list";
+
+      meta.options.forEach(function (value, index) {
+        var item = document.createElement("button");
+        item.type = "button";
+        item.className = "ap-opt-item";
+        item.setAttribute("data-value", value);
+        item.setAttribute("role", meta.multiple ? "checkbox" : "radio");
+        var mark = document.createElement("span");
+        mark.className = "ap-opt-mark";
+        var label = document.createElement("span");
+        label.className = "ap-opt-label";
+        label.textContent = meta.labels[index] || value;
+        item.appendChild(mark);
+        item.appendChild(label);
+        item.addEventListener("click", function () {
+          if (meta.multiple) {
+            var cur = Array.isArray(state.options[meta.name]) ? state.options[meta.name].slice() : [];
+            var at = cur.indexOf(value);
+            if (at === -1) cur.push(value); else cur.splice(at, 1);
+            setOption(meta.name, cur.length ? cur : null);
+          } else {
+            // Clicking the current answer clears it: a question on this page is
+            // allowed to stay unanswered, and a misclick must be undoable.
+            setOption(meta.name, state.options[meta.name] === value ? null : value);
+          }
+        });
+        list.appendChild(item);
+      });
+      el.appendChild(list);
+
+      // Arrow keys move the selection inside a radio group, like native radios.
+      list.addEventListener("keydown", function (ev) {
+        if (meta.multiple) return;
+        var items = $$(".ap-opt-item", el);
+        var idx = items.indexOf(document.activeElement);
+        if (idx === -1) return;
+        var delta = (ev.key === "ArrowDown" || ev.key === "ArrowRight") ? 1
+          : (ev.key === "ArrowUp" || ev.key === "ArrowLeft") ? -1 : 0;
+        if (!delta) return;
+        ev.preventDefault();
+        var next = items[(idx + delta + items.length) % items.length];
+        next.focus();
+        next.click();
+      });
+
+      if (el.hasAttribute("data-pi-default") && state.options[meta.name] === undefined) {
+        var preset = el.getAttribute("data-pi-default");
+        state.options[meta.name] = meta.multiple
+          ? preset.split(",").map(function (s) { return s.trim(); }).filter(Boolean)
+          : preset.trim();
+        save();
+      }
+    }
+
+    // Paint from state. Roving tabindex keeps the group a single tab stop.
+    var current = state.options[meta.name];
+    var items = $$(".ap-opt-item", el);
+    var focusAt = 0;
+    items.forEach(function (item, index) {
+      var value = item.getAttribute("data-value");
+      var on = meta.multiple
+        ? Array.isArray(current) && current.indexOf(value) !== -1
+        : current === value;
+      item.setAttribute("aria-checked", on ? "true" : "false");
+      if (on) focusAt = index;
+    });
+    if (!meta.multiple) {
+      items.forEach(function (item, index) {
+        item.setAttribute("tabindex", index === focusAt ? "0" : "-1");
+      });
+    }
+  }
+
+  // Only options whose container is still on the page are exported: if the
+  // question is gone, its old answer is noise.
+  function optionLines() {
+    var out = [];
+    $$("[data-pi-option]").forEach(function (el) {
+      var meta = optionMeta(el);
+      if (!meta.name) return;
+      var value = state.options[meta.name];
+      if (value === undefined || value === null || value === "") return;
+      var values = Array.isArray(value) ? value.filter(Boolean) : [value];
+      if (!values.length) return;
+
+      var labels = values.map(function (v) {
+        var at = meta.options.indexOf(v);
+        return (at >= 0 && meta.labels[at]) || v;
+      });
+      var head = meta.prompt && meta.prompt !== meta.name ? meta.prompt + "（" + meta.name + "）" : meta.name;
+      var labelText = labels.join("、");
+      var valueText = values.join(", ");
+      out.push("- " + head + "：" + (labelText === valueText ? valueText : labelText + "（" + valueText + "）"));
+    });
+    return out;
   }
 
   // ── composer ───────────────────────────────────────────────────────────
@@ -341,6 +496,15 @@
     var nodes = anchorNodes();
     var lines = [];
     lines.push("<!-- ask-page-result · pageId=" + PAGE_ID + " · " + nowIso() + " -->");
+
+    var opts = optionLines();
+    if (opts.length) {
+      lines.push("");
+      lines.push("## 选择");
+      lines.push("");
+      opts.forEach(function (line) { lines.push(line); });
+    }
+
     if (state.comments.length) {
       lines.push("");
       lines.push("## 批注（" + state.comments.length + " 条）");
@@ -486,10 +650,15 @@
   }
 
   // ── misc actions ───────────────────────────────────────────────────────
-  function clearComments() {
-    if (!state.comments.length) return;
-    if (!window.confirm("清空全部 " + state.comments.length + " 条批注？这一步不能撤销。")) return;
+  function clearDraft() {
+    var options = optionLines().length;
+    if (!state.comments.length && !options) return;
+    var what = [];
+    if (state.comments.length) what.push(state.comments.length + " 条批注");
+    if (options) what.push(options + " 项选择");
+    if (!window.confirm("清空" + what.join("、") + "？这一步不能撤销。")) return;
     state.comments = [];
+    state.options = {};
     state.submittedAt = null;
     save();
     render();
@@ -591,7 +760,7 @@
     $$("[data-ap-clear]").forEach(function (el) {
       if (el.getAttribute("data-ap-ready") === "1") return;
       el.setAttribute("data-ap-ready", "1");
-      el.addEventListener("click", clearComments);
+      el.addEventListener("click", clearDraft);
     });
 
     $$("[data-ap-reload]").forEach(function (el) {
@@ -628,9 +797,11 @@
     if (!storageOK) return;
     var el = $("[data-ap-status]");
     if (!el) return;
-    var parts = [state.comments.length
-      ? "草稿已保存 · " + state.comments.length + " 条批注"
-      : "草稿保存在本机浏览器，刷新不会丢"];
+    var picked = [];
+    if (state.comments.length) picked.push(state.comments.length + " 条批注");
+    var options = optionLines().length;
+    if (options) picked.push(options + " 项选择");
+    var parts = [picked.length ? "草稿已保存 · " + picked.join(" · ") : "草稿保存在本机浏览器，刷新不会丢"];
     if (state.submittedAt) parts.push("上次导出 " + fmtTime(state.submittedAt));
     el.textContent = parts.join(" · ");
   }
@@ -641,6 +812,7 @@
     pageId: PAGE_ID,
     state: state,
     comment: addComment,
+    option: setOption,
     submit: submit,
     exportText: buildExport,
     preview: showPop,
