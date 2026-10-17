@@ -422,7 +422,15 @@ async function runAgent(defaultCwd: string, spec: AgentSpec, options: RunAgentOp
 		let wasAborted = false;
 
 		const exitCode = await new Promise<number>((resolve) => {
-			const proc = spawn("pi", args, { cwd: defaultCwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+			// PI_SUBAGENT lets extensions tell a subagent process from the
+			// interactive session that spawned it; it inherits TMUX/TMUX_PANE
+			// and must not touch the parent's terminal state.
+			const proc = spawn("pi", args, {
+				cwd: defaultCwd,
+				shell: false,
+				stdio: ["ignore", "pipe", "pipe"],
+				env: { ...process.env, PI_SUBAGENT: "1" },
+			});
 			let buffer = "";
 			let exited = false;
 			let killTimer: ReturnType<typeof setTimeout> | undefined;

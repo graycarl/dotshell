@@ -53,6 +53,11 @@ ln -sfn "$(pwd)/apps/pi/agent/agents" ~/.pi/agent/agents
 - 默认只加载**用户级 agent**（`~/.pi/agent/agents`）。
 - 启用项目级 agent 需显式传入 `agentScope: "both"` 或 `"project"`，不会再弹窗确认。
 
+### 子进程环境
+
+子进程继承父进程的环境变量，但会额外注入 `PI_SUBAGENT=1`，让扩展与工具能区分「子 agent」和「交互式会话」。
+例如 `tmux-status` 扩展据此跳过子进程，避免 subagent 覆盖父会话在 tmux 状态栏里的状态。
+
 ## 使用
 
 ### 委派单个任务

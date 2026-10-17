@@ -14,12 +14,19 @@
  * tmux re-evaluates the format whenever the option changes, so no extra
  * refresh command is needed.
  *
+ * Only an interactive session owns the status of its pane. Subagents and other
+ * headless runs (`--mode json|print`, RPC) inherit TMUX/TMUX_PANE from their
+ * parent, so without this gate a subagent would overwrite the parent's state
+ * and erase it on exit. `PI_SUBAGENT=1` is an explicit marker set by the
+ * subagent launcher, and the shutdown handler re-reads the option so a process
+ * never clears a status another process has taken over.
+ *
  * States: idle | working | blocked | done | error. `blocked` wins over
  * `working`, and an aborted run goes back to `idle`.
  *
  * Disable with PI_TMUX_STATUS=0. Outside tmux the extension is a no-op.
  */
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const OPTION = "@pi_status";
 const TIMEOUT_MS = 2000;
@@ -28,11 +35,16 @@ type State = "idle" | "working" | "blocked" | "done" | "error";
 
 export default function (pi: ExtensionAPI) {
   if (process.env.PI_TMUX_STATUS === "0") return;
+  if (process.env.PI_SUBAGENT === "1") return;
 
   const pane = process.env.TMUX_PANE;
   if (!process.env.TMUX || !pane) return;
 
+  /** Only the interactive session owns the status of the pane it runs in. */
+  const owns = (ctx: ExtensionContext) => ctx.mode === "tui";
+
   let last: State | undefined;
+  let inFlight: Promise<unknown> | undefined;
 
   const run = (args: string[]) =>
     pi.exec("tmux", args, { timeout: TIMEOUT_MS }).catch(() => undefined);
@@ -40,12 +52,8 @@ export default function (pi: ExtensionAPI) {
   const set = (state: State) => {
     if (state === last) return;
     last = state;
-    return run(["set-option", "-w", "-t", pane, OPTION, state]);
-  };
-
-  const clear = () => {
-    last = undefined;
-    return run(["set-option", "-w", "-t", pane, "-u", OPTION]);
+    inFlight = run(["set-option", "-w", "-t", pane, OPTION, state]);
+    return inFlight;
   };
 
   // Mirrors ProgramStatusReporter in pi's interactive mode.
@@ -56,13 +64,15 @@ export default function (pi: ExtensionAPI) {
 
   const report = () => void set(blocked ? "blocked" : runActive ? "working" : resting);
 
-  pi.on("agent_start", () => {
+  pi.on("agent_start", (_event, ctx) => {
+    if (!owns(ctx)) return;
     runActive = true;
     runResult = "done";
     report();
   });
 
-  pi.on("message_end", (event) => {
+  pi.on("message_end", (event, ctx) => {
+    if (!owns(ctx)) return;
     const message = event.message as unknown as { role?: string; stopReason?: string };
     // The latest response decides the outcome, so a retried error is replaced
     // by its successful retry.
@@ -71,23 +81,27 @@ export default function (pi: ExtensionAPI) {
     report();
   });
 
-  pi.on("agent_settled", (event) => {
+  pi.on("agent_settled", (event, ctx) => {
+    if (!owns(ctx)) return;
     runActive = false;
     resting = event.aborted ? "idle" : runResult;
     report();
   });
 
-  pi.on("ui_prompt_start", () => {
+  pi.on("ui_prompt_start", (_event, ctx) => {
+    if (!owns(ctx)) return;
     blocked = true;
     report();
   });
 
-  pi.on("ui_prompt_end", () => {
+  pi.on("ui_prompt_end", (_event, ctx) => {
+    if (!owns(ctx)) return;
     blocked = false;
     report();
   });
 
-  pi.on("session_start", () => {
+  pi.on("session_start", (_event, ctx) => {
+    if (!owns(ctx)) return;
     runActive = false;
     runResult = "done";
     resting = "idle";
@@ -96,5 +110,13 @@ export default function (pi: ExtensionAPI) {
     report();
   });
 
-  pi.on("session_shutdown", () => void clear());
+  pi.on("session_shutdown", async (_event, ctx) => {
+    if (!owns(ctx) || last === undefined) return;
+    if (inFlight) await inFlight;
+    const current = await run(["show-option", "-w", "-t", pane, "-v", OPTION]);
+    // Another process may own the option by now; never clear what we did not write.
+    if (current?.stdout.trim() !== last) return;
+    last = undefined;
+    await run(["set-option", "-w", "-t", pane, "-u", OPTION]);
+  });
 }
