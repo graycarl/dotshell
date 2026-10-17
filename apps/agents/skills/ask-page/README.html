@@ -1,0 +1,823 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ask-page · 设计说明</title>
+<style>
+  :root{
+    --accent:#2f6fed; --accent-soft:rgba(47,111,237,.10);
+    --bg:#f5f6f9; --fg:#14171d; --muted:#666e7d; --line:rgba(0,0,0,.11);
+    --card:#fff; --code-bg:#f1f2f6; --ok:#1a7f37; --warn:#b8860b; --bad:#c0392b;
+    --disk:#7a4dd6; --browser:#0e9f8a;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --accent:#6f9bff; --accent-soft:rgba(111,155,255,.14);
+      --bg:#0e1015; --fg:#e7e9ee; --muted:#9aa3b2; --line:rgba(255,255,255,.13);
+      --card:#161920; --code-bg:#1d2129; --ok:#4fd07a; --warn:#e0b24a; --bad:#f0705f;
+      --disk:#b18cff; --browser:#43cdb8;
+    }
+  }
+  html{color-scheme:light dark; scroll-behavior:smooth}
+  *{box-sizing:border-box}
+  body{
+    margin:0;background:var(--bg);color:var(--fg);
+    font:15.5px/1.72 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  code,pre,kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  code{background:var(--code-bg);padding:.12em .4em;border-radius:5px;font-size:.88em}
+  pre{background:var(--code-bg);border:1px solid var(--line);border-radius:11px;padding:14px 16px;overflow:auto;font-size:13.2px;line-height:1.62}
+  pre code{background:none;padding:0}
+  a{color:var(--accent)}
+
+  .hero{border-bottom:1px solid var(--line);background:
+    radial-gradient(1200px 320px at 12% -40%, var(--accent-soft), transparent 70%);}
+  .hero-in{max-width:1080px;margin:0 auto;padding:52px 26px 34px}
+  .eyebrow{font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted)}
+  .hero h1{margin:10px 0 8px;font-size:clamp(28px,4.4vw,42px);letter-spacing:-.02em;line-height:1.15}
+  .hero p.lede{margin:0;max-width:72ch;color:var(--muted);font-size:16.5px}
+  .chips{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px}
+  .chip{font-size:12.5px;padding:5px 12px;border:1px solid var(--line);border-radius:999px;background:var(--card);color:var(--muted)}
+  .chip b{color:var(--fg);font-weight:600}
+
+  nav.toc{position:sticky;top:0;z-index:30;background:color-mix(in srgb,var(--bg) 86%,transparent);
+    backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+  .toc-in{max-width:1080px;margin:0 auto;padding:10px 26px;display:flex;gap:6px;overflow-x:auto;scrollbar-width:none}
+  .toc-in::-webkit-scrollbar{display:none}
+  .toc a{flex:none;text-decoration:none;color:var(--muted);font-size:13px;padding:5px 10px;border-radius:8px}
+  .toc a:hover{color:var(--fg);background:var(--accent-soft)}
+
+  main{max-width:1080px;margin:0 auto;padding:34px 26px 90px}
+  section{margin:0 0 46px;scroll-margin-top:64px}
+  h2{font-size:23px;letter-spacing:-.012em;margin:0 0 6px;display:flex;align-items:baseline;gap:11px}
+  h2 .n{font-size:13px;color:var(--accent);font-weight:700;font-variant-numeric:tabular-nums;
+    border:1px solid var(--line);border-radius:8px;padding:1px 8px;background:var(--card)}
+  h3{font-size:16.5px;margin:26px 0 8px}
+  .sec-sub{color:var(--muted);margin:0 0 18px;max-width:78ch}
+  p{margin:11px 0}
+  ul,ol{padding-left:22px;margin:10px 0}
+  li{margin:5px 0}
+  figure{margin:20px 0;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 18px 12px}
+  figcaption{font-size:12.8px;color:var(--muted);margin-top:8px;text-align:center}
+  svg{display:block;width:100%;height:auto;overflow:visible}
+  table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  th,td{border-bottom:1px solid var(--line);padding:9px 12px;text-align:left;vertical-align:top}
+  th{background:color-mix(in srgb,var(--fg) 4%,transparent);font-size:13px;letter-spacing:.02em}
+  tr:last-child td{border-bottom:none}
+
+  .grid{display:grid;gap:14px}
+  .g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+  .g3{grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:15px 17px}
+  .card .tag{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+  .card h4{margin:6px 0 6px;font-size:15px}
+  .card p{margin:0;color:var(--muted);font-size:14px}
+  .card.accent{border-color:color-mix(in srgb,var(--accent) 45%,var(--line));background:linear-gradient(180deg,var(--accent-soft),transparent)}
+  .callout{border-left:3px solid var(--accent);background:var(--accent-soft);padding:11px 15px;border-radius:0 10px 10px 0;margin:16px 0}
+  .callout.warn{border-color:var(--warn);background:color-mix(in srgb,var(--warn) 11%,transparent)}
+  .callout.ok{border-color:var(--ok);background:color-mix(in srgb,var(--ok) 11%,transparent)}
+  .kbd{font-size:12px;border:1px solid var(--line);border-bottom-width:2px;border-radius:6px;padding:1px 6px;background:var(--card)}
+  footer{border-top:1px solid var(--line);color:var(--muted);font-size:13px;text-align:center;padding:26px}
+
+  /* annotated export sample */
+  .anatomy{position:relative;background:var(--code-bg);border:1px solid var(--line);border-radius:12px;padding:16px 18px;font:13px/1.75 ui-monospace,Menlo,monospace;overflow:auto}
+  .anatomy .ln{display:block;white-space:pre}
+  .anatomy .hl-sent{color:var(--muted)}
+  .anatomy .hl-dec{color:var(--accent);font-weight:700}
+  .anatomy .hl-head{color:var(--ok);font-weight:700}
+  .anatomy .hl-quote{color:var(--warn)}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;margin-top:10px;font-size:12.5px;color:var(--muted)}
+  .legend i{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:6px}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="hero-in">
+    <div class="eyebrow">skill · ask-page</div>
+    <h1>一份 HTML，<br>把「审阅」从终端里拿出来</h1>
+    <p class="lede">
+      Agent 写正文 → 脚本拼成一份<b>自包含的本地网页</b> → 用户在浏览器里逐条批注、给结论 →
+      点「复制结果」→ 粘回对话。没有服务进程、没有端口、没有令牌，产物就是<b>一个文件</b>。
+    </p>
+    <div class="chips">
+      <span class="chip">产物 <b>单文件 HTML</b></span>
+      <span class="chip">草稿在 <b>localStorage</b></span>
+      <span class="chip">回传靠 <b>剪贴板 paste</b></span>
+      <span class="chip"><b>零</b> 端口 / 进程 / 依赖</span>
+      <span class="chip">离线可用 · <b>无 CDN</b></span>
+    </div>
+  </div>
+</header>
+
+<nav class="toc"><div class="toc-in">
+  <a href="#why">① 为什么</a>
+  <a href="#shape">② 形状</a>
+  <a href="#flow">③ 时序</a>
+  <a href="#build">④ 怎么拼出来</a>
+  <a href="#lost">⑤ 失去了什么</a>
+  <a href="#draft">⑥ 草稿模型</a>
+  <a href="#export">⑦ 导出格式</a>
+  <a href="#rounds">⑧ 多轮迭代</a>
+  <a href="#markers">⑨ 页面标记</a>
+  <a href="#storage">⑩ localStorage 现实</a>
+  <a href="#clipboard">⑪ 剪贴板降级</a>
+  <a href="#tradeoffs">⑫ 取舍与坑</a>
+</div></nav>
+
+<main>
+
+<!-- ═══════════ 1 why ═══════════ -->
+<section id="why">
+  <h2><span class="n">01</span>为什么要有它</h2>
+  <p class="sec-sub">终端适合「一问一答」，不适合「审阅」。凡是需要<b>读长文、逐条标注、来回比对</b>的确认动作，塞进 TUI 都会变形。</p>
+
+  <figure>
+    <svg viewBox="0 0 940 292" role="img" aria-label="终端与网页两种确认方式">
+      <defs>
+        <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+        </marker>
+      </defs>
+      <rect x="14" y="24" width="380" height="236" rx="13" fill="var(--code-bg)" stroke="var(--line)"/>
+      <rect x="14" y="24" width="380" height="30" rx="13" fill="color-mix(in srgb,var(--fg) 6%,transparent)"/>
+      <circle cx="34" cy="39" r="4.5" fill="var(--bad)"/><circle cx="50" cy="39" r="4.5" fill="var(--warn)"/><circle cx="66" cy="39" r="4.5" fill="var(--ok)"/>
+      <text x="90" y="44" font-size="12.5" fill="var(--muted)">terminal · TUI</text>
+      <text x="34" y="84" font-size="13" fill="var(--fg)" font-family="ui-monospace,Menlo,monospace">A) 通过   B) 需要修改   C) 否决</text>
+      <text x="34" y="112" font-size="13" fill="var(--muted)" font-family="ui-monospace,Menlo,monospace">&gt; ⏎</text>
+      <text x="34" y="156" font-size="12.6" fill="var(--bad)">✗ 长文档滚不动、diff 看不清</text>
+      <text x="34" y="180" font-size="12.6" fill="var(--bad)">✗ 第 3 段有意见 → 只能整段复述</text>
+      <text x="34" y="204" font-size="12.6" fill="var(--bad)">✗ 一次只能问一件事</text>
+      <text x="34" y="228" font-size="12.6" fill="var(--muted)">✗ 结论和理由容易混成一坨</text>
+      <text x="205" y="16" font-size="12.5" fill="var(--muted)" text-anchor="middle">一句话能问清 → 用 ask_user</text>
+
+      <path d="M408 142 L516 142" stroke="var(--muted)" stroke-width="1.6" marker-end="url(#a1)" stroke-dasharray="5 4"/>
+      <text x="462" y="132" font-size="12" fill="var(--muted)" text-anchor="middle">内容变“重”</text>
+
+      <rect x="544" y="24" width="382" height="236" rx="13" fill="var(--card)" stroke="var(--accent)" stroke-width="1.5"/>
+      <rect x="544" y="24" width="382" height="30" rx="13" fill="var(--accent-soft)"/>
+      <text x="564" y="44" font-size="12.5" fill="var(--accent)">file:///…/plan.html · 浏览器标签页</text>
+      <rect x="564" y="70" width="230" height="15" rx="5" fill="color-mix(in srgb,var(--fg) 13%,transparent)"/>
+      <rect x="564" y="96" width="200" height="10" rx="4" fill="color-mix(in srgb,var(--fg) 9%,transparent)"/>
+      <rect x="564" y="96" width="70" height="10" rx="4" fill="color-mix(in srgb,var(--accent) 45%,transparent)"/>
+      <rect x="564" y="118" width="230" height="10" rx="4" fill="color-mix(in srgb,var(--fg) 9%,transparent)"/>
+      <rect x="564" y="140" width="230" height="44" rx="8" fill="var(--code-bg)" stroke="var(--line)"/>
+      <text x="576" y="158" font-size="11.5" fill="var(--ok)" font-family="ui-monospace,Menlo,monospace">+ added line</text>
+      <text x="576" y="175" font-size="11.5" fill="var(--bad)" font-family="ui-monospace,Menlo,monospace">- removed line</text>
+      <rect x="810" y="70" width="98" height="114" rx="10" fill="var(--code-bg)" stroke="var(--line)"/>
+      <text x="859" y="90" font-size="11" fill="var(--muted)" text-anchor="middle">批注 2 条</text>
+      <rect x="820" y="100" width="78" height="24" rx="6" fill="var(--card)" stroke="var(--line)"/>
+      <rect x="820" y="130" width="78" height="24" rx="6" fill="var(--card)" stroke="var(--line)"/>
+      <rect x="820" y="160" width="78" height="20" rx="6" fill="none" stroke="var(--line)" stroke-dasharray="3 3"/>
+      <rect x="564" y="200" width="344" height="36" rx="9" fill="var(--code-bg)" stroke="var(--line)"/>
+      <text x="578" y="223" font-size="12" fill="var(--fg)">通过 · 需要修改 · 否决</text>
+      <rect x="852" y="206" width="52" height="24" rx="7" fill="var(--accent)"/>
+      <text x="878" y="223" font-size="12" fill="#fff" text-anchor="middle">复制</text>
+      <text x="735" y="279" font-size="11.5" fill="var(--muted)" text-anchor="middle">点「复制结果」→ 剪贴板里是一段 Markdown → 粘回对话</text>
+      <text x="735" y="16" font-size="12.5" fill="var(--muted)" text-anchor="middle">长内容 + 逐条批注 → 用 ask-page</text>
+    </svg>
+    <figcaption>图 1 · 同一件事，两种通道。ask-page 负责「重」的那一侧，并且把结果送回对话。</figcaption>
+  </figure>
+
+  <div class="grid g2">
+    <div class="card accent"><span class="tag">进入 ask-page</span>
+      <h4>内容需要「被审阅」</h4>
+      <p>方案 / 计划 / 文档 / diff / 报告要用户拍板，或需要逐条写批注、圈重点。</p></div>
+    <div class="card"><span class="tag">留在终端</span>
+      <h4>只需要「一个答案」</h4>
+      <p>要么 A 要么 B、需要一小段文字或一个文件名 —— 直接问，或 <code>ask_user</code>。</p></div>
+  </div>
+
+  <div class="callout warn"><b>不要为了用而用。</b>起页面、开浏览器、切窗口粘贴，这一串动作本身就是成本；一句话能问清楚就别用。</div>
+</section>
+
+<!-- ═══════════ 2 shape ═══════════ -->
+<section id="shape">
+  <h2><span class="n">02</span>整体形状：一条闭环，没有中间件</h2>
+  <p class="sec-sub">上一版是「CLI + HTTP 服务 + 浏览器 + 轮询」，这一版把中间那两层全删了：<b>文件系统是唯一的交接点</b>。</p>
+
+  <figure>
+    <svg viewBox="0 0 940 300" role="img" aria-label="ask-page 的闭环流水线">
+      <defs>
+        <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/>
+        </marker>
+        <marker id="a2m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+        </marker>
+      </defs>
+
+      <text x="20" y="26" font-size="11.5" fill="var(--muted)">生成期</text>
+      <rect x="20" y="36" width="190" height="72" rx="12" fill="var(--card)" stroke="var(--line)"/>
+      <text x="115" y="62" font-size="13.5" font-weight="700" fill="var(--fg)" text-anchor="middle">Agent 写正文</text>
+      <text x="115" y="82" font-size="11.5" fill="var(--muted)" text-anchor="middle">plan.body.html</text>
+      <text x="115" y="99" font-size="11" fill="var(--muted)" text-anchor="middle">只有内容，没有机制</text>
+
+      <path d="M212 72 L252 72" stroke="var(--accent)" stroke-width="1.7" marker-end="url(#a2)"/>
+
+      <rect x="254" y="36" width="190" height="72" rx="12" fill="var(--card)" stroke="var(--line)"/>
+      <text x="349" y="62" font-size="13.5" font-weight="700" fill="var(--fg)" text-anchor="middle">new 拼装</text>
+      <text x="349" y="82" font-size="11.5" fill="var(--muted)" text-anchor="middle">内联 css + js</text>
+      <text x="349" y="99" font-size="11" fill="var(--muted)" text-anchor="middle">注入 pageId / 标题</text>
+
+      <path d="M446 72 L486 72" stroke="var(--accent)" stroke-width="1.7" marker-end="url(#a2)"/>
+
+      <rect x="488" y="36" width="190" height="72" rx="12" fill="var(--code-bg)" stroke="var(--line)"/>
+      <text x="583" y="62" font-size="13.5" font-weight="700" fill="var(--fg)" text-anchor="middle">plan.html</text>
+      <text x="583" y="82" font-size="11.5" fill="var(--muted)" text-anchor="middle">单文件 · 自包含</text>
+      <text x="583" y="99" font-size="11" fill="var(--muted)" text-anchor="middle">~40 KB</text>
+
+      <path d="M680 72 L720 72" stroke="var(--accent)" stroke-width="1.7" marker-end="url(#a2)"/>
+
+      <rect x="722" y="36" width="198" height="72" rx="12" fill="var(--card)" stroke="var(--browser)" stroke-width="1.5"/>
+      <text x="821" y="62" font-size="13.5" font-weight="700" fill="var(--browser)" text-anchor="middle">浏览器打开</text>
+      <text x="821" y="82" font-size="11.5" fill="var(--muted)" text-anchor="middle">file:// 本地路径</text>
+      <text x="821" y="99" font-size="11" fill="var(--muted)" text-anchor="middle">不需要联网</text>
+
+      <text x="20" y="158" font-size="11.5" fill="var(--muted)">审阅期 → 回传期</text>
+      <rect x="722" y="168" width="198" height="76" rx="12" fill="var(--card)" stroke="var(--browser)" stroke-width="1.5"/>
+      <text x="821" y="194" font-size="13.5" font-weight="700" fill="var(--browser)" text-anchor="middle">批注 + 结论</text>
+      <text x="821" y="214" font-size="11.5" fill="var(--muted)" text-anchor="middle">写进 localStorage</text>
+      <text x="821" y="232" font-size="11.5" fill="var(--muted)" text-anchor="middle">点「复制结果」</text>
+
+      <path d="M821 112 L821 164" stroke="var(--accent)" stroke-width="1.7" marker-end="url(#a2)"/>
+      <path d="M718 206 L640 206" stroke="var(--accent)" stroke-width="1.7" marker-end="url(#a2)"/>
+
+      <rect x="440" y="168" width="196" height="76" rx="12" fill="var(--accent-soft)" stroke="var(--accent)"/>
+      <text x="538" y="194" font-size="13.5" font-weight="700" fill="var(--accent)" text-anchor="middle">剪贴板</text>
+      <text x="538" y="214" font-size="11.5" fill="var(--muted)" text-anchor="middle">一段带哨兵的 Markdown</text>
+      <text x="538" y="232" font-size="11.5" fill="var(--muted)" text-anchor="middle">没有 JSON、没有文件</text>
+
+      <path d="M436 206 L356 206" stroke="var(--accent)" stroke-width="1.7" marker-end="url(#a2)"/>
+
+      <rect x="158" y="168" width="196" height="76" rx="12" fill="var(--card)" stroke="var(--line)"/>
+      <text x="256" y="194" font-size="13.5" font-weight="700" fill="var(--fg)" text-anchor="middle">粘回对话</text>
+      <text x="256" y="214" font-size="11.5" fill="var(--muted)" text-anchor="middle">用户按 ⌘V</text>
+      <text x="256" y="232" font-size="11.5" fill="var(--muted)" text-anchor="middle">三条规则解析</text>
+
+      <path d="M154 206 L120 206 L120 112" fill="none" stroke="var(--muted)" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#a2m)"/>
+
+      <text x="470" y="282" font-size="11.5" fill="var(--muted)" text-anchor="middle">整个链路里唯一活着的进程是浏览器标签页；agent 的工作是「写完就结束本轮」</text>
+    </svg>
+    <figcaption>图 2 · 生成 → 审阅 → 复制 → 粘贴 → 解析，闭环回到 agent。</figcaption>
+  </figure>
+
+  <div class="grid g3">
+    <div class="card"><span class="tag">交接点 ①</span><h4>磁盘</h4><p><code>plan.body.html</code>（你写的）和 <code>plan.html</code>（产物）。没有共享状态、没有数据库。</p></div>
+    <div class="card"><span class="tag">交接点 ②</span><h4>剪贴板</h4><p>浏览器写、用户读、对话收。它是唯一「结构化结果」跨越进程的方式。</p></div>
+    <div class="card accent"><span class="tag">核心</span><h4>没有中间件</h4><p>没有端口、令牌、Origin 校验、状态机、退出码、daemon 和归档。</p></div>
+  </div>
+</section>
+
+<!-- ═══════════ 3 flow ═══════════ -->
+<section id="flow">
+  <h2><span class="n">03</span>一次确认的时序：四条泳道</h2>
+  <p class="sec-sub">注意第 ③ 步之后 agent 就<b>结束了本轮</b>。这里没有「等待」，因为已经没有东西可以等 —— 用户的下一条消息就是结果。</p>
+
+  <figure>
+    <svg viewBox="0 0 940 486" role="img" aria-label="一次确认的时序图">
+      <defs>
+        <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/>
+        </marker>
+        <marker id="a3m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+        </marker>
+      </defs>
+
+      <g fill="var(--fg)" font-size="12.5" text-anchor="middle">
+        <rect x="34" y="12" width="140" height="30" rx="8" fill="var(--card)" stroke="var(--line)"/><text x="104" y="32">Agent</text>
+        <rect x="252" y="12" width="150" height="30" rx="8" fill="var(--card)" stroke="var(--disk)"/><text x="327" y="32" fill="var(--disk)">磁盘</text>
+        <rect x="486" y="12" width="180" height="30" rx="8" fill="var(--card)" stroke="var(--browser)"/><text x="576" y="32" fill="var(--browser)">浏览器标签页</text>
+        <rect x="748" y="12" width="160" height="30" rx="8" fill="var(--card)" stroke="var(--line)"/><text x="828" y="32">对话</text>
+      </g>
+      <g stroke="var(--line)" stroke-width="1.4" stroke-dasharray="4 5">
+        <path d="M104 42 L104 462"/><path d="M327 42 L327 462"/><path d="M576 42 L576 462"/><path d="M828 42 L828 462"/>
+      </g>
+
+      <g font-size="12" fill="var(--fg)">
+        <path d="M104 74 L320 74" stroke="var(--accent)" stroke-width="1.7" marker-end="url(#a3)"/>
+        <text x="212" y="67" text-anchor="middle">① 写 plan.body.html（正文）</text>
+
+        <path d="M104 110 L320 110" stroke="var(--accent)" stroke-width="1.7" marker-end="url(#a3)"/>
+        <text x="212" y="103" text-anchor="middle">② new plan --open</text>
+
+        <rect x="252" y="126" width="150" height="26" rx="7" fill="var(--code-bg)" stroke="var(--line)"/>
+        <text x="327" y="144" text-anchor="middle" font-size="11">plan.html（40 KB）</text>
+
+        <path d="M327 170 L568 170" stroke="var(--disk)" stroke-width="1.7" marker-end="url(#a3m)"/>
+        <text x="448" y="163" text-anchor="middle">③ open file://…</text>
+
+        <text x="590" y="204" fill="var(--browser)">④ 用户阅读 → 逐条批注</text>
+        <text x="590" y="222" fill="var(--browser)">选择结论 → 点「复制结果」</text>
+
+        <rect x="486" y="238" width="180" height="26" rx="7" fill="var(--accent-soft)" stroke="var(--line)"/>
+        <text x="576" y="256" text-anchor="middle" font-size="11">剪贴板 = 一段 Markdown</text>
+
+        <path d="M584 288 L820 288" stroke="var(--accent)" stroke-width="1.7" marker-end="url(#a3)"/>
+        <text x="702" y="281" text-anchor="middle">⑤ 用户 ⌘V 粘进对话</text>
+
+        <path d="M828 330 L112 330" stroke="var(--muted)" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#a3m)"/>
+        <text x="470" y="323" text-anchor="middle" fill="var(--muted)">⑥ 下一轮：agent 收到这段话</text>
+
+        <rect x="34" y="346" width="140" height="26" rx="7" fill="var(--accent-soft)" stroke="var(--line)"/>
+        <text x="104" y="364" text-anchor="middle" font-size="11">解析三条规则</text>
+
+        <path d="M104 394 L320 394" stroke="var(--accent)" stroke-width="1.7" marker-end="url(#a3)"/>
+        <text x="212" y="387" text-anchor="middle">⑦ 改进正文 → new → 回到 ①</text>
+      </g>
+      <text x="104" y="430" text-anchor="middle" font-size="11" fill="var(--muted)">继续干活</text>
+      <text x="640" y="430" text-anchor="middle" font-size="11" fill="var(--muted)">「结束本轮」不是中断，而是这套设计的正常出口</text>
+    </svg>
+    <figcaption>图 3 · 没有等待，也没有超时：用户不说话，就是还没看完。</figcaption>
+  </figure>
+</section>
+
+<!-- ═══════════ 4 build ═══════════ -->
+<section id="build">
+  <h2><span class="n">04</span>怎么拼出来：三个源文件 → 一个产物</h2>
+  <p class="sec-sub">机制（CSS/JS）和内容分开存放，但产物必须是<b>一个文件</b> —— 这样它才能被随便拷贝、邮件、放进归档。</p>
+
+  <figure>
+    <svg viewBox="0 0 940 250" role="img" aria-label="内联拼装过程">
+      <defs>
+        <marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+        </marker>
+      </defs>
+      <rect x="20" y="30" width="200" height="48" rx="10" fill="var(--card)" stroke="var(--line)"/>
+      <text x="120" y="50" font-size="12" font-weight="700" fill="var(--fg)" text-anchor="middle">template.html</text>
+      <text x="120" y="67" font-size="10.5" fill="var(--muted)" text-anchor="middle">骨架 + 两个占位</text>
+
+      <rect x="20" y="90" width="200" height="48" rx="10" fill="var(--card)" stroke="var(--line)"/>
+      <text x="120" y="110" font-size="12" font-weight="700" fill="var(--fg)" text-anchor="middle">ask-page.css</text>
+      <text x="120" y="127" font-size="10.5" fill="var(--muted)" text-anchor="middle">样式（可读可改）</text>
+
+      <rect x="20" y="150" width="200" height="48" rx="10" fill="var(--card)" stroke="var(--line)"/>
+      <text x="120" y="170" font-size="12" font-weight="700" fill="var(--fg)" text-anchor="middle">ask-page.js</text>
+      <text x="120" y="187" font-size="10.5" fill="var(--muted)" text-anchor="middle">交互逻辑（可读可改）</text>
+
+      <rect x="20" y="210" width="200" height="26" rx="8" fill="var(--accent-soft)" stroke="var(--line)"/>
+      <text x="120" y="228" font-size="11" fill="var(--accent)" text-anchor="middle">plan.body.html（agent 写的）</text>
+
+      <path d="M224 54 L300 90" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#a4)"/>
+      <path d="M224 114 L300 114" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#a4)"/>
+      <path d="M224 174 L300 138" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#a4)"/>
+      <path d="M224 223 L300 176" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#a4)"/>
+
+      <rect x="304" y="70" width="150" height="116" rx="12" fill="var(--card)" stroke="var(--accent)" stroke-width="1.6"/>
+      <text x="379" y="102" font-size="13" font-weight="700" fill="var(--accent)" text-anchor="middle">ask_page.py new</text>
+      <text x="379" y="124" font-size="10.8" fill="var(--muted)" text-anchor="middle">字符串拼接</text>
+      <text x="379" y="142" font-size="10.8" fill="var(--muted)" text-anchor="middle">内容最后塞入</text>
+      <text x="379" y="160" font-size="10.8" fill="var(--muted)" text-anchor="middle">不执行、不联网</text>
+
+      <path d="M458 128 L520 128" stroke="var(--accent)" stroke-width="1.7" marker-end="url(#a4)"/>
+
+      <rect x="524" y="40" width="250" height="178" rx="12" fill="var(--code-bg)" stroke="var(--line)"/>
+      <text x="649" y="64" font-size="12.5" font-weight="700" fill="var(--fg)" text-anchor="middle">plan.html</text>
+      <rect x="544" y="76" width="210" height="26" rx="6" fill="var(--card)" stroke="var(--line)"/>
+      <text x="649" y="93" font-size="10.5" fill="var(--muted)" text-anchor="middle">&lt;style&gt; 内联 CSS</text>
+      <rect x="544" y="108" width="210" height="40" rx="6" fill="var(--card)" stroke="var(--line)"/>
+      <text x="649" y="125" font-size="10.5" fill="var(--muted)" text-anchor="middle">正文（你的内容）</text>
+      <text x="649" y="140" font-size="10" fill="var(--muted)" text-anchor="middle">data-page-id="plan"</text>
+      <rect x="544" y="154" width="210" height="26" rx="6" fill="var(--card)" stroke="var(--line)"/>
+      <text x="649" y="171" font-size="10.5" fill="var(--muted)" text-anchor="middle">&lt;script&gt; 内联 JS</text>
+      <text x="649" y="200" font-size="10.5" fill="var(--accent)" text-anchor="middle">一个文件，没有外链</text>
+
+      <g font-size="11.5" fill="var(--fg)">
+        <text x="786" y="70" font-weight="700">为什么这样拆</text>
+        <text x="786" y="94" font-size="11" fill="var(--muted)">· agent 只写 1–3 KB 正文</text>
+        <text x="786" y="114" font-size="11" fill="var(--muted)">· 不必读 40 KB 模板</text>
+        <text x="786" y="134" font-size="11" fill="var(--muted)">· 机制不会被改坏</text>
+        <text x="786" y="154" font-size="11" fill="var(--muted)">· 产物仍是单文件</text>
+      </g>
+    </svg>
+    <figcaption>图 4 · 维护时改源码，交付时只有一个 HTML。</figcaption>
+  </figure>
+
+  <div class="callout warn"><b>一个真实的坑：</b>内联脚本里如果出现字面量 <code>&lt;/script&gt;</code>（哪怕在注释里），HTML 解析器会当场截断脚本，页面静默失效。<code>ask_page.py</code> 在构建时会检查并直接报错。</div>
+</section>
+
+<!-- ═══════════ 5 lost ═══════════ -->
+<section id="lost">
+  <h2><span class="n">05</span>删掉 server，失去了什么、换回了什么</h2>
+  <p class="sec-sub">上一版的能力不是白来的 —— 每一项都绑着端口、令牌和进程。这里逐项算账。</p>
+
+  <figure>
+    <svg viewBox="0 0 940 300" role="img" aria-label="能力对比">
+      <g font-size="11.5" fill="var(--muted)">
+        <text x="20" y="24">能力</text>
+        <text x="250" y="24">有 server 时</text>
+        <text x="560" y="24">现在</text>
+      </g>
+      <g font-size="11.8">
+        <!-- rows -->
+        <rect x="14" y="38" width="912" height="56" rx="9" fill="var(--card)" stroke="var(--line)"/>
+        <text x="24" y="70" fill="var(--fg)" font-weight="700">结果回传</text>
+        <text x="250" y="64" fill="var(--ok)">✓ 写入 result.json，CLI 轮询</text>
+        <text x="250" y="82" fill="var(--muted)">agent 自动拿到 → exit 0</text>
+        <text x="560" y="64" fill="var(--warn)">~ 用户点复制、粘回对话</text>
+        <text x="560" y="82" fill="var(--muted)">多一次人工动作，但不需要进程</text>
+
+        <rect x="14" y="102" width="912" height="56" rx="9" fill="var(--card)" stroke="var(--line)"/>
+        <text x="24" y="134" fill="var(--fg)" font-weight="700">图片 / 附件</text>
+        <text x="250" y="128" fill="var(--ok)">✓ 上传落盘，回传绝对路径</text>
+        <text x="250" y="146" fill="var(--muted)">agent 可直接 read</text>
+        <text x="560" y="128" fill="var(--bad)">✗ 页面不做</text>
+        <text x="560" y="146" fill="var(--muted)">截图直接在对话里贴 —— 那是原生通道</text>
+
+        <rect x="14" y="166" width="912" height="56" rx="9" fill="var(--card)" stroke="var(--line)"/>
+        <text x="24" y="198" fill="var(--fg)" font-weight="700">内容刷新</text>
+        <text x="250" y="192" fill="var(--ok)">✓ 浏览器 1.5s 轮询 /pi/state</text>
+        <text x="250" y="210" fill="var(--muted)">同端口复用，标签页自动 reload</text>
+        <text x="560" y="192" fill="var(--warn)">~ 点「↻ 载入最新内容」</text>
+        <text x="560" y="210" fill="var(--muted)">file:// 下无法监视文件变化</text>
+
+        <rect x="14" y="230" width="912" height="56" rx="9" fill="var(--card)" stroke="var(--line)"/>
+        <text x="24" y="262" fill="var(--fg)" font-weight="700">运行期错误</text>
+        <text x="250" y="256" fill="var(--ok)">✓ 超时 / 中止 / 页面失效</text>
+        <text x="250" y="274" fill="var(--muted)">都有明确退出码</text>
+        <text x="560" y="256" fill="var(--muted)">✗ 不存在这些状态</text>
+        <text x="560" y="274" fill="var(--muted)">没有进程，就没有超时</text>
+      </g>
+    </svg>
+    <figcaption>图 5 · 三项能力消失、一项降级 —— 换来的是零依赖。</figcaption>
+  </figure>
+
+  <div class="callout ok"><b>换回来的东西同样实在：</b>不用开端口（不会被防火墙/公司策略拦）、不用管令牌（URL 不再是秘密）、不会残留 daemon、不用清理状态目录、不用考虑并发和幂等 —— 因为这些问题的载体都不存在了。</div>
+</section>
+
+<!-- ═══════════ 6 draft ═══════════ -->
+<section id="draft">
+  <h2><span class="n">06</span>草稿模型：一张会演进的清单，不是一次性表单</h2>
+  <p class="sec-sub">用户的心智不是「提交一次表单」，而是<b>一张随页面演进的待办清单</b>：改好的删掉、没改好的留着、有新想法再加一条。所以草稿<b>跨轮次保留</b>，只有用户自己能删。</p>
+
+  <figure>
+    <svg viewBox="0 0 940 270" role="img" aria-label="草稿生命周期">
+      <defs>
+        <marker id="a6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+        </marker>
+      </defs>
+      <g font-size="12" text-anchor="middle">
+        <rect x="24" y="86" width="150" height="56" rx="11" fill="var(--card)" stroke="var(--line)"/>
+        <text x="99" y="110" fill="var(--fg)" font-weight="700">点击一段正文</text>
+        <text x="99" y="129" fill="var(--muted)" font-size="10.8">data-pi-anchor</text>
+
+        <rect x="222" y="86" width="150" height="56" rx="11" fill="var(--card)" stroke="var(--accent)"/>
+        <text x="297" y="110" fill="var(--accent)" font-weight="700">新增批注</text>
+        <text x="297" y="129" fill="var(--muted)" font-size="10.8">立即写 localStorage</text>
+
+        <rect x="420" y="86" width="150" height="56" rx="11" fill="var(--card)" stroke="var(--ok)"/>
+        <text x="495" y="110" fill="var(--ok)" font-weight="700">已提交</text>
+        <text x="495" y="129" fill="var(--muted)" font-size="10.8">点复制后打标记</text>
+
+        <rect x="618" y="86" width="140" height="56" rx="11" fill="var(--card)" stroke="var(--line)"/>
+        <text x="688" y="110" fill="var(--fg)" font-weight="700">仍然保留</text>
+        <text x="688" y="129" fill="var(--muted)" font-size="10.8">不自动清空</text>
+
+        <rect x="806" y="86" width="114" height="56" rx="11" fill="var(--card)" stroke="var(--line)" stroke-dasharray="4 4"/>
+        <text x="863" y="110" fill="var(--muted)" font-weight="700">用户删除</text>
+        <text x="863" y="129" fill="var(--muted)" font-size="10.8">或清空全部</text>
+      </g>
+      <g stroke="var(--muted)" stroke-width="1.5">
+        <path d="M176 114 L218 114" marker-end="url(#a6)"/>
+        <path d="M374 114 L416 114" marker-end="url(#a6)"/>
+        <path d="M572 114 L614 114" marker-end="url(#a6)"/>
+        <path d="M760 114 L802 114" marker-end="url(#a6)"/>
+      </g>
+      <path d="M495 146 L495 196 L297 196 L297 146" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#a6)"/>
+      <text x="396" y="216" font-size="11" fill="var(--accent)" text-anchor="middle">agent 改完重发页面 → 草稿仍在原位置</text>
+      <text x="470" y="44" font-size="11.5" fill="var(--muted)" text-anchor="middle">一条批注的一生 —— 注意「已提交」不等于「消失」</text>
+      <text x="470" y="256" font-size="11" fill="var(--muted)" text-anchor="middle">「已提交」只是一个视觉标记，提醒用户哪些已经发过了</text>
+    </svg>
+    <figcaption>图 6 · 删除权永远在用户手里；agent 不替用户清理。</figcaption>
+  </figure>
+
+  <div class="grid g2">
+    <div class="card"><span class="tag">机制</span><h4>每个变更立刻落盘</h4><p>没有「保存」按钮。加一条、删一条、改一次选择，都当场写回 localStorage，刷新不丢。</p></div>
+    <div class="card"><span class="tag">代价</span><h4>重复提交旧意见</h4><p>用户没删的批注会再次被导出。页面用「已提交」圆点和顶部横幅提示，导出后由用户自己判断要不要清掉。</p></div>
+  </div>
+
+  <div class="callout"><b>对 agent 的硬约束：</b>重写页面时 anchor 必须<b>稳定</b>（<code>plan-3</code> 永远指同一段话）。改了 anchor，用户的旧批注会变成「位置已失效」—— 它们仍会被导出，但位置信息丢了。</div>
+</section>
+
+<!-- ═══════════ 7 export ═══════════ -->
+<section id="export">
+  <h2><span class="n">07</span>导出格式：Markdown + 哨兵，没有 JSON</h2>
+  <p class="sec-sub">上一版必须有 JSON，因为消费者是 shell；现在消费者是 <b>LLM</b> —— 它读 Markdown 和读 JSON 一样准。少一份结构化副本，就少一半 token、也少一处可能不一致的地方。</p>
+
+  <figure>
+    <div class="anatomy">
+      <span class="ln hl-sent">&lt;!-- ask-page-result · pageId=plan · 2026-05-01T12:00Z --&gt;</span>
+      <span class="ln"> </span>
+      <span class="ln hl-dec">结论：需要修改（revise）</span>
+      <span class="ln"> </span>
+      <span class="ln hl-head">## 批注（2 条）</span>
+      <span class="ln"> </span>
+      <span class="ln hl-head">### [plan-3] 方案要点 3 · 回滚</span>
+      <span class="ln">这里要加回滚步骤</span>
+      <span class="ln"> </span>
+      <span class="ln hl-quote">&gt; 圈选原文：提交后直接切流量</span>
+      <span class="ln"> </span>
+      <span class="ln hl-head">### [summary] 摘要</span>
+      <span class="ln">这段没问题，但建议补一句适用范围</span>
+      <span class="ln"> </span>
+      <span class="ln hl-sent">&lt;!-- /ask-page-result --&gt;</span>
+    </div>
+    <div class="legend">
+      <span><i style="background:var(--muted)"></i>哨兵：界定「这是一份结果」</span>
+      <span><i style="background:var(--accent)"></i>结论：用户的判断</span>
+      <span><i style="background:var(--ok)"></i>批注块：<code>[anchor]</code> + 标签</span>
+      <span><i style="background:var(--warn)"></i>圈选原文：用户选中的句子</span>
+    </div>
+    <figcaption>图 7 · 解析只需三条规则，写在 SKILL.md 里就够。</figcaption>
+  </figure>
+
+  <h3>三条解析规则</h3>
+  <ol>
+    <li>取 <code>&lt;!-- ask-page-result</code> 与 <code>&lt;!-- /ask-page-result --&gt;</code> 之间的内容</li>
+    <li><code>结论：</code> 那一行是用户的选择（可能是 <code>未选择</code>，也可能是 <code>通过（approve）</code> 这种「标签（值）」）</li>
+    <li>每个 <code>### [锚点] 标签</code> 起一条批注：正文到下一个 <code>&gt;</code> 行 / 下一个 <code>### [</code> / 哨兵为止</li>
+  </ol>
+
+  <table>
+    <tr><th>情况</th><th>输出长什么样</th></tr>
+    <tr><td>只给结论、没写批注</td><td>只有 <code>结论：通过（approve）</code>，整个 <code>## 批注</code> 小节省略</td></tr>
+    <tr><td>完全没选结论</td><td><code>结论：未选择</code>，批注照常导出</td></tr>
+    <tr><td>anchor 在新页面里消失了</td><td>标题变成 <code>### [plan-9] 标签 ⚠ 位置已失效</code>，批注仍然导出</td></tr>
+    <tr><td>还有其他选择题</td><td>多一行 <code>其他选择：priority=high</code></td></tr>
+  </table>
+
+  <div class="callout"><b>为什么不给一个「纯 JSON」的兜底按钮？</b> 因为它会让 agent 有时拿到结构化、有时拿到文本，反而增加判断成本。出口只有一个，规则就只有一套。</div>
+</section>
+
+<!-- ═══════════ 8 rounds ═══════════ -->
+<section id="rounds">
+  <h2><span class="n">08</span>多轮迭代：同一个 id，手动刷新</h2>
+  <p class="sec-sub">没有 server 就没有推送。<code>file://</code> 下页面也无法监视磁盘变化（fetch 被 CORS 拦）。所以刷新是一件<b>显式</b>的事：改正文 → <code>new</code> → 点「↻」。</p>
+
+  <figure>
+    <svg viewBox="0 0 940 300" role="img" aria-label="多轮迭代时间线">
+      <defs>
+        <marker id="a8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/>
+        </marker>
+      </defs>
+      <path d="M50 214 L890 214" stroke="var(--line)" stroke-width="2"/>
+      <g font-size="11.5" fill="var(--muted)" text-anchor="middle">
+        <circle cx="130" cy="214" r="5" fill="var(--accent)"/><text x="130" y="238">new plan（v1）</text>
+        <circle cx="330" cy="214" r="5" fill="var(--ok)"/><text x="330" y="238">用户批注 + 复制</text>
+        <circle cx="530" cy="214" r="5" fill="var(--accent)"/><text x="530" y="238">改 body → new（v2）</text>
+        <circle cx="730" cy="214" r="5" fill="var(--browser)"/><text x="730" y="238">点 ↻ 载入最新内容</text>
+        <circle cx="860" cy="214" r="5" fill="var(--ok)"/><text x="860" y="238">再复制</text>
+      </g>
+
+      <rect x="40" y="30" width="860" height="86" rx="12" fill="var(--card)" stroke="var(--line)"/>
+      <text x="60" y="54" font-size="12" fill="var(--muted)">同一个 pageId · 同一个 localStorage key</text>
+      <rect x="60" y="64" width="250" height="40" rx="8" fill="var(--code-bg)" stroke="var(--line)"/>
+      <text x="185" y="89" font-size="11.5" fill="var(--fg)" text-anchor="middle">v1：3 条批注</text>
+      <rect x="340" y="64" width="250" height="40" rx="8" fill="var(--code-bg)" stroke="var(--line)"/>
+      <text x="465" y="82" font-size="11.5" fill="var(--fg)" text-anchor="middle">v2：内容变了，anchor 不变</text>
+      <text x="465" y="97" font-size="10.5" fill="var(--muted)" text-anchor="middle">3 条批注仍在原位</text>
+      <rect x="620" y="64" width="260" height="40" rx="8" fill="var(--accent-soft)" stroke="var(--accent)"/>
+      <text x="750" y="82" font-size="11.5" fill="var(--accent)" text-anchor="middle">用户删掉已改好的，补 1 条新的</text>
+      <text x="750" y="97" font-size="10.5" fill="var(--muted)" text-anchor="middle">然后再点复制</text>
+
+      <path d="M300 84 L336 84" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#a8)"/>
+      <path d="M590 84 L616 84" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#a8)"/>
+      <path d="M730 148 L730 208" stroke="var(--browser)" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#a8)"/>
+      <text x="470" y="278" font-size="11" fill="var(--muted)" text-anchor="middle">「↻ 载入最新内容」= location.replace(当前路径 + '?r=' + 时间戳)，绕过浏览器缓存重新读盘</text>
+    </svg>
+    <figcaption>图 8 · 换个 query string 是 <code>file://</code> 下唯一可靠的重载手段。</figcaption>
+  </figure>
+
+  <div class="callout warn"><b>不要给新版本换文件名。</b><code>plan-v2.html</code> 会让 pageId 变成 <code>plan-v2</code>，上一轮的草稿瞬间「人间蒸发」（其实还在，只是 key 对不上了）。id 和 anchor 都是<b>跨轮次契约</b>。</div>
+</section>
+
+<!-- ═══════════ 9 markers ═══════════ -->
+<section id="markers">
+  <h2><span class="n">09</span>页面怎么写：声明式标记</h2>
+  <p class="sec-sub">Agent 不写 JS。它只在正文里放 <code>data-pi-*</code> 标记，内联的脚本负责把标记变成交互、再变成导出文本。</p>
+
+  <figure>
+    <svg viewBox="0 0 940 330" role="img" aria-label="标记到导出结果的映射">
+      <defs>
+        <marker id="a9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/>
+        </marker>
+      </defs>
+      <text x="24" y="26" font-size="12.5" font-weight="700" fill="var(--muted)">你写的正文</text>
+      <text x="560" y="26" font-size="12.5" font-weight="700" fill="var(--muted)">导出结果里</text>
+
+      <g font-family="ui-monospace,Menlo,monospace" font-size="11.6">
+        <rect x="20" y="40" width="360" height="42" rx="9" fill="var(--code-bg)" stroke="var(--line)"/>
+        <text x="36" y="66" fill="var(--accent)">data-pi-anchor="plan-3"</text>
+        <rect x="20" y="94" width="360" height="42" rx="9" fill="var(--code-bg)" stroke="var(--line)"/>
+        <text x="36" y="120" fill="var(--accent)">data-pi-choice="decision"</text>
+        <rect x="20" y="148" width="360" height="42" rx="9" fill="var(--code-bg)" stroke="var(--line)"/>
+        <text x="36" y="174" fill="var(--accent)">data-pi-labels="通过 | 修改 | 否决"</text>
+        <rect x="20" y="202" width="360" height="42" rx="9" fill="var(--code-bg)" stroke="var(--line)"/>
+        <text x="36" y="228" fill="var(--accent)">data-pi-default="approve"</text>
+        <rect x="20" y="256" width="360" height="42" rx="9" fill="var(--code-bg)" stroke="var(--line)"/>
+        <text x="36" y="282" fill="var(--accent)">script[type="text/markdown"]</text>
+      </g>
+
+      <g stroke="var(--accent)" stroke-width="1.6" stroke-dasharray="5 4">
+        <path d="M382 61 L556 61" marker-end="url(#a9)"/>
+        <path d="M382 115 L556 115" marker-end="url(#a9)"/>
+        <path d="M382 169 L556 169" marker-end="url(#a9)"/>
+        <path d="M382 223 L556 223" marker-end="url(#a9)"/>
+        <path d="M382 277 L556 277" marker-end="url(#a9)"/>
+      </g>
+
+      <g font-family="ui-monospace,Menlo,monospace" font-size="11.2" fill="var(--fg)">
+        <rect x="560" y="40" width="356" height="42" rx="9" fill="var(--card)" stroke="var(--line)"/>
+        <text x="574" y="58">### [plan-3] 方案要点 3 · 回滚</text>
+        <text x="574" y="74" fill="var(--muted)">标签取该块首行文字，截 40 字</text>
+
+        <rect x="560" y="94" width="356" height="42" rx="9" fill="var(--card)" stroke="var(--line)"/>
+        <text x="574" y="112">结论：需要修改（revise）</text>
+        <text x="574" y="128" fill="var(--muted)">choices.decision → 首行</text>
+
+        <rect x="560" y="148" width="356" height="42" rx="9" fill="var(--card)" stroke="var(--line)"/>
+        <text x="574" y="166">通过 / 需要修改 / 否决</text>
+        <text x="574" y="182" fill="var(--muted)">按钮文案，值仍是 approve/revise/reject</text>
+
+        <rect x="560" y="202" width="356" height="42" rx="9" fill="var(--card)" stroke="var(--line)"/>
+        <text x="574" y="220">预选中，用户不改就按它导出</text>
+        <text x="574" y="236" fill="var(--muted)">加载时写入草稿</text>
+
+        <rect x="560" y="256" width="356" height="42" rx="9" fill="var(--card)" stroke="var(--line)"/>
+        <text x="574" y="274">就地渲染成 HTML</text>
+        <text x="574" y="290" fill="var(--muted)">约 60 行，离线、无依赖</text>
+      </g>
+    </svg>
+    <figcaption>图 9 · 标记只负责「交互」，导出格式由脚本统一生成。</figcaption>
+  </figure>
+
+  <div class="callout warn"><b>离线假设：</b>页面在 <code>file://</code> 下打开，<b>不要引用 CDN</b>；外部图片和 <code>plan.html</code> 放同一目录用相对路径。同理，<code>&lt;script type="module"&gt;</code> 在 <code>file://</code> 下会被 CORS 拦，所以脚本必须是普通 IIFE。</div>
+</section>
+
+<!-- ═══════════ 10 storage ═══════════ -->
+<section id="storage">
+  <h2><span class="n">10</span>localStorage 的现实：一个共享的 origin</h2>
+  <p class="sec-sub">实测：<code>file://</code> 下的 localStorage 可用，但<b>所有本地文件共享同一个 origin</b> —— A 页面写的 key，B 页面能读到。所以草稿必须按 pageId 做命名空间。</p>
+
+  <figure>
+    <svg viewBox="0 0 940 260" role="img" aria-label="file:// 共享 localStorage 与命名空间">
+      <defs>
+        <marker id="a10" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+        </marker>
+      </defs>
+      <rect x="24" y="40" width="180" height="44" rx="10" fill="var(--card)" stroke="var(--browser)"/>
+      <text x="114" y="67" font-size="11.5" fill="var(--browser)" text-anchor="middle" font-family="ui-monospace,Menlo,monospace">…/plan.html</text>
+      <rect x="24" y="100" width="180" height="44" rx="10" fill="var(--card)" stroke="var(--browser)"/>
+      <text x="114" y="127" font-size="11.5" fill="var(--browser)" text-anchor="middle" font-family="ui-monospace,Menlo,monospace">…/demo.html</text>
+      <rect x="24" y="160" width="180" height="44" rx="10" fill="var(--card)" stroke="var(--browser)"/>
+      <text x="114" y="187" font-size="11.5" fill="var(--browser)" text-anchor="middle" font-family="ui-monospace,Menlo,monospace">…/other.html</text>
+
+      <path d="M208 62 L330 108" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#a10)"/>
+      <path d="M208 122 L330 122" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#a10)"/>
+      <path d="M208 182 L330 136" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#a10)"/>
+
+      <rect x="334" y="34" width="330" height="182" rx="13" fill="var(--card)" stroke="var(--warn)" stroke-width="1.5"/>
+      <text x="499" y="58" font-size="12" fill="var(--warn)" text-anchor="middle" font-weight="700">origin: file://（同一个）</text>
+
+      <rect x="352" y="72" width="294" height="26" rx="6" fill="var(--code-bg)" stroke="var(--line)"/>
+      <text x="364" y="90" font-size="11" fill="var(--fg)" font-family="ui-monospace,Menlo,monospace">ask-page:plan   → {comments:[…]}</text>
+      <rect x="352" y="106" width="294" height="26" rx="6" fill="var(--code-bg)" stroke="var(--line)"/>
+      <text x="364" y="124" font-size="11" fill="var(--fg)" font-family="ui-monospace,Menlo,monospace">ask-page:demo   → {comments:[…]}</text>
+      <rect x="352" y="140" width="294" height="26" rx="6" fill="var(--code-bg)" stroke="var(--line)"/>
+      <text x="364" y="158" font-size="11" fill="var(--fg)" font-family="ui-monospace,Menlo,monospace">ask-page:other  → {comments:[…]}</text>
+      <text x="499" y="190" font-size="11" fill="var(--muted)" text-anchor="middle">key 里必须带 pageId，否则互相覆盖</text>
+
+      <rect x="704" y="34" width="210" height="182" rx="13" fill="var(--card)" stroke="var(--line)"/>
+      <text x="809" y="58" font-size="12" font-weight="700" fill="var(--fg)" text-anchor="middle">共享预算 ≈ 5 MB</text>
+      <text x="720" y="84" font-size="11" fill="var(--muted)">· 只存文本，够用很久</text>
+      <text x="720" y="106" font-size="11" fill="var(--muted)">· 存图会瞬间吃光</text>
+      <text x="720" y="128" font-size="11" fill="var(--muted)">· 满了 → 提示但可导出</text>
+      <text x="720" y="150" font-size="11" fill="var(--muted)">· 被禁用 → 内存兜底</text>
+
+      <text x="470" y="242" font-size="11" fill="var(--muted)" text-anchor="middle">这也是「id 不能随便换」的技术原因之一：换 id 就等于换 key。</text>
+    </svg>
+    <figcaption>图 10 · 共享 origin 是 <code>file://</code> 的固有特性，不是我们的选择。</figcaption>
+  </figure>
+
+  <div class="callout"><b>降级路径：</b>隐私模式或「阻止所有 Cookie」会禁用存储。页面检测到异常后把状态栏改成「草稿无法保存」，但<b>导出始终可用</b> —— 用户只是会失去刷新恢复的能力。</div>
+</section>
+
+<!-- ═══════════ 11 clipboard ═══════════ -->
+<section id="clipboard">
+  <h2><span class="n">11</span>剪贴板：唯一的外部依赖，所以要三级降级</h2>
+  <p class="sec-sub">「复制」是这套设计里唯一接触浏览器 API 的地方，也是唯一可能失败的地方。失败不能让用户丢结果。</p>
+
+  <figure>
+    <svg viewBox="0 0 940 250" role="img" aria-label="剪贴板三级降级">
+      <defs>
+        <marker id="a11" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+        </marker>
+      </defs>
+      <rect x="24" y="34" width="560" height="48" rx="10" fill="var(--card)" stroke="var(--ok)"/>
+      <text x="44" y="56" font-size="12.5" font-weight="700" fill="var(--ok)">① navigator.clipboard.writeText</text>
+      <text x="44" y="73" font-size="11" fill="var(--muted)">需要用户手势（点击即可）；file:// 是 secure context，所以可用</text>
+
+      <path d="M304 86 L304 108" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#a11)"/>
+      <text x="318" y="102" font-size="10.5" fill="var(--muted)">reject</text>
+
+      <rect x="24" y="112" width="560" height="48" rx="10" fill="var(--card)" stroke="var(--warn)"/>
+      <text x="44" y="134" font-size="12.5" font-weight="700" fill="var(--warn)">② document.execCommand('copy')</text>
+      <text x="44" y="151" font-size="11" fill="var(--muted)">自建一个离屏 textarea，选中后复制（老 API，兼容性最广）</text>
+
+      <path d="M304 164 L304 186" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#a11)"/>
+      <text x="318" y="180" font-size="10.5" fill="var(--muted)">返回 false</text>
+
+      <rect x="24" y="190" width="560" height="48" rx="10" fill="var(--card)" stroke="var(--bad)"/>
+      <text x="44" y="212" font-size="12.5" font-weight="700" fill="var(--bad)">③ 弹窗 + 已全选的 textarea</text>
+      <text x="44" y="229" font-size="11" fill="var(--muted)">内容一定在页面上，用户 ⌘C 即可 —— 结果永远不会丢</text>
+
+      <rect x="624" y="34" width="292" height="204" rx="13" fill="var(--accent-soft)" stroke="var(--accent)"/>
+      <text x="770" y="60" font-size="12.5" font-weight="700" fill="var(--accent)" text-anchor="middle">无论走哪条路</text>
+      <text x="646" y="88" font-size="11" fill="var(--fg)">· 批注全部标记「已提交」</text>
+      <text x="646" y="112" font-size="11" fill="var(--fg)">· 顶部横幅显示复制时间</text>
+      <text x="646" y="136" font-size="11" fill="var(--fg)">· 草稿不清空</text>
+      <text x="646" y="160" font-size="11" fill="var(--fg)">· 可以再点一次重试</text>
+      <text x="646" y="196" font-size="10.5" fill="var(--muted)">用户回到对话粘贴，agent 就能继续</text>
+    </svg>
+    <figcaption>图 11 · 复制可以失败，但「拿到文本」不能失败。</figcaption>
+  </figure>
+</section>
+
+<!-- ═══════════ 12 tradeoffs ═══════════ -->
+<section id="tradeoffs">
+  <h2><span class="n">12</span>取舍与坑</h2>
+
+  <div class="grid g2">
+    <div class="card accent"><span class="tag">取舍 1</span><h4>去掉自动回传</h4>
+      <p>放弃「agent 自己拿到结构化结果」。换来：没有进程、没有端口、没有超时语义，也不会在用户离开时留下守护进程。<b>粘贴换掉了一整套运行期状态。</b></p></div>
+
+    <div class="card"><span class="tag">取舍 2</span><h4>去掉图片上传</h4>
+      <p>图片要真正交给 agent，只能走 base64 —— 一张普通截图就是十万级 token，还会撑爆 localStorage。而对话本身就支持贴图，页面再插一脚是重复劳动。</p></div>
+
+    <div class="card"><span class="tag">取舍 3</span><h4>去掉 JSON 双份</h4>
+      <p>消费者从 shell 变成 LLM，严格结构化的价值骤降。单份 Markdown 让 token 减半，也消除了「两份内容打架」的可能。</p></div>
+
+    <div class="card"><span class="tag">取舍 4</span><h4>草稿永不自动清理</h4>
+      <p>放弃「每轮干净开始」。换来：用户不必重写没改好的意见。<b>代价是</b>旧批注可能被重复提交 —— 用「已提交」标记提示，把决定权交给用户。</p></div>
+
+    <div class="card"><span class="tag">取舍 5</span><h4>机制内联进产物</h4>
+      <p>放弃「页面与脚本分离」的清爽源码结构。换来：产物是单文件、agent 不会改坏机制。<b>代价是</b>调试要看 40 KB 的合并文件。</p></div>
+
+    <div class="card"><span class="tag">取舍 6</span><h4>刷新是显式的</h4>
+      <p>放弃「自动感知更新」。换来：不需要常驻进程去推版本。用户点一下 ↻，或者干脆重新打开。</p></div>
+  </div>
+
+  <h3>常见坑</h3>
+  <ul>
+    <li><b>stdout 只有一行 JSON</b>（<code>built</code> / <code>opened</code> / <code>list</code> / <code>error</code>），进度都在 stderr。</li>
+    <li><b>id 和 anchor 都是跨轮次契约</b>：换 id 丢草稿，换 anchor 丢位置。</li>
+    <li><b>agent 写完页面就结束本轮</b>，不要试图等待 —— 没有东西可等。</li>
+    <li><b>用户可能只点结论、只写批注、或者什么都不点就关掉</b>，三种都要能处理。</li>
+    <li><b><code>new</code> 会覆盖 <code>plan.html</code>，但不动 localStorage</b>；刷新后草稿还在。</li>
+    <li><b>别在脚本里写字面量 <code>&lt;/script&gt;</code></b>（包括注释），否则页面静默失效；构建期会拦。</li>
+    <li><b>页面不联网也离线可用</b>，所以样式、图标、字体都必须内联或用系统字体。</li>
+    <li>任务结束后 <code>.pi/ask-page/</code> 可以直接删；它不该进 git。</li>
+  </ul>
+
+  <h3>一句话总结</h3>
+  <figure style="padding:22px 22px 16px">
+    <svg viewBox="0 0 940 108" role="img" aria-label="设计信条">
+      <rect x="18" y="14" width="196" height="80" rx="13" fill="var(--accent-soft)" stroke="var(--accent)"/>
+      <text x="116" y="48" font-size="14" font-weight="700" fill="var(--accent)" text-anchor="middle">一个文件</text>
+      <text x="116" y="72" font-size="11.5" fill="var(--muted)" text-anchor="middle">无端口 · 无进程</text>
+
+      <text x="240" y="60" font-size="20" fill="var(--muted)" text-anchor="middle">+</text>
+      <rect x="266" y="14" width="196" height="80" rx="13" fill="var(--card)" stroke="var(--line)"/>
+      <text x="364" y="48" font-size="14" font-weight="700" fill="var(--fg)" text-anchor="middle">草稿在用户手里</text>
+      <text x="364" y="72" font-size="11.5" fill="var(--muted)" text-anchor="middle">用户删，用户交</text>
+
+      <text x="488" y="60" font-size="20" fill="var(--muted)" text-anchor="middle">+</text>
+      <rect x="514" y="14" width="196" height="80" rx="13" fill="var(--card)" stroke="var(--line)"/>
+      <text x="612" y="48" font-size="14" font-weight="700" fill="var(--fg)" text-anchor="middle">回传走对话</text>
+      <text x="612" y="72" font-size="11.5" fill="var(--muted)" text-anchor="middle">人看得懂，模型也懂</text>
+
+      <text x="736" y="60" font-size="20" fill="var(--muted)" text-anchor="middle">=</text>
+      <rect x="762" y="14" width="160" height="80" rx="13" fill="var(--accent)"/>
+      <text x="842" y="48" font-size="13.5" font-weight="700" fill="#fff" text-anchor="middle">没有运行期</text>
+      <text x="842" y="72" font-size="11.5" fill="rgba(255,255,255,.85)" text-anchor="middle">就没有运维</text>
+    </svg>
+  </figure>
+</section>
+
+</main>
+
+<footer>
+  ask-page · 设计说明 · 与 <code>SKILL.md</code> 同源，实现细节以 <code>scripts/ask_page.py</code> 与 <code>assets/</code> 为准
+</footer>
+
+</body>
+</html>

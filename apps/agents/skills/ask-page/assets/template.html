@@ -3,191 +3,72 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>确认</title>
+<title>{{TITLE}}</title>
 <style>
-  :root{
-    --pi-accent:#2f6fed; --pi-surface:#fff; --pi-text:#14171d;
-    --bg:#f6f7f9; --fg:#14171d; --muted:#6b7280; --line:rgba(0,0,0,.10);
-    --card:#fff; --code-bg:#f2f3f6; --warn:#b8860b; --ok:#1a7f37; --bad:#c0392b;
-  }
-  @media (prefers-color-scheme:dark){
-    :root{
-      --bg:#0f1115; --fg:#e7e9ee; --muted:#9aa3b2; --line:rgba(255,255,255,.12);
-      --card:#171a20; --code-bg:#1e222a; --pi-surface:#171a20; --pi-text:#e7e9ee;
-    }
-  }
-  html{color-scheme:light dark}
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--fg);
-    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
-    padding-bottom:96px}
-  a{color:var(--pi-accent)}
-  code,pre,kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.92em}
-  code{background:var(--code-bg);padding:.12em .38em;border-radius:5px}
-  pre{background:var(--code-bg);padding:14px 16px;border-radius:10px;overflow:auto;border:1px solid var(--line)}
-  pre code{background:none;padding:0}
-
-  .head{max-width:1180px;margin:0 auto;padding:34px 24px 6px}
-  .eyebrow{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
-  .head h1{margin:6px 0 4px;font-size:26px;letter-spacing:-.01em}
-  .head .sub{margin:0;color:var(--muted)}
-  .head .meta{margin-top:10px;font-size:12.5px;color:var(--muted);display:flex;gap:14px;flex-wrap:wrap}
-
-  .layout{max-width:1180px;margin:0 auto;padding:18px 24px 40px;display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:26px;align-items:start}
-  @media (max-width:960px){.layout{grid-template-columns:minmax(0,1fr)}}
-
-  main{min-width:0}
-  main section{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin-bottom:18px}
-  main section > :first-child{margin-top:0}
-  main section > :last-child{margin-bottom:0}
-  h2{font-size:19px;margin:26px 0 8px}
-  h3{font-size:16px;margin:20px 0 6px}
-  ul,ol{padding-left:22px}
-  .muted{color:var(--muted)}
-
-  .callout{border-left:3px solid var(--pi-accent);background:color-mix(in srgb,var(--pi-accent) 8%,transparent);padding:10px 14px;border-radius:0 8px 8px 0;margin:12px 0}
-  .callout.warn{border-color:var(--warn);background:color-mix(in srgb,var(--warn) 10%,transparent)}
-  .callout.ok{border-color:var(--ok);background:color-mix(in srgb,var(--ok) 10%,transparent)}
-  .diff{background:var(--code-bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px;overflow:auto;font-family:ui-monospace,Menlo,monospace;font-size:13px}
-  .diff .add{color:var(--ok)} .diff .del{color:var(--bad)} .diff .hunk{color:var(--muted)}
-  .card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:12px 0}
-  .card{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--card)}
-  .card b{display:block;margin-bottom:4px}
-  figure{margin:14px 0;text-align:center}
-  figure img{max-width:100%;border:1px solid var(--line);border-radius:10px}
-  figcaption{font-size:12.5px;color:var(--muted);margin-top:6px}
-  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:14px}
-  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left}
-
-  aside.side{position:sticky;top:18px;display:flex;flex-direction:column;gap:14px}
-  .panel{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
-  .panel-head{font-size:13px;font-weight:700;letter-spacing:.02em;display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
-  .panel-head .count{font-weight:400;color:var(--muted)}
-  .upload-zone{border:1.5px dashed var(--line);border-radius:10px;padding:14px;text-align:center;color:var(--muted);cursor:pointer;font-size:13px}
-  .upload-zone:hover{border-color:var(--pi-accent);color:var(--fg)}
-
-  .bar{position:fixed;left:0;right:0;bottom:0;z-index:50;background:color-mix(in srgb,var(--bg) 88%,transparent);
-    backdrop-filter:blur(10px);border-top:1px solid var(--line);padding:12px 24px}
-  .bar-inner{max-width:1180px;margin:0 auto;display:flex;gap:18px;align-items:center;justify-content:space-between;flex-wrap:wrap}
-  .bar-left{display:flex;gap:12px;align-items:center}
-  .bar .lbl{font-size:13px;color:var(--muted)}
-  .bar-right{display:flex;gap:10px}
-  .btn{font:inherit;padding:8px 18px;border-radius:9px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
-  .btn.primary{background:var(--pi-accent);border-color:transparent;color:#fff;font-weight:600}
-  .btn.ghost{background:transparent;color:var(--muted)}
-  .btn:disabled{opacity:.5;cursor:default}
+/* INLINE:ask-page.css */
 </style>
 </head>
-<body>
+<body data-page-id="{{PAGE_ID}}">
 
-<header class="head">
-  <div class="eyebrow">ask-page</div>
-  <h1>请确认这份内容</h1>
-  <p class="sub">读完在底部给出结论；想具体指出问题，就点正文里<span class="muted">（高亮）</span>的段落写批注。</p>
-  <div class="meta">
-    <span>页面版本 v<span data-pi-version>1</span></span>
-    <span>批注会自动汇总到右侧</span>
-    <span>⌘/Ctrl+Enter 提交</span>
+<div class="ap-banner" data-ap-banner>
+  <span class="ap-banner-text" data-ap-banner-text></span>
+  <button type="button" class="ap-btn" data-ap-copy>再次复制</button>
+  <button type="button" class="ap-btn ghost" data-ap-dismiss>收起</button>
+</div>
+
+<header class="ap-head">
+  <div class="ap-eyebrow">ask-page</div>
+  <h1>{{TITLE}}</h1>
+  <p class="ap-sub">读完在底部给个结论；想具体指出问题，就点正文里带下划线的段落写批注。写完后点「复制结果」，把结果粘回对话。</p>
+  <div class="ap-meta">
+    <span data-ap-status>草稿保存在本机浏览器，刷新不会丢</span>
+    <button type="button" class="ap-link" data-ap-reload>↻ 载入最新内容</button>
+    <span>⌘/Ctrl + Enter 复制结果</span>
   </div>
 </header>
 
-<div class="layout">
-  <main id="pi-content">
-    <!--
-      内容区。两种写法：
-      1. 直接写 HTML（推荐）：给需要被批注的块加 data-pi-anchor="唯一名"。
-      2. 用 <script type="text/markdown">…</script> 写 Markdown，本模板会渲染它。
-    -->
-    <section>
-      <h2 data-pi-anchor="summary">摘要</h2>
-      <p>这里放要用户确认的内容。每个 <code>data-pi-anchor</code> 块都可以被点击批注。</p>
-      <div class="callout" data-pi-anchor="risk">示例：这是一个需要特别注意的点。</div>
-      <h2 data-pi-anchor="plan-1">方案要点 1</h2>
-      <p>说明文字……</p>
-      <pre data-pi-anchor="code"><code>// 需要审阅的代码或 diff 也可以放这里
-</code></pre>
-    </section>
+<div class="ap-layout">
+  <main id="ap-content">
+{{CONTENT}}
   </main>
 
-  <aside class="side">
-    <div class="panel">
-      <div class="panel-head">批注 <span class="count"><span data-pi-comments-count>0</span> 条</span></div>
-      <div data-pi-comments></div>
-    </div>
-    <div class="panel">
-      <div class="panel-head">附件</div>
-      <div class="upload-zone" data-pi-upload>点击这里添加图片 / 文件</div>
-      <div data-pi-uploads-list style="margin-top:8px"></div>
+  <aside class="ap-side">
+    <div class="ap-panel">
+      <div class="ap-panel-head">批注 <span class="ap-count"><span data-ap-count>0</span> 条</span></div>
+      <div data-ap-comments></div>
+      <div class="ap-panel-foot">
+        <button type="button" class="ap-btn ghost" data-ap-clear>清空全部</button>
+      </div>
     </div>
   </aside>
 </div>
 
-<footer class="bar">
-  <div class="bar-inner">
-    <div class="bar-left">
-      <span class="lbl">结论</span>
+<footer class="ap-bar">
+  <div class="ap-bar-in">
+    <div class="ap-bar-left">
+      <span class="ap-lbl">结论</span>
       <div data-pi-choice="decision" data-pi-options="approve,revise,reject" data-pi-labels="通过 | 需要修改 | 否决"></div>
     </div>
-    <div class="bar-right">
-      <button class="btn ghost" type="button" data-pi-cancel>放弃</button>
-      <button class="btn primary" type="button" data-pi-submit>提交</button>
+    <div class="ap-bar-right">
+      <span class="ap-lbl">复制后粘回对话</span>
+      <button type="button" class="ap-btn primary" data-ap-copy>复制结果</button>
     </div>
   </div>
 </footer>
 
+<div class="ap-overlay" data-ap-overlay>
+  <div class="ap-modal">
+    <h2>浏览器拦住了自动复制</h2>
+    <p>下面的内容已经全选，按 ⌘C / Ctrl+C 复制，然后粘到对话里。</p>
+    <textarea readonly spellcheck="false"></textarea>
+    <div class="ap-modal-actions">
+      <button type="button" class="ap-btn" data-ap-close>关闭</button>
+    </div>
+  </div>
+</div>
+
 <script>
-/* Tiny Markdown renderer (offline, ~70 lines). Turns every
-   markdown script block (type="text/markdown") into rendered HTML in place.
-   Supported: #/##/###, fenced code, lists, blockquote, hr, tables,
-   inline code/bold/italic/strikethrough/links. */
-(function () {
-  function esc(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
-  function inline(s){
-    return esc(s)
-      .replace(/`([^`]+)`/g,"<code>$1</code>")
-      .replace(/\*\*([^*]+)\*\*/g,"<strong>$1</strong>")
-      .replace(/(^|\W)\*([^*]+)\*/g,"$1<em>$2</em>")
-      .replace(/~~([^~]+)~~/g,"<del>$1</del>")
-      .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>');
-  }
-  function render(src){
-    var lines = src.replace(/\r\n?/g,"\n").split("\n"), out = [], i = 0;
-    while (i < lines.length){
-      var line = lines[i];
-      if (/^\s*$/.test(line)) { i++; continue; }
-      var fence = line.match(/^```(\w*)\s*$/);
-      if (fence){ i++; var buf=[]; while (i<lines.length && !/^```\s*$/.test(lines[i])) buf.push(lines[i++]); i++;
-        out.push('<pre><code>'+esc(buf.join("\n"))+'</code></pre>'); continue; }
-      var h = line.match(/^(#{1,6})\s+(.*)$/);
-      if (h){ out.push('<h'+h[1].length+'>'+inline(h[2])+'</h'+h[1].length+'>'); i++; continue; }
-      if (/^\s*([-*_])\s*\1\s*\1\s*$/.test(line)){ out.push("<hr>"); i++; continue; }
-      if (/^\s*>\s?/.test(line)){ var q=[]; while (i<lines.length && /^\s*>\s?/.test(lines[i])) q.push(lines[i++].replace(/^\s*>\s?/,""));
-        out.push("<blockquote>"+inline(q.join(" "))+"</blockquote>"); continue; }
-      if (/^\s*([-*+]|\d+\.)\s+/.test(line)){ var ordered=/^\s*\d+\./.test(line), items=[];
-        while (i<lines.length && /^\s*([-*+]|\d+\.)\s+/.test(lines[i])) items.push(lines[i++].replace(/^\s*([-*+]|\d+\.)\s+/,""));
-        out.push((ordered?"<ol>":"<ul>")+items.map(function(t){return "<li>"+inline(t)+"</li>";}).join("")+(ordered?"</ol>":"</ul>")); continue; }
-      if (/^\s*\|.*\|\s*$/.test(line) && i+1<lines.length && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i+1])){
-        var cells=function(l){return l.trim().replace(/^\||\|$/g,"").split("|").map(function(c){return c.trim();});};
-        var head=cells(lines[i]); i+=2; var rows=[];
-        while (i<lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) rows.push(cells(lines[i++]));
-        out.push("<table><thead><tr>"+head.map(function(c){return "<th>"+inline(c)+"</th>";}).join("")+"</tr></thead><tbody>"
-          +rows.map(function(r){return "<tr>"+r.map(function(c){return "<td>"+inline(c)+"</td>";}).join("")+"</tr>";}).join("")+"</tbody></table>"); continue; }
-      var para=[];
-      while (i<lines.length && !/^\s*$/.test(lines[i]) && !/^(#{1,6}\s|```|\s*>|\s*([-*+]|\d+\.)\s|\s*\|)/.test(lines[i])) para.push(lines[i++]);
-      out.push("<p>"+inline(para.join(" "))+"</p>");
-    }
-    return out.join("\n");
-  }
-  function run(){
-    document.querySelectorAll('script[type="text/markdown"]').forEach(function (node){
-      var div = document.createElement("div");
-      div.innerHTML = render(node.textContent || "");
-      node.parentNode.replaceChild(div, node);
-    });
-    if (window.pi && window.pi.rescan) window.pi.rescan();
-  }
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", run); else run();
-})();
+/* INLINE:ask-page.js */
 </script>
 </body>
 </html>

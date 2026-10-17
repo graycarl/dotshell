@@ -1,31 +1,23 @@
 #!/usr/bin/env python3
-"""ask_page - show an interactive web page to the user and collect the submission.
+"""ask-page — build a self-contained review page and open it in the browser.
 
-The agent writes an HTML page, this CLI serves it on 127.0.0.1, opens it in the
-browser, and returns what the user submitted (confirmation, comments, choices,
-uploads) as JSON on stdout.
+No server, no port, no daemon. The output is a single HTML file: styles and
+behaviour are inlined, comments live in the browser's localStorage, and the
+page's "复制结果" button copies a Markdown block that the user pastes back
+into the chat.
 
 Usage:
-    ask_page.py ask    --html-file page.html [--id ID] [--title T] [--assets DIR]
-    ask_page.py start  --html-file page.html [--id ID] [--idle-timeout 43200]
-    ask_page.py update <pageId> --html-file page.html
-    ask_page.py wait   <pageId> [--timeout S]
-    ask_page.py collect <pageId>
-    ask_page.py cancel <pageId> [--reason R]
-    ask_page.py list
-    ask_page.py cleanup <pageId>|--all [--keep-files]
+    ask_page.py new  <id> [--body FILE|-] [--title T] [--root DIR] [--open]
+    ask_page.py open <id> [--root DIR]
+    ask_page.py list [--root DIR]
 
-Contract (see references/protocol.md):
-    * stdout is exactly one line of JSON; progress and the page URL go to stderr.
-    * exit codes: 0 submitted, 2 cancelled, 3 timeout, 4 pending, 5 aborted, 1 error.
+Layout (default root: <cwd>/.pi/ask-page):
+    <id>.body.html   the body the agent writes (kept, so round 2 edits this file)
+    <id>.html        the built page: one file, self-contained, safe to email
 
-State lives in `<cwd>/.pi/ask-page/`:
-
-    <slug>.html          the page source the agent wrote (its choice, not ours)
-    <pageId>/state.json  metadata: token, port, version, status, serverPid, ...
-    <pageId>/page.html   the copy that is actually served
-    <pageId>/result.json the submission (written once, first write wins)
-    <pageId>/uploads/    files the user attached in the browser
+Contract:
+    * stdout is exactly one line of JSON; progress and the URL go to stderr.
+    * exit codes: 0 ok, 1 error.
 
 Only the stdlib is used.
 """
@@ -33,51 +25,25 @@ Only the stdlib is used.
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import os
 import re
-import secrets
-import shutil
-import signal
-import socket
 import subprocess
 import sys
-import threading
 import time
 from pathlib import Path
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(SCRIPT_DIR))
+SKILL_DIR = Path(__file__).resolve().parent.parent
+ASSETS = SKILL_DIR / "assets"
+TEMPLATE = ASSETS / "template.html"
+CSS = ASSETS / "ask-page.css"
+JS = ASSETS / "ask-page.js"
 
-from page_server import (  # noqa: E402
-    PageServer,
-    archive_result,
-    pid_alive,
-    read_json,
-    write_json,
-    write_result_once,
-)
-
-PAGE_SERVER = SCRIPT_DIR / "page_server.py"
 DEFAULT_ROOT = ".pi/ask-page"
-DEFAULT_IDLE_TIMEOUT = 12 * 3600
 
-EXIT_SUBMITTED = 0
+EXIT_OK = 0
 EXIT_ERROR = 1
-EXIT_CANCELLED = 2
-EXIT_TIMEOUT = 3
-EXIT_PENDING = 4
-EXIT_ABORTED = 5
-
-STATUS_EXIT = {
-    "submitted": EXIT_SUBMITTED,
-    "cancelled": EXIT_CANCELLED,
-    "timeout": EXIT_TIMEOUT,
-    "expired": EXIT_TIMEOUT,
-    "aborted": EXIT_ABORTED,
-    "pending": EXIT_PENDING,
-    "error": EXIT_ERROR,
-}
 
 
 class Failure(Exception):
@@ -97,7 +63,7 @@ def now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
-# ─── paths and small helpers ─────────────────────────────────────────────────
+# ─── paths ───────────────────────────────────────────────────────────────────
 
 
 def pages_root(args: argparse.Namespace) -> Path:
@@ -107,72 +73,68 @@ def pages_root(args: argparse.Namespace) -> Path:
 
 
 def sanitize_id(raw: str) -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", (raw or "").strip()).strip("-._")
+    raw = (raw or "").strip()
+    if not raw:
+        raise Failure("page id 不能为空，且只能包含字母、数字、'.'、'_'、'-'")
+    # Reject traversal loudly instead of silently renaming: the id is the draft
+    # namespace, so the agent must know exactly what it got.
+    if re.search(r"[/\\]", raw) or raw in (".", "..") or ".." in raw:
+        raise Failure(f"page id 不能包含路径分隔符或 '..'：{raw!r}")
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", raw).strip("-._")
+    if not cleaned:
+        raise Failure(f"page id 无效：{raw!r}")
     return cleaned[:64]
 
 
-def gen_id() -> str:
-    return "ap-" + secrets.token_hex(3)
+def body_path(root: Path, page_id: str) -> Path:
+    return root / f"{page_id}.body.html"
 
 
-def port_free(port: object) -> bool:
+def page_path(root: Path, page_id: str) -> Path:
+    return root / f"{page_id}.html"
+
+
+# ─── build ───────────────────────────────────────────────────────────────────
+
+
+def read_asset(path: Path, what: str) -> str:
     try:
-        port = int(port)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return False
-    if port <= 0:
-        return False
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            sock.bind(("127.0.0.1", port))
-        except OSError:
-            return False
-    return True
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise Failure(f"缺少{what} ({path}): {exc}") from exc
 
 
-def free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
+def build_page(page_id: str, title: str, content: str) -> str:
+    """Inline the assets into the template.
+
+    {{CONTENT}} is substituted last so that anything the body contains —
+    including literal {{...}} or /* INLINE:… */ text — is never touched.
+    """
+    template = read_asset(TEMPLATE, "模板")
+    css = read_asset(CSS, "样式表")
+    js = read_asset(JS, "脚本")
+
+    # A literal closing script tag anywhere in the script (even in a comment)
+    # terminates the element early and breaks the page silently. Fail loudly.
+    if "</script" in js.lower():
+        raise Failure("ask-page.js 里出现了字面量 </script，会把页面截断；请改写该注释")
+
+    out = template.replace("/* INLINE:ask-page.css */", css.rstrip() + "\n")
+    out = out.replace("/* INLINE:ask-page.js */", js.rstrip() + "\n")
+    out = out.replace("{{TITLE}}", html.escape(title, quote=True))
+    out = out.replace("{{PAGE_ID}}", html.escape(page_id, quote=True))
+    out = out.replace("{{CONTENT}}", content)
+    return out
 
 
-def port_open(port: object) -> bool:
-    try:
-        with socket.create_connection(("127.0.0.1", int(port)), timeout=0.4):  # type: ignore[arg-type]
-            return True
-    except OSError:
-        return False
+# ─── browser ─────────────────────────────────────────────────────────────────
 
 
-def page_dir_of(root: Path, page_id: str) -> Path:
-    return root / page_id
-
-
-def load_page(root: Path, page_id: str) -> tuple[Path, dict]:
-    page_id = sanitize_id(page_id)
-    page_dir = page_dir_of(root, page_id)
-    state = read_json(page_dir / "state.json")
-    if not state:
-        raise Failure(f"page '{page_id}' not found under {root}")
-    return page_dir, state
-
-
-def read_html(args: argparse.Namespace) -> str:
-    if getattr(args, "stdin", False) or args.html_file == "-":
-        return sys.stdin.read()
-    if not args.html_file:
-        raise Failure("需要 --html-file PATH（或 --stdin / --html-file -）")
-    path = Path(args.html_file).expanduser()
-    if not path.is_file():
-        raise Failure(f"html file not found: {path}")
-    return path.read_text(encoding="utf-8")
-
-
-def open_in_browser(url: str) -> bool:
+def open_in_browser(path: Path) -> bool:
     if os.environ.get("ASK_PAGE_NO_OPEN"):
         log("browser disabled by ASK_PAGE_NO_OPEN")
         return False
+    url = path.as_uri()
     try:
         if sys.platform == "darwin":
             subprocess.Popen(["open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -182,441 +144,148 @@ def open_in_browser(url: str) -> bool:
             subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return True
     except OSError as exc:
-        log(f"could not open a browser ({exc}); open this URL manually:")
+        log(f"打不开浏览器（{exc}），请手动打开：{url}")
         return False
-
-
-def stop_server(page_dir: Path, state: dict, timeout: float = 3.0) -> None:
-    """SIGTERM a running page server (daemon) and wait for it to go away."""
-    pid = state.get("serverPid")
-    if not pid_alive(pid):
-        return
-    try:
-        os.kill(int(pid), signal.SIGTERM)  # type: ignore[arg-type]
-    except OSError:
-        return
-    deadline = time.time() + timeout
-    while time.time() < deadline and pid_alive(pid):
-        time.sleep(0.1)
-    if pid_alive(pid):
-        try:
-            os.kill(int(pid), signal.SIGKILL)  # type: ignore[arg-type]
-        except OSError:
-            pass
-
-
-# ─── page preparation ────────────────────────────────────────────────────────
-
-
-class Prepared:
-    def __init__(self, root: Path, page_id: str, page_dir: Path, state: dict, port_hint: int):
-        self.root = root
-        self.page_id = page_id
-        self.page_dir = page_dir
-        self.state = state
-        self.port_hint = port_hint
-
-    @property
-    def token(self) -> str:
-        return self.state["token"]
-
-    @property
-    def version(self) -> int:
-        return int(self.state["version"])
-
-    def url(self, port: int) -> str:
-        return f"http://127.0.0.1:{port}/?t={self.token}"
-
-
-def prepare(args: argparse.Namespace) -> Prepared:
-    """Create/refresh a page directory and write the new version of page.html."""
-    root = pages_root(args)
-    root.mkdir(parents=True, exist_ok=True)
-
-    page_id = sanitize_id(args.id) if args.id else ""
-    if not page_id and args.html_file and args.html_file != "-":
-        page_id = sanitize_id(Path(args.html_file).stem)
-    page_id = page_id or gen_id()
-
-    page_dir = page_dir_of(root, page_id)
-    page_dir.mkdir(parents=True, exist_ok=True)
-    old = read_json(page_dir / "state.json") or {}
-    if old:
-        # A previous round may still have a daemon holding the port; a fresh
-        # `ask`/`start` supersedes it (the old tab reloads on the same port).
-        stop_server(page_dir, old)
-        archive_result(page_dir)
-
-    html = read_html(args)
-    source = ""
-    if args.html_file and args.html_file != "-" and not getattr(args, "stdin", False):
-        source = str(Path(args.html_file).expanduser().resolve())
-
-    page_html = page_dir / "page.html"
-    if source and Path(source) == page_html:
-        pass  # the agent wrote page.html directly; nothing to copy
-    else:
-        page_html.write_text(html, encoding="utf-8")
-
-    assets = getattr(args, "assets", None)
-    assets_dir = str(Path(assets).expanduser().resolve()) if assets else old.get("assetsDir", "")
-    if assets_dir and not Path(assets_dir).is_dir():
-        raise Failure(f"assets directory not found: {assets_dir}")
-
-    version = int(old.get("version") or 0) + 1
-    token = old.get("token") or secrets.token_urlsafe(24)
-    old_port = old.get("port")
-    port_hint = int(old_port) if port_free(old_port) else free_port()
-
-    state = {
-        "pageId": page_id,
-        "token": token,
-        "version": version,
-        "status": "starting",
-        "port": port_hint,
-        "url": f"http://127.0.0.1:{port_hint}/?t={token}",
-        "title": getattr(args, "title", None) or old.get("title") or "",
-        "sourceHtml": source or old.get("sourceHtml", ""),
-        "assetsDir": assets_dir,
-        "root": str(root),
-        "serverPid": None,
-        "createdAt": old.get("createdAt") or now_iso(),
-        "updatedAt": now_iso(),
-    }
-    write_json(page_dir / "state.json", state)
-    return Prepared(root, page_id, page_dir, state, port_hint)
 
 
 # ─── commands ────────────────────────────────────────────────────────────────
 
 
-def cmd_ask(args: argparse.Namespace) -> int:
-    prepared = prepare(args)
-    server = PageServer(prepared.page_dir, port=prepared.port_hint)
-    url = prepared.url(server.port)
-    status = "waiting"
-    stop = threading.Event()
-
-    def _handle_signal(signum, _frame):  # noqa: ANN001
-        log(f"signal {signum}: aborting")
-        stop.set()
-
-    signal.signal(signal.SIGTERM, _handle_signal)
-    signal.signal(signal.SIGINT, _handle_signal)
-
-    server.start()
-    server.ctx.patch_state(port=server.port, url=url, serverPid=os.getpid(), status=status)
-    log("waiting for a submission at", url)
-
-    if not args.no_open:
-        open_in_browser(url)
-
-    try:
-        result = server.wait_for_result(timeout=args.timeout or None, stop=stop)
-    finally:
-        server.shutdown()
-
-    if result is None:
-        if stop.is_set():
-            server.ctx.patch_state(status="aborted")
-            emit({"status": "aborted", "pageId": prepared.page_id, "url": url, "version": prepared.version})
-            return EXIT_ABORTED
-        server.ctx.patch_state(status="timeout")
-        emit({"status": "timeout", "pageId": prepared.page_id, "url": url, "version": prepared.version})
-        return EXIT_TIMEOUT
-
-    emit(result)
-    return STATUS_EXIT.get(str(result.get("status")), EXIT_ERROR)
-
-
-def cmd_start(args: argparse.Namespace) -> int:
-    prepared = prepare(args)
-    logfile = open(prepared.page_dir / "server.log", "a", encoding="utf-8")  # noqa: SIM115
-    cmd = [
-        sys.executable,
-        str(PAGE_SERVER),
-        "--page-dir",
-        str(prepared.page_dir),
-        "--port",
-        str(prepared.port_hint),
-        "--idle-timeout",
-        str(args.idle_timeout),
-    ]
-    proc = subprocess.Popen(  # noqa: S603
-        cmd,
-        stdin=subprocess.DEVNULL,
-        stdout=logfile,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-        cwd=str(Path.cwd()),
-    )
-
-    deadline = time.time() + 5.0
-    state: dict = {}
-    port = prepared.port_hint
-    while time.time() < deadline:
-        state = read_json(prepared.page_dir / "state.json") or {}
-        port = int(state.get("port") or 0)
-        if state.get("serverPid") == proc.pid and state.get("status") in ("waiting", "submitted", "cancelled") and port_open(port):
-            break
-        if proc.poll() is not None:
-            break
-        time.sleep(0.1)
+def read_body(args: argparse.Namespace, root: Path, page_id: str) -> str:
+    if args.body == "-":
+        content = sys.stdin.read()
+    elif args.body:
+        path = Path(args.body).expanduser()
+        if not path.is_file():
+            raise Failure(f"body 文件不存在：{path}")
+        content = path.read_text(encoding="utf-8")
     else:
-        state = {}
-    if not state or state.get("serverPid") != proc.pid:
-        tail = ""
-        try:
-            tail = (prepared.page_dir / "server.log").read_text(encoding="utf-8")[-800:]
-        except OSError:
-            pass
-        raise Failure(f"page server failed to start (see {prepared.page_dir / 'server.log'})\n{tail}".strip())
+        path = body_path(root, page_id)
+        if not path.is_file():
+            raise Failure(
+                f"没有 --body，也找不到 {path}。先把正文写到 {path}，或使用 --body - 从 stdin 读。"
+            )
+        content = path.read_text(encoding="utf-8")
 
-    url = prepared.url(port)
-    log("serving", url, f"(pageId={prepared.page_id}, pid={proc.pid})")
-    if not args.no_open:
-        open_in_browser(url)
+    if not content.strip():
+        raise Failure("正文是空的")
+    return content
+
+
+def cmd_new(args: argparse.Namespace) -> int:
+    root = pages_root(args)
+    root.mkdir(parents=True, exist_ok=True)
+    page_id = sanitize_id(args.id)
+
+    content = read_body(args, root, page_id)
+    title = args.title or page_id
+    out = page_path(root, page_id)
+    out.write_text(build_page(page_id, title, content), encoding="utf-8")
+
+    if "data-pi-anchor" not in content:
+        log("提示：正文里没有任何 data-pi-anchor，用户将无法添加批注")
+
+    opened = open_in_browser(out) if args.open else False
+    log(f"built {out} ({out.stat().st_size} bytes)" + (" · opened" if opened else ""))
+
     emit(
         {
-            "status": "started",
-            "pageId": prepared.page_id,
-            "url": url,
-            "port": port,
-            "version": prepared.version,
-            "serverPid": proc.pid,
+            "status": "built",
+            "pageId": page_id,
+            "path": str(out),
+            "url": out.as_uri(),
+            "bytes": out.stat().st_size,
+            "opened": opened,
         }
     )
-    return EXIT_SUBMITTED
+    return EXIT_OK
 
 
-def cmd_update(args: argparse.Namespace) -> int:
+def cmd_open(args: argparse.Namespace) -> int:
     root = pages_root(args)
-    page_dir, state = load_page(root, args.id)
-    if not pid_alive(state.get("serverPid")) or not port_open(state.get("port")):
-        raise Failure(
-            f"page '{state.get('pageId')}' has no running server; use `ask` (foreground) or `start` (daemon) first"
-        )
+    page_id = sanitize_id(args.id)
+    out = page_path(root, page_id)
+    if not out.is_file():
+        raise Failure(f"页面还没生成：{out}（先运行 new）")
 
-    html = read_html(args)
-    (page_dir / "page.html").write_text(html, encoding="utf-8")
-    archive_result(page_dir)
-    version = int(state.get("version") or 0) + 1
-    state = dict(state)
-    state.update({"version": version, "updatedAt": now_iso(), "status": "waiting"})
-    if getattr(args, "title", None):
-        state["title"] = args.title
-    write_json(page_dir / "state.json", state)
-    log(f"updated {state.get('pageId')} to v{version}; open tabs reload automatically")
+    opened = open_in_browser(out)
     emit(
         {
-            "status": "updated",
-            "pageId": state.get("pageId"),
-            "url": state.get("url"),
-            "version": version,
+            "status": "opened" if opened else "manual",
+            "pageId": page_id,
+            "path": str(out),
+            "url": out.as_uri(),
+            "opened": opened,
         }
     )
-    return EXIT_SUBMITTED
-
-
-def _await_result(args: argparse.Namespace, blocking: bool) -> int:
-    root = pages_root(args)
-    page_dir, state = load_page(root, args.id)
-    deadline = None if not blocking else (time.time() + args.timeout if args.timeout else None)
-
-    while True:
-        result = read_json(page_dir / "result.json")
-        if result:
-            emit(result)
-            return STATUS_EXIT.get(str(result.get("status")), EXIT_ERROR)
-        state = read_json(page_dir / "state.json") or state
-        if not pid_alive(state.get("serverPid")):
-            status = str(state.get("status") or "")
-            reason = status if status in ("expired", "timeout", "aborted") else "server-not-running"
-            emit({"status": reason, "pageId": state.get("pageId"), "url": state.get("url")})
-            return EXIT_TIMEOUT if reason != "aborted" else EXIT_ABORTED
-        if deadline is not None and time.time() >= deadline:
-            emit({"status": "timeout", "pageId": state.get("pageId"), "url": state.get("url")})
-            return EXIT_TIMEOUT
-        if not blocking:
-            emit({"status": "pending", "pageId": state.get("pageId"), "url": state.get("url")})
-            return EXIT_PENDING
-        time.sleep(0.2)
-
-
-def cmd_wait(args: argparse.Namespace) -> int:
-    return _await_result(args, blocking=True)
-
-
-def cmd_collect(args: argparse.Namespace) -> int:
-    return _await_result(args, blocking=False)
-
-
-def cmd_cancel(args: argparse.Namespace) -> int:
-    root = pages_root(args)
-    page_dir, state = load_page(root, args.id)
-    created = write_result_once(
-        page_dir,
-        {
-            "status": "cancelled",
-            "pageId": state.get("pageId"),
-            "reason": args.reason or "cancelled by agent",
-            "meta": {"version": state.get("version"), "cancelledAt": now_iso()},
-        },
-    )
-    write_json(page_dir / "state.json", {**state, "status": "cancelled", "updatedAt": now_iso()})
-    if not created:
-        log("a result already exists; cancel ignored")
-    emit({"status": "cancelled", "pageId": state.get("pageId"), "accepted": created})
-    return EXIT_SUBMITTED
+    return EXIT_OK
 
 
 def cmd_list(args: argparse.Namespace) -> int:
     root = pages_root(args)
     rows = []
     if root.is_dir():
-        for entry in sorted(root.iterdir()):
-            state = read_json(entry / "state.json") if entry.is_dir() else None
-            if not state:
+        for entry in sorted(root.glob("*.html")):
+            if entry.name.endswith(".body.html"):
                 continue
-            result = read_json(entry / "result.json")
-            alive = pid_alive(state.get("serverPid"))
+            stat = entry.stat()
+            body = body_path(root, entry.stem)
             rows.append(
                 {
-                    "pageId": state.get("pageId"),
-                    "version": state.get("version"),
-                    "status": state.get("status"),
-                    "serverAlive": alive,
-                    "serverPid": state.get("serverPid") if alive else None,
-                    "port": state.get("port"),
-                    "url": state.get("url") if alive else None,
-                    "submitted": bool(result),
-                    "updatedAt": state.get("updatedAt"),
+                    "pageId": entry.stem,
+                    "path": str(entry),
+                    "bytes": stat.st_size,
+                    "builtAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(stat.st_mtime)),
+                    "hasBody": body.is_file(),
+                    "url": entry.as_uri(),
                 }
             )
     emit({"root": str(root), "pages": rows})
-    return EXIT_SUBMITTED
-
-
-def cmd_cleanup(args: argparse.Namespace) -> int:
-    root = pages_root(args)
-    if args.all:
-        targets = [entry for entry in root.iterdir() if (entry / "state.json").is_file()] if root.is_dir() else []
-    else:
-        if not args.id:
-            raise Failure("cleanup needs a pageId or --all")
-        targets = [page_dir_of(root, sanitize_id(args.id))]
-
-    removed = []
-    for page_dir in targets:
-        state = read_json(page_dir / "state.json") or {}
-        stop_server(page_dir, state)
-        if page_dir.is_dir():
-            if args.keep_files:
-                for name in ("state.json", "server.log", "server.pid"):
-                    try:
-                        (page_dir / name).unlink()
-                    except OSError:
-                        pass
-            else:
-                shutil.rmtree(page_dir, ignore_errors=True)
-        removed.append(state.get("pageId") or page_dir.name)
-    emit({"status": "cleaned", "keepFiles": bool(args.keep_files), "pages": removed})
-    return EXIT_SUBMITTED
+    return EXIT_OK
 
 
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 
-def add_page_options(parser: argparse.ArgumentParser, *, idle_timeout: bool = False) -> None:
-    parser.add_argument("--html-file", default=None, help="HTML file to serve; '-' reads stdin")
-    parser.add_argument("--stdin", action="store_true", help="read the page HTML from stdin")
-    parser.add_argument("--id", default=None, help="page id (default: derived from the html file name, else random)")
-    parser.add_argument("--title", default=None, help="human title, shown in `list` and daemon state")
-    parser.add_argument("--assets", default=None, help="directory mounted read-only at /assets/")
-    parser.add_argument("--no-open", action="store_true", help="do not open a browser; the URL still goes to stderr")
-    parser.add_argument("--timeout", type=float, default=0, help="seconds to wait for a submission (0 = forever)")
-    parser.add_argument("--root", default=None, help=f"pages directory (default: ./{DEFAULT_ROOT})")
-    if idle_timeout:
-        parser.add_argument(
-            "--idle-timeout",
-            type=int,
-            default=DEFAULT_IDLE_TIMEOUT,
-            help=f"seconds before the daemon exits (default {DEFAULT_IDLE_TIMEOUT}, 0 = never)",
-        )
-
-
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="ask_page.py",
-        description="Serve an interactive page and return what the user submitted as JSON.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=(
-            "exit codes: 0 submitted · 2 cancelled · 3 timeout · 4 pending · 5 aborted · 1 error\n"
-            "stdout: one line of JSON · stderr: progress and the page URL"
-        ),
-    )
+    parser = argparse.ArgumentParser(description="ask-page: build a self-contained review page")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_ask = sub.add_parser("ask", help="serve in the foreground and block until submitted/cancelled/timed out")
-    add_page_options(p_ask)
+    def add_root(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--root", default="", help=f"页面目录（默认 {DEFAULT_ROOT}）")
 
-    p_start = sub.add_parser("start", help="start a background daemon and return immediately")
-    add_page_options(p_start, idle_timeout=True)
+    p_new = sub.add_parser("new", help="由正文生成自包含页面")
+    p_new.add_argument("id", help="页面 id（= pageId = 草稿命名空间）")
+    p_new.add_argument("--body", default="", help="正文 HTML 文件，'-' 表示 stdin（默认读 <id>.body.html）")
+    p_new.add_argument("--title", default="", help="页面标题（默认用 id）")
+    p_new.add_argument("--open", action="store_true", help="生成后立刻在浏览器打开")
+    add_root(p_new)
+    p_new.set_defaults(func=cmd_new)
 
-    p_update = sub.add_parser("update", help="push a new version to a running page (open tabs reload)")
-    p_update.add_argument("id", help="page id")
-    p_update.add_argument("--html-file", default=None, help="HTML file to serve; '-' reads stdin")
-    p_update.add_argument("--stdin", action="store_true", help="read the page HTML from stdin")
-    p_update.add_argument("--title", default=None)
-    p_update.add_argument("--root", default=None)
+    p_open = sub.add_parser("open", help="在浏览器里打开已生成的页面")
+    p_open.add_argument("id")
+    add_root(p_open)
+    p_open.set_defaults(func=cmd_open)
 
-    p_wait = sub.add_parser("wait", help="block until a running page gets a submission")
-    p_wait.add_argument("id")
-    p_wait.add_argument("--timeout", type=float, default=0)
-    p_wait.add_argument("--root", default=None)
-
-    p_collect = sub.add_parser("collect", help="return the submission if there is one, else 'pending'")
-    p_collect.add_argument("id")
-    p_collect.add_argument("--root", default=None)
-
-    p_cancel = sub.add_parser("cancel", help="mark a page as cancelled from outside")
-    p_cancel.add_argument("id")
-    p_cancel.add_argument("--reason", default=None)
-    p_cancel.add_argument("--root", default=None)
-
-    p_list = sub.add_parser("list", help="list pages with their status and server liveness")
-    p_list.add_argument("--root", default=None)
-
-    p_cleanup = sub.add_parser("cleanup", help="stop servers and delete page directories")
-    p_cleanup.add_argument("id", nargs="?", default=None)
-    p_cleanup.add_argument("--all", action="store_true")
-    p_cleanup.add_argument("--keep-files", action="store_true", help="keep page.html/result.json/uploads")
-    p_cleanup.add_argument("--root", default=None)
+    p_list = sub.add_parser("list", help="列出目录里已有的页面")
+    add_root(p_list)
+    p_list.set_defaults(func=cmd_list)
 
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    handlers = {
-        "ask": cmd_ask,
-        "start": cmd_start,
-        "update": cmd_update,
-        "wait": cmd_wait,
-        "collect": cmd_collect,
-        "cancel": cmd_cancel,
-        "list": cmd_list,
-        "cleanup": cmd_cleanup,
-    }
     try:
-        return handlers[args.command](args)
+        return int(args.func(args))
     except Failure as exc:
+        log(str(exc))
         emit({"status": "error", "error": str(exc)})
-        log("error:", exc)
         return EXIT_ERROR
-    except KeyboardInterrupt:
-        emit({"status": "aborted", "error": "interrupted"})
-        return EXIT_ABORTED
+    except OSError as exc:
+        log(str(exc))
+        emit({"status": "error", "error": str(exc)})
+        return EXIT_ERROR
 
 
 if __name__ == "__main__":

@@ -1,0 +1,188 @@
+/* ask-page · page styles (inlined into the output by `ask_page.py new`)
+   Prefix: .ap-*  |  Theme: light + dark via prefers-color-scheme. */
+
+:root{
+  --ap-accent:#2f6fed; --ap-accent-soft:rgba(47,111,237,.10);
+  --ap-bg:#f6f7f9; --ap-fg:#14171d; --ap-muted:#6b7280; --ap-line:rgba(0,0,0,.10);
+  --ap-card:#fff; --ap-code:#f2f3f6; --ap-ok:#1a7f37; --ap-warn:#b8860b; --ap-bad:#c0392b;
+  --ap-quote:rgba(0,0,0,.06);
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --ap-accent:#6f9bff; --ap-accent-soft:rgba(111,155,255,.14);
+    --ap-bg:#0f1115; --ap-fg:#e7e9ee; --ap-muted:#9aa3b2; --ap-line:rgba(255,255,255,.12);
+    --ap-card:#171a20; --ap-code:#1e222a; --ap-ok:#4fd07a; --ap-warn:#e0b24a; --ap-bad:#f0705f;
+    --ap-quote:rgba(255,255,255,.07);
+  }
+}
+
+html{color-scheme:light dark; scroll-behavior:smooth}
+*{box-sizing:border-box}
+body{
+  margin:0;background:var(--ap-bg);color:var(--ap-fg);padding-bottom:92px;
+  font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--ap-accent)}
+code,pre,kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.92em}
+code{background:var(--ap-code);padding:.12em .38em;border-radius:5px}
+pre{background:var(--ap-code);padding:14px 16px;border-radius:10px;overflow:auto;border:1px solid var(--ap-line)}
+pre code{background:none;padding:0}
+img{max-width:100%}
+
+/* ── header ─────────────────────────────────────────── */
+.ap-head{max-width:1180px;margin:0 auto;padding:34px 24px 6px}
+.ap-eyebrow{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--ap-muted)}
+.ap-head h1{margin:6px 0 4px;font-size:26px;letter-spacing:-.01em}
+.ap-head .ap-sub{margin:0;color:var(--ap-muted);max-width:80ch}
+.ap-meta{margin-top:10px;font-size:12.5px;color:var(--ap-muted);display:flex;gap:16px;flex-wrap:wrap;align-items:center}
+.ap-meta .ap-warn-text{color:var(--ap-warn)}
+.ap-link{
+  font:inherit;font-size:12.5px;padding:2px 8px;border-radius:7px;border:1px solid var(--ap-line);
+  background:transparent;color:var(--ap-muted);cursor:pointer;
+}
+.ap-link:hover{color:var(--ap-fg);border-color:var(--ap-accent)}
+
+/* ── submitted banner ───────────────────────────────── */
+.ap-banner{
+  position:sticky;top:0;z-index:60;display:none;align-items:center;gap:14px;
+  padding:10px 24px;font-size:13.5px;
+  background:color-mix(in srgb,var(--ap-ok) 14%,var(--ap-bg));
+  border-bottom:1px solid color-mix(in srgb,var(--ap-ok) 40%,transparent);
+}
+.ap-banner.show{display:flex}
+.ap-banner .ap-banner-text{flex:1;min-width:0}
+.ap-banner b{color:var(--ap-ok)}
+.ap-banner .ap-btn{padding:4px 12px;font-size:12.5px}
+
+/* ── layout ─────────────────────────────────────────── */
+.ap-layout{max-width:1180px;margin:0 auto;padding:18px 24px 40px;display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:26px;align-items:start}
+@media (max-width:960px){.ap-layout{grid-template-columns:minmax(0,1fr)}}
+
+main{min-width:0}
+main section{background:var(--ap-card);border:1px solid var(--ap-line);border-radius:14px;padding:20px 22px;margin-bottom:18px}
+main section > :first-child{margin-top:0}
+main section > :last-child{margin-bottom:0}
+h2{font-size:19px;margin:26px 0 8px}
+h3{font-size:16px;margin:20px 0 6px}
+ul,ol{padding-left:22px}
+.muted{color:var(--ap-muted)}
+
+.callout{border-left:3px solid var(--ap-accent);background:color-mix(in srgb,var(--ap-accent) 8%,transparent);padding:10px 14px;border-radius:0 8px 8px 0;margin:12px 0}
+.callout.warn{border-color:var(--ap-warn);background:color-mix(in srgb,var(--ap-warn) 12%,transparent)}
+.callout.ok{border-color:var(--ap-ok);background:color-mix(in srgb,var(--ap-ok) 12%,transparent)}
+.diff{background:var(--ap-code);border:1px solid var(--ap-line);border-radius:10px;padding:12px 14px;overflow:auto;font-family:ui-monospace,Menlo,monospace;font-size:13px}
+.diff .add{color:var(--ap-ok)}
+.diff .del{color:var(--ap-bad)}
+.diff .hunk{color:var(--ap-muted)}
+.card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:12px 0}
+.card{border:1px solid var(--ap-line);border-radius:10px;padding:12px 14px;background:var(--ap-card)}
+.card b{display:block;margin-bottom:4px}
+table{border-collapse:collapse;width:100%;margin:12px 0;font-size:14px}
+th,td{border:1px solid var(--ap-line);padding:7px 10px;text-align:left}
+figure{margin:14px 0;text-align:center}
+figcaption{font-size:12.5px;color:var(--ap-muted);margin-top:6px}
+
+/* ── anchorable content ─────────────────────────────── */
+.ap-anchorable{
+  cursor:pointer;border-radius:4px;
+  box-shadow:inset 0 -1px 0 0 color-mix(in srgb,var(--ap-accent) 55%,transparent);
+  transition:background .12s;
+}
+/* Headings shrink to their text so the affordance reads as a target,
+   not as a full-width section divider. */
+h2.ap-anchorable,h3.ap-anchorable{display:inline-block}
+.ap-anchorable:hover{background:var(--ap-accent-soft)}
+.ap-anchored{background:color-mix(in srgb,var(--ap-warn) 18%,transparent);box-shadow:inset 0 -1px 0 0 var(--ap-warn)}
+
+/* ── side panel ─────────────────────────────────────── */
+aside.ap-side{position:sticky;top:18px;display:flex;flex-direction:column;gap:14px}
+.ap-panel{background:var(--ap-card);border:1px solid var(--ap-line);border-radius:14px;padding:14px 16px}
+.ap-panel-head{font-size:13px;font-weight:700;display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.ap-panel-head .ap-count{font-weight:400;color:var(--ap-muted)}
+.ap-panel-foot{margin-top:12px;display:flex;gap:8px}
+.ap-empty{color:var(--ap-muted);font-size:13px;line-height:1.5}
+
+.ap-comment{border-left:3px solid var(--ap-accent);padding:2px 0 2px 10px;margin:0 0 14px}
+.ap-comment:last-child{margin-bottom:0}
+.ap-comment.is-submitted{border-left-color:var(--ap-line);opacity:.62}
+.ap-comment-head{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11.5px;color:var(--ap-muted)}
+.ap-comment-anchor{
+  font-family:ui-monospace,Menlo,monospace;background:var(--ap-code);border-radius:5px;padding:1px 6px;
+  max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.ap-comment-del{border:0;background:none;color:var(--ap-muted);cursor:pointer;font-size:11.5px;padding:2px 4px}
+.ap-comment-del:hover{color:var(--ap-bad)}
+.ap-comment-body{white-space:pre-wrap;margin-top:3px;font-size:13.5px}
+.ap-comment-quote{
+  font-size:12px;color:var(--ap-muted);border-left:2px solid var(--ap-line);
+  padding-left:8px;margin-top:5px;white-space:pre-wrap;
+}
+.ap-flag{font-size:10.5px;border-radius:999px;padding:1px 7px;border:1px solid var(--ap-line);color:var(--ap-muted)}
+.ap-flag.stale{color:var(--ap-warn);border-color:color-mix(in srgb,var(--ap-warn) 45%,transparent)}
+.ap-flag.sent{color:var(--ap-ok);border-color:color-mix(in srgb,var(--ap-ok) 45%,transparent)}
+
+/* ── composer (inline popover) ──────────────────────── */
+.ap-composer{
+  position:fixed;z-index:9998;width:360px;max-width:92vw;padding:12px;
+  background:var(--ap-card);color:var(--ap-fg);border:1px solid var(--ap-line);
+  border-radius:12px;box-shadow:0 14px 40px rgba(0,0,0,.22);
+  font:13.5px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+}
+.ap-composer-hint{font-weight:600;font-size:12px;color:var(--ap-muted);margin-bottom:7px}
+.ap-composer textarea{
+  width:100%;min-height:84px;resize:vertical;font:inherit;padding:9px;
+  border:1px solid var(--ap-line);border-radius:8px;background:var(--ap-code);color:inherit;
+}
+.ap-composer textarea:focus{outline:2px solid var(--ap-accent);outline-offset:-1px;border-color:transparent}
+.ap-composer-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:9px}
+
+/* ── buttons ────────────────────────────────────────── */
+.ap-btn{
+  font:inherit;padding:6px 14px;border-radius:8px;border:1px solid var(--ap-line);
+  background:var(--ap-card);color:var(--ap-fg);cursor:pointer;
+}
+.ap-btn:hover{border-color:var(--ap-accent)}
+.ap-btn:disabled{opacity:.5;cursor:default}
+.ap-btn.primary{background:var(--ap-accent);border-color:transparent;color:#fff;font-weight:600}
+.ap-btn.ghost{background:transparent;color:var(--ap-muted)}
+.ap-btn.ghost:hover{color:var(--ap-fg)}
+
+/* ── bottom bar ─────────────────────────────────────── */
+.ap-bar{
+  position:fixed;left:0;right:0;bottom:0;z-index:50;
+  background:color-mix(in srgb,var(--ap-bg) 88%,transparent);
+  backdrop-filter:blur(10px);border-top:1px solid var(--ap-line);padding:11px 24px;
+}
+.ap-bar-in{max-width:1180px;margin:0 auto;display:flex;gap:18px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.ap-bar-left{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.ap-bar .ap-lbl{font-size:13px;color:var(--ap-muted)}
+.ap-bar-right{display:flex;gap:9px;align-items:center}
+
+/* ── choice group ───────────────────────────────────── */
+.ap-choice{display:flex;flex-wrap:wrap;gap:8px}
+.ap-choice-opt{
+  font:inherit;padding:6px 15px;border-radius:999px;border:1px solid var(--ap-line);
+  background:transparent;color:var(--ap-fg);cursor:pointer;
+}
+.ap-choice-opt:hover{border-color:var(--ap-accent)}
+.ap-choice-active{background:var(--ap-accent);border-color:transparent;color:#fff;font-weight:600}
+
+/* ── modal (manual copy fallback) ───────────────────── */
+.ap-overlay{
+  position:fixed;inset:0;z-index:9999;display:none;align-items:center;justify-content:center;
+  background:rgba(10,14,22,.55);backdrop-filter:blur(3px);padding:24px;
+}
+.ap-overlay.show{display:flex}
+.ap-modal{
+  background:var(--ap-card);color:var(--ap-fg);border-radius:14px;padding:20px 22px;
+  width:min(720px,94vw);box-shadow:0 20px 60px rgba(0,0,0,.35);
+  font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+}
+.ap-modal h2{margin:0 0 6px;font-size:17px}
+.ap-modal p{margin:0 0 12px;color:var(--ap-muted);font-size:13px}
+.ap-modal textarea{
+  width:100%;height:320px;resize:vertical;font:12.5px/1.55 ui-monospace,Menlo,monospace;
+  padding:11px;border:1px solid var(--ap-line);border-radius:9px;background:var(--ap-code);color:inherit;
+}
+.ap-modal-actions{display:flex;gap:9px;justify-content:flex-end;margin-top:12px}
