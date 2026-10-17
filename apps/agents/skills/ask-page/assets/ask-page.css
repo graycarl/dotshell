@@ -79,21 +79,29 @@ ul,ol{padding-left:22px}
 .card{border:1px solid var(--ap-line);border-radius:10px;padding:12px 14px;background:var(--ap-card)}
 .card b{display:block;margin-bottom:4px}
 table{border-collapse:collapse;width:100%;margin:12px 0;font-size:14px}
+blockquote{border-left:3px solid var(--ap-line);margin:12px 0;padding:4px 14px;color:var(--ap-muted)}
+hr{border:0;border-top:1px solid var(--ap-line);margin:22px 0}
 th,td{border:1px solid var(--ap-line);padding:7px 10px;text-align:left}
 figure{margin:14px 0;text-align:center}
 figcaption{font-size:12.5px;color:var(--ap-muted);margin-top:6px}
 
 /* ── anchorable content ─────────────────────────────── */
+/* Underline hugs the text (not the box), so a clickable paragraph never
+   looks like a full-width section divider. */
 .ap-anchorable{
   cursor:pointer;border-radius:4px;
-  box-shadow:inset 0 -1px 0 0 color-mix(in srgb,var(--ap-accent) 55%,transparent);
+  text-decoration:underline;
+  text-decoration-color:color-mix(in srgb,var(--ap-accent) 45%,transparent);
+  text-decoration-thickness:1px;
+  text-underline-offset:4px;
   transition:background .12s;
 }
-/* Headings shrink to their text so the affordance reads as a target,
-   not as a full-width section divider. */
+/* Headings shrink to their text so the hover highlight reads as a target. */
 h2.ap-anchorable,h3.ap-anchorable{display:inline-block}
+/* Dense blocks: underlining every line is noise, hover is enough. */
+pre.ap-anchorable,table.ap-anchorable,.diff.ap-anchorable,code.ap-anchorable{text-decoration:none}
 .ap-anchorable:hover{background:var(--ap-accent-soft)}
-.ap-anchored{background:color-mix(in srgb,var(--ap-warn) 18%,transparent);box-shadow:inset 0 -1px 0 0 var(--ap-warn)}
+.ap-anchored{background:color-mix(in srgb,var(--ap-warn) 18%,transparent);text-decoration-color:var(--ap-warn)}
 
 /* ── side panel ─────────────────────────────────────── */
 aside.ap-side{position:sticky;top:18px;display:flex;flex-direction:column;gap:14px}

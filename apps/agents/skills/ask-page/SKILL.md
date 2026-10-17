@@ -60,6 +60,12 @@ stdout 只有一行 JSON；stderr 是进度。
 | 让某块内容可被点击批注 | `<h2 data-pi-anchor="plan-3">…</h2>`（**anchor 唯一、英文短横线、跨轮次稳定**） |
 | 不想写 HTML | `<script type="text/markdown">…</script>`，会被就地渲染（标题、列表、代码块、表格、引用） |
 
+现成的例子：`assets/example.html` 覆盖了全部预置组件，直接
+
+```bash
+python3 "$SKILL/scripts/ask_page.py" new demo --title "组件清单" --body "$SKILL/assets/example.html" --open
+```
+
 可用的样式类（已内置，直接用）：
 
 - `.callout` / `.callout.warn` / `.callout.ok` —— 提示块

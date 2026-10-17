@@ -1,0 +1,90 @@
+<!-- 正文示例：把本文件交给 ask_page.py new 就能得到一个完整的组件清单页面。
+     python3 scripts/ask_page.py new demo --title "组件清单" --body assets/example.html --open
+
+     写法要点：只写 <main> 里的内容；需要批注的块加 data-pi-anchor。 -->
+
+<section>
+  <h2 data-pi-anchor="intro">预置组件一览</h2>
+  <p>下面每一块都是模板自带的样式，写正文时直接就能用，不需要额外 CSS。每块都挂了 anchor —— 可以随手点开批注，正好试试手感。</p>
+
+  <h3 data-pi-anchor="c-callout">提示块 <code>.callout</code></h3>
+  <p>三种语气，用来强调「需要多看一眼」的那句话。</p>
+  <div class="callout" data-pi-anchor="c-callout-default">默认：中性提示，补充背景或前提。</div>
+  <div class="callout ok" data-pi-anchor="c-callout-ok">成功 / 确认：这项校验已经通过，不需要再看。</div>
+  <div class="callout warn" data-pi-anchor="c-callout-warn">警告：这里需要你本人拍板，我不能替你决定。</div>
+
+  <h3 data-pi-anchor="c-text">正文、列表与行内代码</h3>
+  <ul>
+    <li data-pi-anchor="c-li">列表项也可以挂 anchor —— 点它就能单独批注这一条。</li>
+    <li>行内代码 <code>ask_page.py new plan</code>，以及 <b>加粗</b>、<i>斜体</i>、<del>删除线</del>。</li>
+    <li>有序列表用来写步骤：
+      <ol>
+        <li>写正文</li>
+        <li>生成页面</li>
+        <li>复制结果</li>
+      </ol>
+    </li>
+  </ul>
+
+  <h3 data-pi-anchor="c-code">代码块</h3>
+  <pre data-pi-anchor="c-pre"><code>python3 "$SKILL/scripts/ask_page.py" new plan \
+  --title "方案确认" \
+  --body .pi/ask-page/plan.body.html --open</code></pre>
+
+  <h3 data-pi-anchor="c-diff">Diff 着色 <code>.diff</code></h3>
+  <div class="diff" data-pi-anchor="c-diff-body"><div class="hunk">@@ -18,7 +18,8 @@ function submit()</div>
+<div class="del">-    copyText(text, onDone)</div>
+<div class="add">+    copyText(text, function (how) {</div>
+<div class="add">+      showPreview(text, how)</div>
+<div>     })</div>
+  </div>
+
+  <h3 data-pi-anchor="c-cards">卡片网格 <code>.card-grid</code> / <code>.card</code></h3>
+  <div class="card-grid">
+    <div class="card" data-pi-anchor="c-card-1"><b>产物</b>单个 HTML，可拷贝、可邮件</div>
+    <div class="card"><b>草稿</b>localStorage，刷新不丢</div>
+    <div class="card"><b>回传</b>剪贴板 → 对话</div>
+  </div>
+
+  <h3 data-pi-anchor="c-table">表格</h3>
+  <table data-pi-anchor="c-table-body">
+    <tr><th>组件</th><th>用途</th><th>写法</th></tr>
+    <tr><td>提示块</td><td>强调一句话</td><td><code>.callout</code></td></tr>
+    <tr><td>Diff</td><td>审阅改动</td><td><code>.diff</code> + <code>.add/.del/.hunk</code></td></tr>
+    <tr><td>卡片</td><td>并列摘要</td><td><code>.card-grid</code></td></tr>
+    <tr><td>引用</td><td>引述原文</td><td><code>&lt;blockquote&gt;</code></td></tr>
+  </table>
+
+  <h3 data-pi-anchor="c-quote">引用与分割线</h3>
+  <blockquote>批注导出的格式刻意保持简单：哨兵 + 标题 + 正文。人和模型读的是同一份东西。</blockquote>
+  <hr>
+
+  <h3 data-pi-anchor="c-md">Markdown 块（不想手写 HTML 时）</h3>
+  <script type="text/markdown">
+不想写标签时，把内容塞进 `script[type="text/markdown"]`，脚本会就地渲染成 HTML。
+
+- 标题、**加粗**、`行内代码`、列表
+- 引用、表格、围栏代码块
+
+| 语法 | 渲染成 |
+|---|---|
+| `## 标题` | h2 |
+| `- 项目` | ul > li |
+| `**文字**` | strong |
+
+```js
+// 围栏代码块也支持
+window.askPage.comment("plan-3", "这里要加回滚步骤");
+```
+  </script>
+</section>
+
+<section>
+  <h2 data-pi-anchor="ui">页面自带的三件交互</h2>
+  <div class="card-grid">
+    <div class="card"><b>① 点段落写批注</b>正文里带下划线的块都能点；框选一段文字再点，会带上原文引用。</div>
+    <div class="card"><b>② 复制结果 + 预览</b>右下角按钮把全文写进剪贴板，同时弹窗让你确认；被浏览器拦住时自动全选。</div>
+    <div class="card"><b>③ ↻ 载入最新内容</b>agent 改完正文后点它，草稿原地保留。</div>
+  </div>
+  <div class="callout" data-pi-anchor="ui-tip">批注存在本机浏览器里（key 是 <code>ask-page:&lt;id&gt;</code>），关掉页面也不会丢；想清空就点左下角「清空全部批注」。</div>
+</section>
