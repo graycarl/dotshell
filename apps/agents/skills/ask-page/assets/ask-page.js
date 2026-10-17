@@ -394,6 +394,7 @@
   }
 
   var pop = null;
+  var popOpenedAt = 0;
 
   function showPop(text, how) {
     pop = pop || $("[data-ap-pop]");
@@ -412,6 +413,10 @@
     if (body) body.textContent = text;
     if (note) note.textContent = copied ? "粘回对话即可" : "已全选 · ⌘C / Ctrl+C";
     pop.hidden = false;
+    // Reset only after the panel is laid out: a display:none element keeps its
+    // previous scroll offset, so setting scrollTop before unhiding is lost.
+    if (body) body.scrollTop = 0;
+    popOpenedAt = Date.now();
 
     if (!copied && body) {
       var range = document.createRange();
@@ -434,6 +439,32 @@
     if (!pop || pop.hidden) return;
     if (pop.contains(ev.target)) return;
     if (ev.target.closest && ev.target.closest("[data-ap-copy]")) return;
+    hidePop();
+  }
+
+  // Wheel over the popover must never leak into the page. Once the preview
+  // itself is at either end, swallow the event instead of scroll-chaining.
+  function onPopWheel(ev) {
+    var body = $("[data-ap-pop-body]", pop);
+    if (!body) { ev.preventDefault(); return; }
+    // Wheel over the header/footer should still move the preview, never the page.
+    if (!body.contains(ev.target)) {
+      ev.preventDefault();
+      body.scrollTop += ev.deltaY;
+      return;
+    }
+    var scrollable = body.scrollHeight > body.clientHeight + 1;
+    if (!scrollable) { ev.preventDefault(); return; }
+    var atTop = body.scrollTop <= 0;
+    var atBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 1;
+    if ((ev.deltaY < 0 && atTop) || (ev.deltaY > 0 && atBottom)) ev.preventDefault();
+  }
+
+  // Scrolling the page means "done reading" — dismiss instead of leaving the
+  // panel pinned over content the user is now looking at.
+  function onPageScroll() {
+    if (!pop || pop.hidden) return;
+    if (Date.now() - popOpenedAt < 300) return;
     hidePop();
   }
 
@@ -572,6 +603,13 @@
     $$("[data-ap-close]").forEach(function (el) {
       el.addEventListener("click", hidePop);
     });
+
+    if (!window.__askPagePopBound) {
+      window.__askPagePopBound = true;
+      var popEl = $("[data-ap-pop]");
+      if (popEl) popEl.addEventListener("wheel", onPopWheel, { passive: false });
+      window.addEventListener("scroll", onPageScroll, { passive: true });
+    }
 
     if (document.body.getAttribute("data-ap-keys") !== "1") {
       document.body.setAttribute("data-ap-keys", "1");
