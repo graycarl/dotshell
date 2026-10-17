@@ -657,6 +657,10 @@
     <figcaption>图 9 · 标记只负责「交互」，导出格式由脚本统一生成。</figcaption>
   </figure>
 
+  <div class="callout"><b>选项也可以是卡片。</b>给容器写 <code>data-pi-option</code>、给里面的元素写 <code>data-pi-value</code>，
+  整块内容就是一个选项 —— 标题、说明、代码都能放。脚本只负责加圆点和点击，不动你的结构；
+  卡片里的链接和按钮照常工作。</div>
+
   <div class="callout warn"><b>离线假设：</b>页面在 <code>file://</code> 下打开，<b>不要引用 CDN</b>；外部图片和 <code>plan.html</code> 放同一目录用相对路径。同理，<code>&lt;script type="module"&gt;</code> 在 <code>file://</code> 下会被 CORS 拦，所以脚本必须是普通 IIFE。</div>
 </section>
 

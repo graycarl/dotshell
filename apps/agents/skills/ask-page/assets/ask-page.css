@@ -95,20 +95,25 @@ pre.ap-anchorable,table.ap-anchorable,.diff.ap-anchorable,code.ap-anchorable{tex
 .ap-opt{margin:14px 0;max-width:660px}
 .ap-opt-prompt{font-size:13.5px;font-weight:600;margin-bottom:6px}
 .ap-opt-list{display:flex;flex-direction:column;gap:2px}
-.ap-opt-item{
+
+/* shared by every choice */
+.ap-opt-item{position:relative;cursor:pointer;transition:background .12s,border-color .12s,box-shadow .12s}
+.ap-opt-item:focus-visible{outline:2px solid var(--ap-accent);outline-offset:2px}
+
+/* shape 1: generated rows */
+.ap-opt-list .ap-opt-item{
   display:flex;align-items:flex-start;gap:10px;width:100%;text-align:left;
   font:inherit;font-size:14px;line-height:1.55;padding:8px 12px;border-radius:9px;
-  border:1px solid transparent;background:transparent;color:inherit;cursor:pointer;
+  border:1px solid transparent;background:transparent;color:inherit;
 }
-.ap-opt-item:hover{background:var(--ap-accent-soft)}
-.ap-opt-item:focus-visible{outline:2px solid var(--ap-accent);outline-offset:-2px}
+.ap-opt-list .ap-opt-item:hover{background:var(--ap-accent-soft)}
 .ap-opt-mark{
   flex:none;width:15px;height:15px;margin-top:2px;border-radius:50%;position:relative;
   border:1.5px solid color-mix(in srgb,var(--ap-fg) 30%,transparent);
   transition:border-color .12s;
 }
 .ap-opt[data-multiple="true"] .ap-opt-mark{border-radius:4px}
-.ap-opt-item[aria-checked="true"]{
+.ap-opt-list .ap-opt-item[aria-checked="true"]{
   border-color:color-mix(in srgb,var(--ap-accent) 40%,transparent);
   background:var(--ap-accent-soft);
 }
@@ -117,6 +122,22 @@ pre.ap-anchorable,table.ap-anchorable,.diff.ap-anchorable,code.ap-anchorable{tex
   content:"";position:absolute;inset:2.5px;border-radius:50%;background:var(--ap-accent);
 }
 .ap-opt[data-multiple="true"] .ap-opt-item[aria-checked="true"] .ap-opt-mark::after{border-radius:1.5px}
+
+/* shape 2: your own markup (cards) */
+.ap-opt[data-layout="content"]{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+  gap:10px;max-width:100%;
+}
+.ap-opt[data-layout="content"] .ap-opt-prompt{grid-column:1/-1;margin-bottom:0}
+.ap-opt[data-layout="content"] .ap-opt-item{padding-right:42px}
+.ap-opt[data-layout="content"] .ap-opt-mark{position:absolute;right:14px;top:14px;margin:0}
+.ap-opt[data-layout="content"] .ap-opt-item[aria-checked="true"]{
+  border-color:var(--ap-accent);
+  box-shadow:0 0 0 1.5px var(--ap-accent);
+}
+.ap-opt[data-layout="content"] .ap-opt-item:not([aria-checked="true"]):hover{
+  border-color:color-mix(in srgb,var(--ap-accent) 45%,transparent);
+}
 
 /* ── side panel ─────────────────────────────────────── */
 aside.ap-side{position:sticky;top:18px;display:flex;flex-direction:column;gap:14px}

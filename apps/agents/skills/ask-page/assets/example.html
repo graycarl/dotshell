@@ -69,6 +69,13 @@
        data-pi-options="dev,staging,prod"
        data-pi-labels="开发 | 预发 | 生产"></div>
 
+  <h3 data-pi-anchor="c-option-cards">卡片式选项</h3>
+  <p>给容器加 <code>data-pi-option</code>、给每一项加 <code>data-pi-value</code>，整张卡就是选项。</p>
+  <div data-pi-option="plan" data-pi-prompt="选一个方案">
+    <div class="card" data-pi-value="a"><b>方案 A · 只加索引</b>改动最小，收益一般。</div>
+    <div class="card" data-pi-value="b"><b>方案 B · 改写查询</b>彻底，但要回归两天。</div>
+  </div>
+
   <h3 data-pi-anchor="c-md">Markdown 块（不想手写 HTML 时）</h3>
   <script type="text/markdown">
 不想写标签时，把内容塞进 `script[type="text/markdown"]`，脚本会就地渲染成 HTML。

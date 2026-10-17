@@ -245,19 +245,76 @@
   }
 
   // ── option lists ───────────────────────────────────────────────────────
-  // One question, N answers. Single select by default; data-pi-multiple="true"
-  // turns it into a checkbox list. Values live in state.options[name].
-  function optionMeta(el) {
-    function split(attr, sep) {
-      return (el.getAttribute(attr) || "").split(sep).map(function (s) { return s.trim(); });
+  // Two shapes, one state:
+  //   1. generated rows   <div data-pi-option="x" data-pi-options="a,b" data-pi-labels="甲|乙"></div>
+  //   2. your own markup  <div data-pi-option="x"><div class="card" data-pi-value="a">…</div>…</div>
+  // Shape 2 keeps arbitrary content (cards, descriptions, code) and only adds
+  // a marker plus click handling — so a card can be a choice.
+  function trimList(list) {
+    return list.map(function (s) { return s.trim(); });
+  }
+
+  function firstLabel(node) {
+    var first = null;
+    for (var i = 0; i < node.children.length; i++) {
+      if (!node.children[i].classList.contains("ap-opt-mark")) { first = node.children[i]; break; }
     }
-    return {
-      name: (el.getAttribute("data-pi-option") || "").trim(),
-      prompt: (el.getAttribute("data-pi-prompt") || "").trim(),
-      multiple: el.getAttribute("data-pi-multiple") === "true",
-      options: split("data-pi-options", ",").filter(Boolean),
-      labels: split("data-pi-labels", "|")
-    };
+    var text = (first ? first.textContent : node.textContent) || "";
+    text = text.replace(/\s+/g, " ").trim();
+    return text.length > 24 ? text.slice(0, 24) + "…" : text;
+  }
+
+  function readOption(el) {
+    var name = (el.getAttribute("data-pi-option") || "").trim();
+    var prompt = (el.getAttribute("data-pi-prompt") || "").trim();
+    var multiple = el.getAttribute("data-pi-multiple") === "true";
+    var entries = [];
+
+    var custom = [];
+    for (var i = 0; i < el.children.length; i++) {
+      if (el.children[i].hasAttribute("data-pi-value")) custom.push(el.children[i]);
+    }
+
+    if (custom.length) {
+      custom.forEach(function (node) {
+        // Freeze the label before the marker is injected, so later reads agree.
+        if (!node.getAttribute("data-pi-label")) {
+          node.setAttribute("data-pi-label", firstLabel(node));
+        }
+        entries.push({
+          value: node.getAttribute("data-pi-value"),
+          label: node.getAttribute("data-pi-label"),
+          node: node
+        });
+      });
+    } else {
+      var values = trimList((el.getAttribute("data-pi-options") || "").split(",")).filter(Boolean);
+      var labels = trimList((el.getAttribute("data-pi-labels") || "").split("|"));
+      values.forEach(function (value, index) {
+        entries.push({ value: value, label: labels[index] || value, node: null });
+      });
+    }
+    return { name: name, prompt: prompt, multiple: multiple, entries: entries };
+  }
+
+  function promptNode(text) {
+    var node = document.createElement("div");
+    node.className = "ap-opt-prompt";
+    node.textContent = text;
+    return node;
+  }
+
+  function toggleOption(name, multiple, value) {
+    if (multiple) {
+      var cur = Array.isArray(state.options[name]) ? state.options[name].slice() : [];
+      var at = cur.indexOf(value);
+      if (at === -1) cur.push(value); else cur.splice(at, 1);
+      setOption(name, cur.length ? cur : null);
+    } else {
+      // Clicking the current answer clears it: a question may stay unanswered,
+      // and a misclick must be undoable.
+      setOption(name, state.options[name] === value ? null : value);
+    }
   }
 
   function setOption(name, value) {
@@ -271,60 +328,71 @@
     $$("[data-pi-option]").forEach(setupOption);
   }
 
+  function enhanceOptionNode(node, opt) {
+    if (node.getAttribute("data-ap-item") === "1") return;
+    node.setAttribute("data-ap-item", "1");
+    node.setAttribute("data-value", node.getAttribute("data-pi-value"));
+    node.classList.add("ap-opt-item");
+    node.setAttribute("role", opt.multiple ? "checkbox" : "radio");
+
+    var mark = document.createElement("span");
+    mark.className = "ap-opt-mark";
+    node.insertBefore(mark, node.firstChild);
+
+    node.addEventListener("click", function (ev) {
+      // Links and form controls inside a card keep their own behaviour.
+      var hit = ev.target.closest && ev.target.closest("a,input,button,textarea,select");
+      if (hit && hit !== node) return;
+      toggleOption(opt.name, opt.multiple, node.getAttribute("data-value"));
+    });
+  }
+
   function setupOption(el) {
-    var meta = optionMeta(el);
-    if (!meta.name || !meta.options.length) return;
+    var opt = readOption(el);
+    if (!opt.name || !opt.entries.length) return;
 
     if (el.getAttribute("data-ap-ready") !== "1") {
       el.setAttribute("data-ap-ready", "1");
       el.classList.add("ap-opt");
-      el.setAttribute("role", meta.multiple ? "group" : "radiogroup");
-      if (meta.multiple) el.setAttribute("data-multiple", "true");
-      if (meta.prompt) el.setAttribute("aria-label", meta.prompt);
-      el.textContent = "";
+      el.setAttribute("role", opt.multiple ? "group" : "radiogroup");
+      if (opt.multiple) el.setAttribute("data-multiple", "true");
+      if (opt.prompt) el.setAttribute("aria-label", opt.prompt);
 
-      if (meta.prompt) {
-        var prompt = document.createElement("div");
-        prompt.className = "ap-opt-prompt";
-        prompt.textContent = meta.prompt;
-        el.appendChild(prompt);
+      var custom = opt.entries.some(function (e) { return !!e.node; });
+
+      if (custom) {
+        el.setAttribute("data-layout", "content");
+        if (opt.prompt) el.insertBefore(promptNode(opt.prompt), el.firstChild);
+        opt.entries.forEach(function (entry) { enhanceOptionNode(entry.node, opt); });
+      } else {
+        el.textContent = "";
+        if (opt.prompt) el.appendChild(promptNode(opt.prompt));
+        var list = document.createElement("div");
+        list.className = "ap-opt-list";
+        opt.entries.forEach(function (entry) {
+          var item = document.createElement("button");
+          item.type = "button";
+          item.className = "ap-opt-item";
+          item.setAttribute("data-value", entry.value);
+          item.setAttribute("role", opt.multiple ? "checkbox" : "radio");
+          var mark = document.createElement("span");
+          mark.className = "ap-opt-mark";
+          var label = document.createElement("span");
+          label.className = "ap-opt-label";
+          label.textContent = entry.label;
+          item.appendChild(mark);
+          item.appendChild(label);
+          item.addEventListener("click", function () {
+            toggleOption(opt.name, opt.multiple, entry.value);
+          });
+          list.appendChild(item);
+        });
+        el.appendChild(list);
       }
 
-      var list = document.createElement("div");
-      list.className = "ap-opt-list";
-
-      meta.options.forEach(function (value, index) {
-        var item = document.createElement("button");
-        item.type = "button";
-        item.className = "ap-opt-item";
-        item.setAttribute("data-value", value);
-        item.setAttribute("role", meta.multiple ? "checkbox" : "radio");
-        var mark = document.createElement("span");
-        mark.className = "ap-opt-mark";
-        var label = document.createElement("span");
-        label.className = "ap-opt-label";
-        label.textContent = meta.labels[index] || value;
-        item.appendChild(mark);
-        item.appendChild(label);
-        item.addEventListener("click", function () {
-          if (meta.multiple) {
-            var cur = Array.isArray(state.options[meta.name]) ? state.options[meta.name].slice() : [];
-            var at = cur.indexOf(value);
-            if (at === -1) cur.push(value); else cur.splice(at, 1);
-            setOption(meta.name, cur.length ? cur : null);
-          } else {
-            // Clicking the current answer clears it: a question on this page is
-            // allowed to stay unanswered, and a misclick must be undoable.
-            setOption(meta.name, state.options[meta.name] === value ? null : value);
-          }
-        });
-        list.appendChild(item);
-      });
-      el.appendChild(list);
-
       // Arrow keys move the selection inside a radio group, like native radios.
-      list.addEventListener("keydown", function (ev) {
-        if (meta.multiple) return;
+      el.addEventListener("keydown", function (ev) {
+        if (opt.multiple) return;
         var items = $$(".ap-opt-item", el);
         var idx = items.indexOf(document.activeElement);
         if (idx === -1) return;
@@ -337,9 +405,9 @@
         next.click();
       });
 
-      if (el.hasAttribute("data-pi-default") && state.options[meta.name] === undefined) {
+      if (el.hasAttribute("data-pi-default") && state.options[opt.name] === undefined) {
         var preset = el.getAttribute("data-pi-default");
-        state.options[meta.name] = meta.multiple
+        state.options[opt.name] = opt.multiple
           ? preset.split(",").map(function (s) { return s.trim(); }).filter(Boolean)
           : preset.trim();
         save();
@@ -347,18 +415,18 @@
     }
 
     // Paint from state. Roving tabindex keeps the group a single tab stop.
-    var current = state.options[meta.name];
+    var current = state.options[opt.name];
     var items = $$(".ap-opt-item", el);
     var focusAt = 0;
     items.forEach(function (item, index) {
       var value = item.getAttribute("data-value");
-      var on = meta.multiple
+      var on = opt.multiple
         ? Array.isArray(current) && current.indexOf(value) !== -1
         : current === value;
       item.setAttribute("aria-checked", on ? "true" : "false");
       if (on) focusAt = index;
     });
-    if (!meta.multiple) {
+    if (!opt.multiple) {
       items.forEach(function (item, index) {
         item.setAttribute("tabindex", index === focusAt ? "0" : "-1");
       });
@@ -370,18 +438,20 @@
   function optionLines() {
     var out = [];
     $$("[data-pi-option]").forEach(function (el) {
-      var meta = optionMeta(el);
-      if (!meta.name) return;
-      var value = state.options[meta.name];
+      var opt = readOption(el);
+      if (!opt.name) return;
+      var value = state.options[opt.name];
       if (value === undefined || value === null || value === "") return;
       var values = Array.isArray(value) ? value.filter(Boolean) : [value];
       if (!values.length) return;
 
       var labels = values.map(function (v) {
-        var at = meta.options.indexOf(v);
-        return (at >= 0 && meta.labels[at]) || v;
+        for (var i = 0; i < opt.entries.length; i++) {
+          if (opt.entries[i].value === v) return opt.entries[i].label || v;
+        }
+        return v;
       });
-      var head = meta.prompt && meta.prompt !== meta.name ? meta.prompt + "（" + meta.name + "）" : meta.name;
+      var head = opt.prompt && opt.prompt !== opt.name ? opt.prompt + "（" + opt.name + "）" : opt.name;
       var labelText = labels.join("、");
       var valueText = values.join(", ");
       out.push("- " + head + "：" + (labelText === valueText ? valueText : labelText + "（" + valueText + "）"));

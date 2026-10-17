@@ -60,6 +60,7 @@ stdout 只有一行 JSON；stderr 是进度。
 | 让某块内容可被点击批注 | `<h2 data-pi-anchor="plan-3">…</h2>`（**anchor 唯一、英文短横线、跨轮次稳定**） |
 | 让用户从几个选项里选一个 | `<div data-pi-option="priority" data-pi-prompt="发布优先级" data-pi-options="low,medium,high" data-pi-labels="低 \| 中 \| 高"></div>` |
 | 多选 | 同上加 `data-pi-multiple="true"`；默认值 `data-pi-default="low,high"` |
+| 卡片式选项（能放标题、说明、代码） | 自己写内容，给每一项加 `data-pi-value`：`<div data-pi-option="plan" data-pi-prompt="选一个方案"><div class="card" data-pi-value="a"><b>方案 A</b>只加索引</div>…</div>` |
 | 不想写 HTML | `<script type="text/markdown">…</script>`，会被就地渲染（标题、列表、代码块、表格、引用） |
 
 现成的例子：`assets/example.html` 覆盖了全部预置组件，直接
@@ -72,8 +73,11 @@ python3 "$SKILL/scripts/ask_page.py" new demo --title "组件清单" --body "$SK
 
 - `.callout` / `.callout.warn` / `.callout.ok` —— 提示块
 - `.diff` + `.add` / `.del` / `.hunk` —— diff 着色
-- `.card-grid` + `.card` —— 卡片
+- `.card-grid` + `.card` —— 卡片（也可以直接当选项用）
 - 普通 `<pre><code>`、`<table>`、`<img>` 都有统一观感
+
+关于卡片式选项：导出时的名称取该项**第一个子元素**的文字（比如 `<b>方案 A</b>`），太长会截断；
+想自己定就用 `data-pi-label="方案 A"`。卡片里的链接/按钮不会被选项的点击吃掉。
 
 约定：
 
