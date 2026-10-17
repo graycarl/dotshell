@@ -10,12 +10,6 @@
 </head>
 <body data-page-id="{{PAGE_ID}}">
 
-<div class="ap-banner" data-ap-banner>
-  <span class="ap-banner-text" data-ap-banner-text></span>
-  <button type="button" class="ap-btn" data-ap-copy>再次复制</button>
-  <button type="button" class="ap-btn ghost" data-ap-dismiss>收起</button>
-</div>
-
 <header class="ap-head">
   <div class="ap-eyebrow">ask-page</div>
   <h1>{{TITLE}}</h1>
@@ -52,15 +46,15 @@
   </div>
 </footer>
 
-<div class="ap-overlay" data-ap-overlay>
-  <div class="ap-modal">
-    <h2 data-ap-modal-title>已复制到剪贴板</h2>
-    <p data-ap-modal-note>下面是这次复制的内容，直接粘回对话即可。</p>
-    <textarea readonly spellcheck="false"></textarea>
-    <div class="ap-modal-actions">
-      <button type="button" class="ap-btn" data-ap-copy>再复制一次</button>
-      <button type="button" class="ap-btn primary" data-ap-close>关闭</button>
-    </div>
+<div class="ap-pop" data-ap-pop hidden>
+  <div class="ap-pop-head">
+    <span class="ap-pop-status" data-ap-pop-status>已复制到剪贴板</span>
+    <button type="button" class="ap-pop-close" data-ap-close aria-label="关闭">×</button>
+  </div>
+  <pre class="ap-pop-body" data-ap-pop-body></pre>
+  <div class="ap-pop-foot">
+    <span data-ap-pop-note>粘回对话即可</span>
+    <button type="button" class="ap-btn" data-ap-copy>再复制一次</button>
   </div>
 </div>
 

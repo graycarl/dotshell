@@ -43,18 +43,6 @@ img{max-width:100%}
 }
 .ap-link:hover{color:var(--ap-fg);border-color:var(--ap-accent)}
 
-/* ── submitted banner ───────────────────────────────── */
-.ap-banner{
-  position:sticky;top:0;z-index:60;display:none;align-items:center;gap:14px;
-  padding:10px 24px;font-size:13.5px;
-  background:color-mix(in srgb,var(--ap-ok) 14%,var(--ap-bg));
-  border-bottom:1px solid color-mix(in srgb,var(--ap-ok) 40%,transparent);
-}
-.ap-banner.show{display:flex}
-.ap-banner .ap-banner-text{flex:1;min-width:0}
-.ap-banner b{color:var(--ap-ok)}
-.ap-banner .ap-btn{padding:4px 12px;font-size:12.5px}
-
 /* ── layout ─────────────────────────────────────────── */
 .ap-layout{max-width:1180px;margin:0 auto;padding:18px 24px 40px;display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:26px;align-items:start}
 @media (max-width:960px){.ap-layout{grid-template-columns:minmax(0,1fr)}}
@@ -166,21 +154,27 @@ aside.ap-side{position:sticky;top:18px;display:flex;flex-direction:column;gap:14
 .ap-bar .ap-lbl{font-size:13px;color:var(--ap-muted)}
 .ap-bar-right{display:flex;gap:9px;align-items:center}
 
-/* ── modal (manual copy fallback) ───────────────────── */
-.ap-overlay{
-  position:fixed;inset:0;z-index:9999;display:none;align-items:center;justify-content:center;
-  background:rgba(10,14,22,.55);backdrop-filter:blur(3px);padding:24px;
+/* ── copy preview popover ───────────────────────────── */
+.ap-pop{
+  position:fixed;right:24px;bottom:78px;z-index:70;
+  width:min(560px,calc(100vw - 48px));max-height:46vh;
+  display:flex;flex-direction:column;
+  background:var(--ap-card);border:1px solid var(--ap-line);border-radius:12px;
+  box-shadow:0 14px 36px rgba(0,0,0,.20);
+  font:12px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 }
-.ap-overlay.show{display:flex}
-.ap-modal{
-  background:var(--ap-card);color:var(--ap-fg);border-radius:14px;padding:20px 22px;
-  width:min(720px,94vw);box-shadow:0 20px 60px rgba(0,0,0,.35);
-  font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+.ap-pop[hidden]{display:none}
+.ap-pop-head{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 10px 7px 12px;border-bottom:1px solid var(--ap-line)}
+.ap-pop-status{font-weight:600;color:var(--ap-ok)}
+.ap-pop-status.is-warn{color:var(--ap-warn)}
+.ap-pop-close{border:0;background:none;color:var(--ap-muted);font:16px/1 sans-serif;cursor:pointer;padding:2px 5px;border-radius:6px}
+.ap-pop-close:hover{background:var(--ap-code);color:var(--ap-fg)}
+.ap-pop-body{
+  margin:0;padding:10px 12px;overflow:auto;flex:1;min-height:0;
+  background:none;border:0;border-radius:0;
+  font:11.5px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  white-space:pre-wrap;word-break:break-word;color:var(--ap-fg);
 }
-.ap-modal h2{margin:0 0 6px;font-size:17px}
-.ap-modal p{margin:0 0 12px;color:var(--ap-muted);font-size:13px}
-.ap-modal textarea{
-  width:100%;height:320px;resize:vertical;font:12.5px/1.55 ui-monospace,Menlo,monospace;
-  padding:11px;border:1px solid var(--ap-line);border-radius:9px;background:var(--ap-code);color:inherit;
-}
-.ap-modal-actions{display:flex;gap:9px;justify-content:flex-end;margin-top:12px}
+.ap-pop-foot{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 10px 7px 12px;border-top:1px solid var(--ap-line);color:var(--ap-muted);font-size:11.5px}
+.ap-pop-foot .ap-btn{padding:3px 10px;font-size:11.5px}
+@media (max-width:640px){.ap-pop{right:12px;left:12px;width:auto}}

@@ -12,7 +12,7 @@
  *   [data-pi-submit] / [data-ap-copy]          copy the result
  *   [data-ap-comments] / [data-ap-count]       comment list / counter
  *   [data-ap-clear] / [data-ap-reload]         clear all / reload from disk
- *   [data-ap-banner] / [data-ap-status]        feedback slots
+ *   [data-ap-pop] / [data-ap-status]            copy preview / status line
  *   script[type="text/markdown"]               rendered in place
  *
  * Plain IIFE on purpose: ES modules are blocked on file:// .
@@ -67,16 +67,10 @@
     }
   }
 
-  function setStatusSaved() {
-    if (!storageOK) return;
-    var el = $("[data-ap-status]");
-    if (el) el.textContent = "草稿已保存在本机浏览器 · " + fmtTime(nowIso());
-  }
-
   function save() {
     try {
       localStorage.setItem(KEY, JSON.stringify(state));
-      setStatusSaved();
+      updateStatus();
     } catch (err) {
       warnStorage();
     }
@@ -399,33 +393,48 @@
     done(legacyCopy(text));
   }
 
-  function showPreview(text, how) {
-    var overlay = $("[data-ap-overlay]");
-    if (!overlay) {
+  var pop = null;
+
+  function showPop(text, how) {
+    pop = pop || $("[data-ap-pop]");
+    if (!pop) {
       window.prompt("复制下面的内容，粘到对话里：", text);
       return;
     }
     var copied = how !== "manual";
-    var title = $("[data-ap-modal-title]", overlay);
-    var note = $("[data-ap-modal-note]", overlay);
-    if (title) title.textContent = copied ? "已复制到剪贴板" : "浏览器拦住了自动复制";
-    if (note) {
-      note.textContent = copied
-        ? "下面是这次复制的内容，直接粘回对话即可。"
-        : "下面的内容已经全选，按 ⌘C / Ctrl+C 复制，然后粘到对话里。";
+    var status = $("[data-ap-pop-status]", pop);
+    var body = $("[data-ap-pop-body]", pop);
+    var note = $("[data-ap-pop-note]", pop);
+    if (status) {
+      status.textContent = copied ? "已复制到剪贴板" : "自动复制被拦住，请手动复制";
+      status.classList.toggle("is-warn", !copied);
     }
-    var area = $("textarea", overlay);
-    if (area) area.value = text;
-    overlay.classList.add("show");
-    if (area) {
-      area.focus();
-      if (copied) area.setSelectionRange(0, 0); else area.select();
+    if (body) body.textContent = text;
+    if (note) note.textContent = copied ? "粘回对话即可" : "已全选 · ⌘C / Ctrl+C";
+    pop.hidden = false;
+
+    if (!copied && body) {
+      var range = document.createRange();
+      range.selectNodeContents(body);
+      var sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
     }
+    setTimeout(function () {
+      document.addEventListener("mousedown", onOutsidePop, true);
+    }, 0);
   }
 
-  function hidePreview() {
-    var overlay = $("[data-ap-overlay]");
-    if (overlay) overlay.classList.remove("show");
+  function hidePop() {
+    if (pop) pop.hidden = true;
+    document.removeEventListener("mousedown", onOutsidePop, true);
+  }
+
+  function onOutsidePop(ev) {
+    if (!pop || pop.hidden) return;
+    if (pop.contains(ev.target)) return;
+    if (ev.target.closest && ev.target.closest("[data-ap-copy]")) return;
+    hidePop();
   }
 
   // ── submit ─────────────────────────────────────────────────────────────
@@ -433,8 +442,7 @@
     var text = buildExport();
     copyText(text, function (how) {
       markSubmitted();
-      showPreview(text, how);
-      showBanner(how);
+      showPop(text, how);
     });
   }
 
@@ -444,17 +452,6 @@
     state.submittedAt = now;
     save();
     renderComments();
-  }
-
-  function showBanner(how) {
-    var banner = $("[data-ap-banner]");
-    if (!banner) return;
-    var slot = $("[data-ap-banner-text]", banner);
-    if (slot) {
-      slot.textContent = "已复制到剪贴板（" + fmtTime(state.submittedAt) + "）—— 粘到对话里，agent 会接着处理。" +
-        (how === "clipboard" ? "" : "（兼容模式）");
-    }
-    banner.classList.add("show");
   }
 
   // ── misc actions ───────────────────────────────────────────────────────
@@ -572,24 +569,8 @@
       el.addEventListener("click", reloadLatest);
     });
 
-    $$("[data-ap-dismiss]").forEach(function (el) {
-      el.addEventListener("click", function () {
-        var banner = $("[data-ap-banner]");
-        if (banner) banner.classList.remove("show");
-      });
-    });
-
-    $$("[data-ap-overlay]").forEach(function (overlay) {
-      $$("[data-ap-close]", overlay).forEach(function (el) {
-        el.addEventListener("click", hidePreview);
-      });
-      overlay.addEventListener("click", function (ev) {
-        if (ev.target === overlay) hidePreview();
-      });
-      var area = $("textarea", overlay);
-      if (area) {
-        area.addEventListener("click", function () { area.select(); });
-      }
+    $$("[data-ap-close]").forEach(function (el) {
+      el.addEventListener("click", hidePop);
     });
 
     if (document.body.getAttribute("data-ap-keys") !== "1") {
@@ -599,27 +580,21 @@
           ev.preventDefault();
           submit();
         }
-        if (ev.key === "Escape") hidePreview();
+        if (ev.key === "Escape") hidePop();
       });
     }
 
-    if (state.submittedAt && state.comments.some(function (c) { return c.submitted; })) {
-      var banner = $("[data-ap-banner]");
-      if (banner) {
-        var slot = $("[data-ap-banner-text]", banner);
-        if (slot) slot.textContent = "上次导出：" + fmtTime(state.submittedAt) + "。改动后重新点「复制结果」即可。";
-        banner.classList.add("show");
-      }
-    }
   }
 
   function updateStatus() {
     if (!storageOK) return;
     var el = $("[data-ap-status]");
     if (!el) return;
-    el.textContent = state.comments.length
-      ? "草稿已保存在本机浏览器 · " + state.comments.length + " 条批注"
-      : "草稿保存在本机浏览器，刷新不会丢";
+    var parts = [state.comments.length
+      ? "草稿已保存 · " + state.comments.length + " 条批注"
+      : "草稿保存在本机浏览器，刷新不会丢"];
+    if (state.submittedAt) parts.push("上次导出 " + fmtTime(state.submittedAt));
+    el.textContent = parts.join(" · ");
   }
 
   // ── public api (for custom pages) ──────────────────────────────────────
@@ -630,6 +605,7 @@
     comment: addComment,
     submit: submit,
     exportText: buildExport,
+    preview: showPop,
     reload: reloadLatest,
     rescan: function () { setupAnchors(); render(); }
   };
