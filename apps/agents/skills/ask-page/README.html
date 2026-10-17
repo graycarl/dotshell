@@ -100,8 +100,8 @@
     <div class="eyebrow">skill · ask-page</div>
     <h1>一份 HTML，<br>把「审阅」从终端里拿出来</h1>
     <p class="lede">
-      Agent 写正文 → 脚本拼成一份<b>自包含的本地网页</b> → 用户在浏览器里逐条批注 →
-      点「复制结果」→ 粘回对话。没有服务进程、没有端口、没有令牌，产物就是<b>一个文件</b>。
+      Agent 写正文 → 脚本拼成一份<b>自包含的本地网页</b> → 用户在浏览器里逐条批注、
+      在选择题里选一个 → 点「复制结果」→ 粘回对话。没有服务进程、没有端口、没有令牌，产物就是<b>一个文件</b>。
     </p>
     <div class="chips">
       <span class="chip">产物 <b>单文件 HTML</b></span>
@@ -185,7 +185,7 @@
   <div class="grid g2">
     <div class="card accent"><span class="tag">进入 ask-page</span>
       <h4>内容需要「被审阅」</h4>
-      <p>方案 / 计划 / 文档 / diff / 报告要用户拍板，或需要逐条写批注、圈重点。</p></div>
+      <p>方案 / 计划 / 文档 / diff / 报告要用户拍板；需要逐条写批注、圈重点；或者让他从几个方案里挑一个。</p></div>
     <div class="card"><span class="tag">留在终端</span>
       <h4>只需要「一个答案」</h4>
       <p>要么 A 要么 B、需要一小段文字或一个文件名 —— 直接问，或 <code>ask_user</code>。</p></div>
@@ -497,12 +497,15 @@
     <figcaption>图 6 · 删除权永远在用户手里；agent 不替用户清理。</figcaption>
   </figure>
 
+  <p>选择题的答案住在<b>同一份草稿</b>里，只是没有「已提交」圆点：它在页面里是选中态，刷新、换版本都还在。</p>
+
   <div class="grid g2">
     <div class="card"><span class="tag">机制</span><h4>每个变更立刻落盘</h4><p>没有「保存」按钮。加一条、删一条、改一次选择，都当场写回 localStorage，刷新不丢。</p></div>
     <div class="card"><span class="tag">代价</span><h4>重复提交旧意见</h4><p>用户没删的批注会再次被导出。页面用「已提交」圆点和顶部横幅提示，导出后由用户自己判断要不要清掉。</p></div>
   </div>
 
-  <div class="callout"><b>对 agent 的硬约束：</b>重写页面时 anchor 必须<b>稳定</b>（<code>plan-3</code> 永远指同一段话）。改了 anchor，用户的旧批注会变成「位置已失效」—— 它们仍会被导出，但位置信息丢了。</div>
+  <div class="callout"><b>对 agent 的硬约束：</b>重写页面时 anchor 必须<b>稳定</b>（<code>plan-3</code> 永远指同一段话）。改了 anchor，用户的旧批注会变成「位置已失效」—— 它们仍会被导出，但位置信息丢了。
+  同理，选择题的 <code>data-pi-option</code> 名字也是契约：改了名字，用户选过的答案会<b>静默消失</b>（页面里已经没有这道题，就不再导出）。</div>
 </section>
 
 <!-- ═══════════ 7 export ═══════════ -->
@@ -785,6 +788,8 @@
     <li><b>id 和 anchor 都是跨轮次契约</b>：换 id 丢草稿，换 anchor 丢位置。</li>
     <li><b>agent 写完页面就结束本轮</b>，不要试图等待 —— 没有东西可等。</li>
     <li><b>用户可能只写几条批注，也可能什么都不写就关掉</b>，两种都要能处理。</li>
+    <li><b>选择题不选是常态</b>：<code>## 选择</code> 没出现就代表用户跳过了，不要当成出错。</li>
+    <li><b>选项 id 改名 = 静默丢答案</b>，而且不会有「位置已失效」之类的提示 —— 这一条比 anchor 更隐蔽。</li>
     <li><b><code>new</code> 会覆盖 <code>plan.html</code>，但不动 localStorage</b>；刷新后草稿还在。</li>
     <li><b>别在脚本里写字面量 <code>&lt;/script&gt;</code></b>（包括注释），否则页面静默失效；构建期会拦。</li>
     <li><b>页面不联网也离线可用</b>，所以样式、图标、字体都必须内联或用系统字体。</li>
