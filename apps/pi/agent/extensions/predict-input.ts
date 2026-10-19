@@ -5,7 +5,8 @@
  * assistant reply to a (ideally fast) model and renders the top prediction as dim
  * virtual text inside the input box, with a `⇥ N` hint when more candidates exist.
  *
- *   Enter   accept the top suggestion into the input (does not submit)
+ *   Enter   accept the top suggestion into the input (does not submit; the
+ *           candidates stay available, so clearing the input shows the ghost again)
  *   Tab     open the autocomplete list with every candidate (↑/↓ to pick, Enter/Tab to apply)
  *   typing  hide the ghost; clearing the input brings it back
  *
@@ -81,7 +82,8 @@ interface PredictItem extends AutocompleteItem {
  * cursor. Enter accepts it, Tab opens the autocomplete list with every candidate.
  *
  * Typing does not throw the candidates away: the ghost is only drawn while the
- * input is empty, so deleting the draft makes the prediction visible again. The
+ * input is empty, so deleting the draft makes the prediction visible again. That
+ * holds after accepting a suggestion too — accepting only fills the input. The
  * candidates survive until the draft is submitted, the agent starts another run,
  * or the prediction is turned off.
  */
@@ -107,11 +109,14 @@ class PredictEditor extends CustomEditor {
     return this.suggestions;
   }
 
+  /**
+   * Accepting only fills the input; the candidates stay available so that
+   * deleting the draft brings the ghost back (same as plain typing).
+   */
   private acceptTop(): void {
     const top = this.suggestions[0];
     if (!top) return;
     this.setText(top);
-    this.clearSuggestions();
   }
 
   /** Candidates exist, the input is empty and no autocomplete list is open. */
@@ -307,7 +312,8 @@ export default function (pi: ExtensionAPI) {
     },
     applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
       if ((item as PredictItem).__predict) {
-        editor?.clearSuggestions();
+        // Keep the candidates: applying one only fills the input, so clearing it
+        // afterwards must restore the ghost.
         return { lines: [item.value], cursorLine: 0, cursorCol: item.value.length };
       }
       return current.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
