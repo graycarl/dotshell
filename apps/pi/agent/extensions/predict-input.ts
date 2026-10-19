@@ -7,11 +7,11 @@
  *
  *   Enter   accept the top suggestion into the input (does not submit)
  *   Tab     open the autocomplete list with every candidate (↑/↓ to pick, Enter/Tab to apply)
- *   typing  dismiss the suggestions
+ *   typing  hide the ghost; clearing the input brings it back
  *
- * The candidates only exist while the input is empty, so the native autocomplete
- * (slash commands, @-paths, files) is untouched: with input or without candidates
- * the extension delegates to the wrapped provider.
+ * The candidates are only offered and drawn while the input is empty, so the native
+ * autocomplete (slash commands, @-paths, files) is untouched: with input or without
+ * candidates the extension delegates to the wrapped provider.
  *
  * Config (read once, from settings.json; unknown keys are passed through):
  *
@@ -78,8 +78,12 @@ interface PredictItem extends AutocompleteItem {
 
 /**
  * A CustomEditor that renders the top prediction as a dim ghost right after the
- * cursor. Enter accepts it, Tab opens the autocomplete list with every candidate,
- * and any edit that makes the input non-empty drops the candidates.
+ * cursor. Enter accepts it, Tab opens the autocomplete list with every candidate.
+ *
+ * Typing does not throw the candidates away: the ghost is only drawn while the
+ * input is empty, so deleting the draft makes the prediction visible again. The
+ * candidates survive until the draft is submitted, the agent starts another run,
+ * or the prediction is turned off.
  */
 class PredictEditor extends CustomEditor {
   private suggestions: string[] = [];
@@ -110,28 +114,44 @@ class PredictEditor extends CustomEditor {
     this.clearSuggestions();
   }
 
+  /** Candidates exist, the input is empty and no autocomplete list is open. */
+  private ghostVisible(): boolean {
+    return (
+      this.ghostStyled !== undefined && this.getText().length === 0 && !this.isShowingAutocomplete()
+    );
+  }
+
+  /** Plain Enter on a non-empty draft submits it, unless it continues a `\`-newline. */
+  private submitsOnEnter(data: string): boolean {
+    if (!matchesKey(data, "enter") || this.isShowingAutocomplete()) return false;
+    const { line, col } = this.getCursor();
+    const text = this.getLines()[line] ?? "";
+    return !(col > 0 && text[col - 1] === "\\");
+  }
+
   handleInput(data: string): void {
     // Empty input + visible ghost + Enter -> accept instead of submitting empty.
-    if (
-      this.suggestions.length > 0 &&
-      this.getText().length === 0 &&
-      !this.isShowingAutocomplete() &&
-      matchesKey(data, "enter")
-    ) {
+    if (this.suggestions.length > 0 && this.ghostVisible() && matchesKey(data, "enter")) {
       this.acceptTop();
       return;
+    }
+
+    // Submitting a draft ends this prediction: agent_start clears it a tick later
+    // anyway, and a slash command (which never emits agent_start) would otherwise
+    // resurrect the stale ghost under the emptied input.
+    if (this.suggestions.length > 0 && this.getText().length > 0 && this.submitsOnEnter(data)) {
+      this.clearSuggestions();
     }
 
     // Tab needs no special case: the base editor triggers autocomplete, our
     // provider answers it while the input is empty.
     super.handleInput(data);
-
-    if (this.suggestions.length > 0 && this.getText().length > 0) this.clearSuggestions();
   }
 
   render(width: number): string[] {
     const lines = super.render(width);
-    if (!this.ghostStyled || this.isShowingAutocomplete()) return lines;
+    const ghost = this.ghostStyled;
+    if (!ghost || !this.ghostVisible()) return lines;
 
     const index = lines.findIndex((line) => line.includes(CURSOR_MARKER));
     if (index === -1) return lines;
@@ -140,7 +160,7 @@ class PredictEditor extends CustomEditor {
     const markerAt = line.indexOf(CURSOR_MARKER);
     const resetAt = line.indexOf("\x1b[0m", markerAt);
     const insertAt = resetAt === -1 ? markerAt + CURSOR_MARKER.length : resetAt + "\x1b[0m".length;
-    const merged = line.slice(0, insertAt) + this.ghostStyled + line.slice(insertAt);
+    const merged = line.slice(0, insertAt) + ghost + line.slice(insertAt);
     lines[index] = truncateToWidth(merged, width, "");
     return lines;
   }
@@ -354,7 +374,9 @@ export default function (pi: ExtensionAPI) {
         if (token !== requestToken || controller.signal.aborted) return;
         const suggestions = parseSuggestions(extractText(response.content));
         if (suggestions.length === 0) return;
-        if (!editor || editor.getText().length > 0) return;
+        // Store the prediction even when the user is typing: the ghost is only drawn
+        // for an empty input, so it is already there once the draft is cleared.
+        if (!editor) return;
         const hint = suggestions.length > 1 ? theme.fg("muted", ` ⇥ ${suggestions.length}`) : "";
         editor.setSuggestions(suggestions, theme.fg("dim", suggestions[0]) + hint);
       } catch {
