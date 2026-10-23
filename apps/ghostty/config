@@ -12,3 +12,15 @@ keybind = alt+backspace=text:\x1b\x7f
 # theme = light:"Iceberg Light",dark:"Iceberg Dark"
 # theme = light:"Pencil Light",dark:"Pencil Dark"
 # theme = light:"Zenwritten Light",dark:"Zenwritten Dark"
+# theme = 0x96f
+
+# Theme picker (`ghostty +list-themes`): pick a theme with j/k, press Enter to open
+# the save dialog, THEN press `w`. It writes silently (no UI feedback).
+#
+# Pitfall: on macOS `w` writes next to the "preferred default config", and App Support
+# wins over XDG whenever that file exists. If
+# `~/Library/Application Support/com.mitchellh.ghostty/config` is present (even the
+# auto-generated empty template), the theme lands in
+# `.../com.mitchellh.ghostty/auto/theme.ghostty` and is NEVER loaded by the line
+# below. Keep that file deleted so `w` writes to `./auto/theme.ghostty` here instead.
+config-file = ?auto/theme.ghostty
