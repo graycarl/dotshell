@@ -49,7 +49,7 @@ esac
 
 unfunction _try-ls-args
 
-# 目录跳转那套（l/ll/la/md/rd/.../d/auto_cd）按你的要求弃用了。
-# 但 ll 是你历史里最常用的别名（84 次），想留就取消下面两行注释：
-# alias ll='ls -lh'
-# alias la='ls -lAh'
+# 目录跳转那套（l/ll/la/md/rd/.../d/auto_cd）按你的要求弃用了，
+# 只留下历史里最常用的 ls 别名（ll 用过 84 次）。
+alias ll='ls -lh'
+alias la='ls -lAh'
