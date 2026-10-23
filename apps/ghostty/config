@@ -7,8 +7,8 @@ font-size = 16
 keybind = alt+backspace=text:\x1b\x7f
 
 # theme = light:"3024 Day",dark:"3024 Night"
-theme = light:"Belafonte Day",dark:"Belafonte Night"
-# theme = light:"Gruvbox Light",dark:"Gruvbox Dark"
+# theme = light:"Belafonte Day",dark:"Belafonte Night"
+# theme = light:"Onenord Light",dark:"Onenord"
 # theme = light:"Iceberg Light",dark:"Iceberg Dark"
 # theme = light:"Pencil Light",dark:"Pencil Dark"
 # theme = light:"Zenwritten Light",dark:"Zenwritten Dark"
