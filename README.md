@@ -12,9 +12,8 @@ Bash / Zsh 配置管理，统一管理 dotfiles 和工具配置。
 ├── lib.sh                # 加载 libs/ 下所有函数库
 ├── samples.sh            # 环境相关示例配置（参考用）
 ├── .gitignore
-├── .gitmodules           # oh-my-zsh submodule
 │
-├── libs/                 # 可复用的 Shell 函数库
+├── libs/                 # 可复用的 Shell 函数库（bash/zsh 共用）
 │   ├── base.sh           #   add-to-path, load-shrc
 │   ├── py-venv.sh        #   Python 虚拟环境管理 + 自动切换
 │   ├── tmux-manager.sh   #   tmux session 批量管理
@@ -49,8 +48,8 @@ Bash / Zsh 配置管理，统一管理 dotfiles 和工具配置。
 ├── guides/               # 平台专属安装指南
 │   └── setup-on-steamos.md
 │
-├── oh-my-zsh/            # Git submodule
-├── zsh-custom/           # 自定义主题/插件
+├── zsh.d/                # zsh 专有配置（setopt/bindkey/zstyle/compinit）
+├── zsh-custom/           # 自定义主题/completions
 └── .worktrees/           # Git worktree 目录
 ```
 
@@ -63,15 +62,16 @@ git clone https://github.com/graycarl/dotshell.git ~/.shell
 ln -s ~/.shell/bashrc.sh ~/.bashrc
 ```
 
-### Zsh（使用 Oh My Zsh）
+### Zsh
 
 ```bash
 git clone https://github.com/graycarl/dotshell.git ~/.shell
-cd ~/.shell
-git submodule update --init
 ln -s ~/.shell/zshrc.sh ~/.zshrc
 chsh -s /bin/zsh
 ```
+
+不需要任何框架（不需要 Oh My Zsh / zinit / oh-my-posh）：补全、历史、键绑定、
+配色、主题都在 `zsh.d/` 里，约 300 行，启动 ~90ms。
 
 ## 应用配置（apps/）
 

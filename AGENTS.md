@@ -28,12 +28,25 @@ zsh
    │   ├── libs/worktree.sh      — worktree 管理命令
    │   └── libs/macgui.sh        — macOS GUI 通知/对话框
    ├── local/shrc        — 机器级私有配置（可选，不入库）
-   ├── oh-my-zsh.sh      — Oh My Zsh 框架
+   ├── zsh.d/*.zsh       — zsh 专有配置（按文件名顺序，bash 不加载）
+   │   ├── 00-compinit.zsh       — compinit + zcompdump 缓存 + zcompile
+   │   ├── 10-history.zsh        — 历史记录 setopt
+   │   ├── 20-completion.zsh     — 补全行为/外观 + zsh/complist
+   │   ├── 30-keybindings.zsh    — 键绑定（↑ 前缀搜索、Ctrl-R、Ctrl-X Ctrl-E 等）
+   │   ├── 40-colors-ls.zsh      — colors 变量 + LS_COLORS/LSCOLORS + ls 配色
+   │   ├── 45-grep.zsh           — grep 上色 + 跳过版本控制目录
+   │   ├── 50-paste-magic.zsh    — 粘贴保护 + URL 自动加引号
+   │   └── 60-vcs_info-patch.zsh — vcs_info 的 % 引号补丁（prompt 用）
+   ├── zsh-custom/themes/$ZSH_THEME.zsh-theme — 主题（默认 hhb）
    ├── try-init-rust     — 初始化 Rust (~/.cargo/env)
    ├── try-init-neovim   — Neovim 别名
    ├── try-init-uv       — 初始化 Python UV + venv 工具
    └── alias transvideo  — 视频转码 alias
 ```
+
+> 2026-10 起不再使用 Oh My Zsh：只保留了当年真正在用的几块能力（补全、历史、
+> 键绑定、配色、grep、粘贴/URL magic、vcs_info 补丁、主题），约 300 行，
+> 启动从 ~170ms 降到 ~90ms。详见 `zsh.d/` 各文件头部注释。
 
 ### Bash 启动链
 
@@ -51,8 +64,8 @@ bash
 |------|--------|------|
 | `$DOTSHELL` | `~/.shell` | 项目根目录 |
 | `$PYTHON_VENVS_HOME` | `~/.venvs` | Python 虚拟环境存放目录 |
-| `$ZSH` | `$DOTSHELL/oh-my-zsh` | Oh My Zsh 路径 |
-| `$ZSH_CUSTOM` | `$DOTSHELL/zsh-custom` | 自定义插件/主题路径 |
+| `$ZSH_THEME` | `hhb` | 主题名（`zsh-custom/themes/<name>.zsh-theme`） |
+| `$ZSH_CUSTOM` | `$DOTSHELL/zsh-custom` | 自定义主题/completions 目录（不再由 omz 设置） |
 
 ## 目录结构与约定
 
@@ -63,6 +76,16 @@ bash
 - 新增函数 → 新建文件（如 `libs/my-utils.sh`）
 - 遵循 Bash 函数命名：小写 + 中划线（如 `add-to-path`）
 - 避免与现有命令冲突，使用前缀（如 `tmux-*`, `py-*`）
+
+### `zsh.d/` — zsh 专有配置
+
+只被 `zshrc.sh` 加载（`bashrc.sh` 不读），放**带 zsh 语法的配置**：`setopt`、`bindkey`、
+`zstyle`、`compinit`、主题加载等。`libs/*.sh` 是 bash/zsh 共用的函数库，**不要**把 zsh 语法写进去
+（`bashrc.sh` 也会 source `lib.sh`）。
+
+- 文件名带数字前缀决定加载顺序：`00-` 最早（compinit 必须在补全相关配置之前）
+- 新增文件 → 直接放进去即可，无需注册
+- 目前每个文件对应一块能力，文件头部注释写了「搬自哪里、为何保留」
 
 ### `apps/` — 应用配置
 
@@ -141,15 +164,7 @@ apps/agents/skills/
 
 ### Submodule
 
-只有一个 submodule：`oh-my-zsh`。
-
-```bash
-# 首次克隆后初始化
-git submodule update --init
-
-# 更新
-git submodule update --remote oh-my-zsh
-```
+无（`oh-my-zsh` submodule 已于 2026-10 移除，Zsh 配置自带在 `zsh.d/`）。
 
 ### Worktree
 
@@ -203,9 +218,15 @@ local/
 
 ### 添加新 Shell 函数
 
-1. 在 `libs/` 下创建 `xxx.sh`
+1. 在 `libs/` 下创建 `xxx.sh`（bash/zsh 通用函数）
 2. 实现函数，遵循小写+中划线命名
 3. 自动被 `lib.sh` 加载，无需额外配置
+
+### 添加 zsh 专有配置（setopt / bindkey / zstyle / 主题）
+
+1. 在 `zsh.d/` 下新建 `<数字>-<名字>.zsh`（数字决定顺序，`00-` 最先）
+2. 写 zsh 语法，文件头部注明「搬自哪里 / 为何保留」
+3. 自动被 `zshrc.sh` 按序加载，无需额外配置
 
 ### 为 Agent 添加新 Skill
 

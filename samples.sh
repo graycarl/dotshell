@@ -3,14 +3,11 @@ export NERD_FONT=true
 if [[ $SHELL == "/bin/zsh" ]]; then
     ZSH_THEME="hhb-ys"
 
-    plugins=(git virtualenv virtualenvwrapper)
     if [[ $TERM_PROGRAM = "vscode" ]]; then
         ZSH_THEME="embeded"
-        plugins=(git virtualenv)
     fi
     if [[ -n $VIM ]]; then
         ZSH_THEME="embeded"
-        plugins=(git virtualenv)
     fi
 fi
 
