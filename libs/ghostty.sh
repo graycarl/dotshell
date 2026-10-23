@@ -7,16 +7,17 @@
 #   ghostty-theme <name>               # set a single theme
 #   ghostty-theme <light> <dark>       # set light/dark pair (follows system appearance)
 #   ghostty-theme 'light:"A",dark:"B"' # raw value passthrough
-#   ghostty-theme -p                   # pick from the nvim-aligned light/dark presets
+#   ghostty-theme -p                   # pick from the light/dark presets
 #   ghostty-theme -p <preset>          # apply a preset directly (gruvbox|kanagawa|onenord|catppuccin)
 #   ghostty-theme -l [pattern]         # list all builtin ghostty themes
 #   ghostty-theme -P                   # full TUI preview of every builtin theme
 #   ghostty-theme -r                   # show current theme + the live resolved colors
 #
-# The presets are the four palettes that Neovim can follow 1:1, both bg colors
-# are byte-identical between Ghostty and the nvim colorscheme. Neovim's
-# plugin/terminal_background.lua syncs 'background' from the terminal (OSC 11),
-# so switching here also switches the nvim colorscheme variant.
+# Nothing downstream needs a matching Neovim colorscheme any more: Neovim
+# (~/.vim/plugin/ghostty_theme.lua) and tmux (tools/ghostty-tmux-theme.py) both
+# derive their colours from the active theme's own background/foreground/palette,
+# so any builtin, user or single-theme selection works. The presets below are
+# just shortcuts for the pairs that also ship a curated Neovim colorscheme.
 #
 # After changing the theme, press Cmd+Shift+, in Ghostty to reload.
 
@@ -24,12 +25,12 @@
 GHOSTTY_CONFIG=${GHOSTTY_CONFIG:-$DOTSHELL/apps/ghostty/config}
 GHOSTTY_BIN=${GHOSTTY_BIN:-/Applications/Ghostty.app/Contents/MacOS/ghostty}
 
-# preset<TAB>light theme<TAB>dark theme<TAB>nvim colorscheme
+# preset<TAB>light theme<TAB>dark theme
 GHOSTTY_THEME_PRESETS=$(
-    printf 'gruvbox\tGruvbox Light\tGruvbox Dark\tgruvbox\n'
-    printf 'kanagawa\tKanagawa Lotus\tKanagawa Wave\tkanagawa\n'
-    printf 'onenord\tOnenord Light\tOnenord\tonenord\n'
-    printf 'catppuccin\tCatppuccin Latte\tCatppuccin Mocha\tcatppuccin\n'
+    printf 'gruvbox\tGruvbox Light\tGruvbox Dark\n'
+    printf 'kanagawa\tKanagawa Lotus\tKanagawa Wave\n'
+    printf 'onenord\tOnenord Light\tOnenord\n'
+    printf 'catppuccin\tCatppuccin Latte\tCatppuccin Mocha\n'
 )
 
 function ghostty-theme() {
@@ -116,12 +117,11 @@ function _ghostty-theme-write() {
 
 # Apply one named preset (gruvbox / kanagawa / onenord / catppuccin).
 function _ghostty-theme-apply-preset() {
-    local want label light dark nvim
+    local want label light dark
     want=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
-    while IFS=$'\t' read -r label light dark nvim; do
+    while IFS=$'\t' read -r label light dark; do
         if [[ $(printf '%s' "$label" | tr '[:upper:]' '[:lower:]') == "$want" ]]; then
             _ghostty-theme-write "light:\"$light\",dark:\"$dark\""
-            echo "nvim colorscheme: $nvim (follows 'background' automatically)"
             return 0
         fi
     done <<< "$GHOSTTY_THEME_PRESETS"
@@ -135,10 +135,10 @@ function _ghostty-theme-pick() {
     local current
     current=$(grep -E '^theme[[:space:]]*=' "$GHOSTTY_CONFIG")
 
-    local i=1 label light dark nvim marker
+    local i=1 label light dark marker
     printf '\n  #  preset      light theme        dark theme\n'
     printf '  -  --------    ----------------   ----------------\n'
-    while IFS=$'\t' read -r label light dark nvim; do
+    while IFS=$'\t' read -r label light dark; do
         marker=' '
         if [[ -n $current && $current == *"$dark"* ]]; then
             marker='*'

@@ -256,9 +256,13 @@ def main():
     if args.verbose:
         print(f"ghostty theme: {light_name!r} / {dark_name!r}", file=sys.stderr)
 
+    # a variant whose theme file is missing borrows the active one's colours
+    active = variants[active_variant()]
+    fallback = active or variants["dark"] or variants["light"]
+
     cmds = []
     for variant in ("light", "dark"):
-        theme = variants[variant] or variants[active]
+        theme = variants[variant] or fallback
         for name, value in build_colors(theme).items():
             cmds += ["set", "-sq", f"{variant}-theme-{name}", value, ";"]
 
