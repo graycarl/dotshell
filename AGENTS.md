@@ -146,7 +146,7 @@ apps/agents/skills/
 ├── context7/            # 库文档查询
 ├── exa-search/          # 互联网搜索
 ├── github/              # GitHub CLI
-├── harmonyos-project-init/ # 鸿蒙工程初始化
+├── harmonyos/           # 鸿蒙 App 开发引导（ArkTS/ArkUI/构建/真机调试）+ 工程初始化
 ├── mowen/               # 墨问笔记
 ├── plan/                # 方案设计
 ├── research/            # 问题研究

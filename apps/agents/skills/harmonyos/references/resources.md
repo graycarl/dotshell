@@ -1,16 +1,23 @@
-# HarmonyOS 开发资料清单（供 AI agent 查阅）
+# HarmonyOS 开发资料与「取正文」的方法
 
-> 维护原则（违反即视为坏链接，需修复）：
-> 1. 每条 URL 必须是**深链**（直达正文，非目录首页）且**免登录**；
-> 2. ⚠️ **`.md` 后缀技巧已失效**（2026-09 实测：华为文档站任意 URL 加 `.md` 全站 404），
->    且该站是 JS 渲染的 SPA——裸 URL 用 `curl` 永远返回 200 空壳。
->    **本清单的 URL 仅供人工/浏览器打开**；agent 取正文走下方「如何使用本文档」第 2 条的三条正路。
-> 3. 每条附一句话摘要和"何时查阅"；
-> 4. 与项目 SDK 对齐：HarmonyOS 6.0.2 / API 22（新项目以 build-profile.json5 的 targetSdkVersion 为准）。
->
-> 本文档按**开发任务**分区，不按文档类型分区。新增分区随项目开发需求补充。
+> 本文件是鸿蒙资料的**唯一来源**：
+> - skill 自身引用它（agent 查链接）；
+> - 初始化新工程时**整篇复制**为项目的 `docs/harmonyos-resources.md`（快照，人也能读）；
+> - 维护只改这里，不要再维护项目内副本。
 
-## 如何使用本文档
+## 维护原则（违反即视为坏链接，需修复）
+
+1. 每条 URL 必须是**深链**（直达正文，非目录首页）且**免登录**；
+2. ⚠️ **`.md` 后缀技巧已失效**（2026-09 实测：华为文档站任意 URL 加 `.md` 全站 404），
+   且该站是 JS 渲染的 SPA——裸 URL 用 `curl` 永远返回 200 空壳。
+   **本清单的 URL 仅供人工/浏览器打开**；agent 取正文走下方「如何取正文」的三条正路。
+3. 每条附一句话摘要和「何时查阅」；
+4. 与项目 SDK 对齐：当前基线 HarmonyOS 6.0.2 / API 22（具体项目以 `build-profile.json5`
+   的 `targetSdkVersion` 为准）。
+
+本文档按**开发任务**分区，不按文档类型分区。新增分区随开发需求补充。
+
+## 如何取正文（agent 必读）
 
 **三层配合：语义速搜 → SDK 核事实 → 官方仓库读全文**
 
@@ -18,7 +25,8 @@
    - 指南库 ID：`/websites/developer_huawei_consumer_cn_doc_harmonyos-guides`
    - API 参考库 ID：`/websites/developer_huawei_consumer_cn_doc_harmonyos-references`
    - Samples 库 ID：`/linganmin/harmonyos_samples`
-   - 适合：不知道具体页面、"怎么做 X" 类问题。局限：片段式摘录，可能缺完整签名/版本标注。
+   - 适合：不知道具体页面、「怎么做 X」类问题。局限：片段式摘录，可能缺完整签名/版本标注。
+   - 用法见 context7 skill：先 resolve 再 query，每个查询聚焦单一主题。
 
 2. **核对事实 / 读全文 → 三条正路**（免登录、可 grep、权威）：
 
@@ -30,11 +38,14 @@
       grep -n 'sys_color\|ohos_ic_public' $SDK/toolchains/id_defined.json   # sys.color.* / sys.media.* 合法名
       python3 -c "import json;d=json.load(open('$SDK/toolchains/lib/PermissionDefinitions.json'));..."  # 权限级别
       ```
+      组件/枚举声明在 `$SDK/ets/component/*.d.ts`（如 `NavPathStack`、`TextInputType` 实际叫什么）。
+
    2) **OpenHarmony 官方 docs 仓库 raw**（ArkTS 完整示例、能力/算法支持矩阵）：
       `https://raw.githubusercontent.com/openharmony/docs/master/zh-cn/application-dev/<子系统>/<主题>.md`
       - 例：`security/UniversalKeystoreKit/huks-refined-user-identity-authentication.md`（HUKS 指纹访问控制范式）
       - 能力/规格类问题查 `*-spec.md`，如 `security/CryptoArchitectureKit/crypto-sym-encrypt-decrypt-spec.md`
         （用于确认 `"AES256|CBC|NoPadding"` 这类 transformation 字符串是否合法）
+
    3) **Context7**（见第 1 条）。
 
 3. **设计新功能前先查权限级别**（决定功能可行性，属于前置闸门）：
@@ -80,10 +91,10 @@
 | [RichEditor 组件 API](https://developer.huawei.com/consumer/cn/doc/harmonyos-references/ts-basic-components-richeditor) | 富文本编辑器（图文混排内容编辑） |
 | [List 组件 API](https://developer.huawei.com/consumer/cn/doc/harmonyos-references/ts-container-list) | 列表页 |
 | [Scroll 组件 API](https://developer.huawei.com/consumer/cn/doc/harmonyos-references/ts-container-scroll) | 滚动容器 |
-| [Navigation 组件 API](https://developer.huawei.com/consumer/cn/doc/harmonyos-references/ts-basic-components-navigation) | 页面导航容器（推荐方案，见"路由与导航"） |
+| [Navigation 组件 API](https://developer.huawei.com/consumer/cn/doc/harmonyos-references/ts-basic-components-navigation) | 页面导航容器（推荐方案，见「路由与导航」） |
 
 > 查其他组件：URL 规律为 `harmonyos-references/ts-basic-components-<名称>` /
-> `ts-container-<名称>`，改名后加 `.md` 验证是否存在。
+> `ts-container-<名称>`，用浏览器确认页面是否存在（勿用 curl 判 404）。
 
 ## 状态管理
 
@@ -138,6 +149,7 @@
 |---|---|
 | [应用/元服务签名](https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/ide-signing) | 配置签名证书（真机运行前置条件） |
 | [真机运行](https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/ide-run-device) | 连接设备运行调试 |
+| [AppGallery Connect 上架](https://developer.huawei.com/consumer/cn/doc/app/agc-help-releaseharmony-0000001933963166) | 提审、发布、版本管理 |
 
 ## 系统能力与其他
 
@@ -153,13 +165,15 @@
 - ArkTS API 模块新命名：`arkts-apis-<kit>-<模块>[-<类/接口>]`
 - 旧命名 `js-apis-*` 页面多为子页索引；正文在 `arkts-apis-*` 页面
 - 站内搜索命中带 `-V13`/`-V14` 版本后缀的 URL 时，去掉后缀即为最新版地址
-- **这些 URL 规律只用于人工打开**；agent 需要正文时请走上面第 2 条（SDK d.ts / docs 仓库 raw）
+- **这些 URL 规律只用于人工打开**；agent 需要正文时请走上面「如何取正文」第 2 条
 
-## 待补充（随项目开发填充）
+## 待补充（随开发填充）
 
 - [ ] 文件管理（附件/图片存取，`@ohos.file`）
 - [ ] 权限申请流程（acl/user_grant）
 - [ ] 键盘处理与输入法
-- [ ] 备份与恢复（EntryBackupAbility 已建，backup_config.json）
-- [ ] 上架流程（AppGallery Connect）
-- [ ] 已知坑清单（报错信息 → 解法 → 文档出处）
+- [ ] 备份与恢复（EntryBackupAbility、backup_config.json）
+- [ ] 动画与转场（显式动画、属性动画、组件转场）
+- [ ] 桌面卡片（FormKit）与服务卡片
+- [ ] 深色模式与多语言资源适配
+- [ ] 上架审核常见驳回原因

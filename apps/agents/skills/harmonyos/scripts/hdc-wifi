@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # hdc-wifi — 自动发现并连接 HarmonyOS 设备的无线调试端口
 #
-# 随 harmonyos-project-init skill 分发（skills/harmonyos-project-init/scripts/hdc-wifi），
+# 随 harmonyos skill 分发（skills/harmonyos/scripts/hdc-wifi），
 # agent 直接从 skill 目录运行即可，不需要安装到 PATH。可用 HDC=/path/to/hdc 指定 hdc。
 #
 # 背景：鸿蒙手机「无线调试」的端口每次开启都是随机分配的，官方不提供固定方式。
