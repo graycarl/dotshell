@@ -54,7 +54,36 @@ API 参考页：
 - Wan 2.7 建任务：https://platform.qianwenai.com/docs/api-reference/image-generation/wan27-image-gen-edit/create-task
 - 任务查询：https://platform.qianwenai.com/docs/api-reference/image-generation/qwen-text-to-image-task-query ・ https://platform.qianwenai.com/docs/api-reference/more/manage-asynchronous-tasks
 
-## 4. pi 侧文档（写扩展必看）
+## 4. 出图尺寸与比例（调用时决定）
+
+默认 1024x1024，可以按调用覆盖，优先级从高到低：
+
+1. **`context.size`**（脚本里最直接；pi 只校验 `input`，额外字段会原样透传到实现里）
+
+   ```js
+   const painter = await models.getModelOfType("image", "qwen-tokens", "qwen-image-3.0");
+   await models.generateImages(painter, { input: [{ type: "text", text: "窗台上的橘猫" }], size: "16:9" });
+   ```
+
+2. **prompt 指令**（匹配到的指令会从提示词里删掉，不送给模型）
+   `[size=1536x864]`、`[aspect=16:9]`、`[ratio=9:16]`、`[size:16:9]`、`--size 16:9`
+3. **模型默认值**（`DEFAULT_IMAGE_SIZE`）
+
+取值：
+
+| 写法 | 说明 |
+|---|---|
+| `1024x1024` / `1024*1024` | 每边 512–2048，宽高比 ≤ 8:1 |
+| `16:9` / `9:16` / `4:3` / `3:4` / `1:1` / `3:2` / `2:3` / `21:9` … | 按长边 1024 换算（16:9 → 1024x576）；比例 > 2:1 时改按短边 512（21:9 → 1192x512） |
+| `auto` / `default` / `model` | 不传 `size`，由模型按提示词推荐 |
+
+注意：
+
+- `auto` 实测不一定是 1K：`qwen-image-2.1-turbo` 返回了 2048x2048（27.7s）；`3.0-pro` 的 2K 档单价翻倍（¥0.5），不想意外加价就显式给尺寸。
+- 计价档位按长边算：`3.0-pro` ≤1024 走 1K（¥0.25），否则 2K（¥0.5）；`3.0` 两档同价（¥0.18）。
+- 非法尺寸（越界 / 比例过大 / 无法识别）在本地直接报错，不会发请求、不产生费用。
+
+## 5. pi 侧文档（写扩展必看）
 
 | 内容 | 位置 |
 |---|---|
@@ -72,17 +101,17 @@ PI_ROOT="$(brew --prefix pi-coding-agent)/libexec/lib/node_modules/@earendil-wor
 ls "$PI_ROOT/node_modules/@earendil-works/pi-ai/dist/providers/data/" | grep qwen
 ```
 
-## 5. 迭代手册
+## 6. 迭代手册
 
-### 5.1 加 / 改对话模型
+### 6.1 加 / 改对话模型
 
-1. 拉当前模型清单（见 §6），确认 id 还在。
+1. 拉当前模型清单（见 §7），确认 id 还在。
 2. 价格页抄人民币单价，`/7.2` 换成 USD；`cacheRead` 用「隐式缓存命中」那列。
 3. 思考档位：查「思考模式」页 + 对照内置 `qwen-token-plan-cn.json` 的 `thinkingLevelMap`。缺 `thinkingLevelMap` 时 pi 会把 `/thinking` 档位名原样当 `reasoning_effort` 发出去。
 4. 图片能力：文档标「视觉理解」才写 `input: ["text","image"]`，否则 pi 会拦掉用户贴图。
-5. 改完实测三条（§6.2）：strict 工具、`reasoning_effort`、图片输入。
+5. 改完实测三条（§7.2）：strict 工具、`reasoning_effort`、图片输入。
 
-### 5.2 加图像模型
+### 6.2 加图像模型
 
 先判断协议：
 
@@ -91,10 +120,11 @@ ls "$PI_ROOT/node_modules/@earendil-works/pi-ai/dist/providers/data/" | grep qwe
   - `z-image-turbo`：一次同步 POST，响应取 `output.choices[0].message.content[].image`。
   - `wan2.7`：建任务（带 `X-DashScope-Async: enable`）→ 每 3s 轮询 `/api/v1/tasks/{id}`，`task_status` 到 `SUCCEEDED` 取 `output.choices[0].message.content[].image`；必须响应 `options.signal` 中断，并把 `size` 用 `1K/2K/4K` 简写。
   - 两条协议都是先拿 URL，再复用现有的「下载 → base64」逻辑（URL 24 小时过期）。
+- 新模型的默认尺寸加到 `DEFAULT_IMAGE_SIZE`，并沿用 `SIZE_HINT` 的名字后缀（模型名会出现在 codemode 的 `models.getAvailableOfType()` 结果里，是 agent 唯一能看到用法的入口）。
 
-## 6. 实测命令
+## 7. 实测命令
 
-### 6.1 端点存活 + 模型清单
+### 7.1 端点存活 + 模型清单
 
 ```bash
 KEY=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.pi/agent/auth.json')))['qwen-tokens']['key'])")
@@ -105,7 +135,7 @@ curl -s -H "Authorization: Bearer $KEY" https://maas.qianwenaiapi.com/compatible
   | python3 -c 'import json,sys; [print(m["id"]) for m in json.load(sys.stdin)["data"]]'
 ```
 
-### 6.2 新模型的三个探测
+### 7.2 新模型的三个探测
 
 ```bash
 KEY=...   # 同上
@@ -123,11 +153,11 @@ curl -s -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
 #    把 base64 塞进 content 的 image_url，格式同 OpenAI
 ```
 
-## 7. 已知坑
+## 8. 已知坑
 
 - **`/cost` 不含出图费用**：pi 的 `cost` 只能表达 USD/百万 token，按张计费的模型只能填 0，以平台用量统计为准。
 - **`prompt_extend` 默认 true**：短提示词自动扩写，质量更好但多 3-5 秒；要快就在请求里显式 `prompt_extend: false`。
 - **图像 URL 只有 24 小时**：所以实现里拿到就立刻下载转 base64。
 - **`watermark` 默认会打「AI 生成」水印**：实现里显式 `watermark: false`。
 - **只有 codemode 能调图像模型**：`/model` 列表里不会出现，`--no-tools` 时也调不到。
-- **平台会下线模型**（如 `qwen3.8-max-preview` 自动路由到 `qwen3.8-max`）：长期不用会失效，price/思考档位也可能变，按 §5.1 复查。
+- **平台会下线模型**（如 `qwen3.8-max-preview` 自动路由到 `qwen3.8-max`）：长期不用会失效，price/思考档位也可能变，按 §6.1 复查。

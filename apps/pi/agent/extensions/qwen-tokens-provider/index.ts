@@ -152,16 +152,22 @@ const CHAT_MODELS = [
  *
  * 人民币单价（按成功出图数计费，元/张）：
  *   qwen-image-3.0-pro    1K 0.25 / 2K 0.5
- *   qwen-image-3.0        1K 0.18 / 2K 0.18（同价，需要 2K 时改 IMAGE_SIZE）
+ *   qwen-image-3.0        1K 0.18 / 2K 0.18（同价，传 2048x2048 即 2K）
  *   qwen-image-2.1-turbo  1K 0.1
  * pi 的 cost 字段只能表达「USD / 百万 token」，写不出按张计费，因此这里填 0：
  * 出图花费不会进 /cost，以平台用量统计为准。
  */
+/**
+ * 图像模型名会把尺寸约定写在 name 里：codemode 里 models.getAvailableOfType("image")
+ * 拿到的是完整 model 对象，所以 LLM 能直接看到这条提示。
+ */
+const SIZE_HINT = " · size 默认 1K，可传 [size=16:9] 或 context.size";
+
 const IMAGE_MODELS = [
   {
     type: "image" as const,
     id: "qwen-image-3.0-pro",
-    name: "Qwen Image 3.0 Pro",
+    name: `Qwen Image 3.0 Pro${SIZE_HINT}`,
     api: IMAGE_API,
     input: ["text", "image"] as ("text" | "image")[],
     output: ["image"] as ("text" | "image")[],
@@ -170,7 +176,7 @@ const IMAGE_MODELS = [
   {
     type: "image" as const,
     id: "qwen-image-3.0",
-    name: "Qwen Image 3.0",
+    name: `Qwen Image 3.0${SIZE_HINT}`,
     api: IMAGE_API,
     input: ["text", "image"] as ("text" | "image")[],
     output: ["image"] as ("text" | "image")[],
@@ -179,7 +185,7 @@ const IMAGE_MODELS = [
   {
     type: "image" as const,
     id: "qwen-image-2.1-turbo",
-    name: "Qwen Image 2.1 Turbo",
+    name: `Qwen Image 2.1 Turbo${SIZE_HINT}`,
     api: IMAGE_API,
     input: ["text", "image"] as ("text" | "image")[],
     output: ["image"] as ("text" | "image")[],
@@ -188,17 +194,88 @@ const IMAGE_MODELS = [
 ];
 
 /**
- * 出图尺寸写死在这里：codemode 调 generateImages 只传 prompt 和参考图，没有 size 参数。
- * 可选范围 512x512 – 2048x2048，宽高比 1:8 – 8:1。
+ * 默认尺寸（未指定时使用）。可选范围 512x512 – 2048x2048，宽高比 1:8 – 8:1。
+ *
+ * 调用时可动态覆盖（优先级从高到低）：
+ *   1. context.size —— codemode 里 models.generateImages(model, { input, size: "16:9" })
+ *      （pi 的 checkImagesContext 允许并透传额外字段）
+ *   2. prompt 里的指令 —— [size=1536x864]、[aspect=16:9]、[ratio=9:16]、--size 16:9
+ *   3. 本表默认值
+ * 取值支持：WxH / W*H / 比例（1:1、4:3、3:4、16:9、9:16、3:2、2:3…）/ auto（不传 size，由模型自己推荐）。
  *
  * 请求里没显式传 prompt_extend，走平台默认值 true（短提示词会自动扩写，质量更好，但多 3-5 秒）；
  * 想把延迟压下来，就在 generateQwenImages 的 request 里加 prompt_extend: false。
  */
-const IMAGE_SIZE: Record<string, string> = {
+const DEFAULT_IMAGE_SIZE: Record<string, string> = {
   "qwen-image-3.0-pro": "1024x1024",
   "qwen-image-3.0": "1024x1024",
   "qwen-image-2.1-turbo": "1024x1024",
 };
+
+const SIZE_MIN = 512;
+const SIZE_MAX = 2048;
+const SIZE_MAX_RATIO = 8;
+
+/** 比例 → 像素：先按长边 1024 算；比例超过 2:1 时改用短边 512，保证两边都在合法范围内。 */
+function sizeFromRatio(width: number, height: number): string {
+  const longRatio = Math.max(width, height) / Math.min(width, height);
+  const round = (value: number) => Math.round(value / 8) * 8;
+  if (longRatio <= 2) {
+    const short = round((1024 * Math.min(width, height)) / Math.max(width, height));
+    return width >= height ? `${1024}x${short}` : `${short}x1024`;
+  }
+  const long = round((SIZE_MIN * Math.max(width, height)) / Math.min(width, height));
+  return width >= height ? `${long}x${SIZE_MIN}` : `${SIZE_MIN}x${long}`;
+}
+
+/** 解析 WxH / 比例 / auto；出错时返回原因，由调用方报给 agent。 */
+function parseSizeSpec(raw: string): { size?: string; error?: string } {
+  const value = raw.trim().toLowerCase().replace(/\s+/g, "");
+  if (value === "" || value === "auto" || value === "default" || value === "model") return {};
+
+  const dims = value.match(/^(\d{2,5})[x*×](\d{2,5})$/);
+  if (dims) {
+    const width = Number(dims[1]);
+    const height = Number(dims[2]);
+    const inRange = [width, height].every((side) => side >= SIZE_MIN && side <= SIZE_MAX);
+    const ratioOk = Math.max(width, height) / Math.min(width, height) <= SIZE_MAX_RATIO;
+    if (!inRange || !ratioOk) {
+      return {
+        error: `图像尺寸 ${width}x${height} 超出范围：每边 ${SIZE_MIN}-${SIZE_MAX}，宽高比 ≤ ${SIZE_MAX_RATIO}:1`,
+      };
+    }
+    return { size: `${width}x${height}` };
+  }
+
+  const ratio = value.match(/^(\d{1,2}):(\d{1,2})$/);
+  if (ratio) {
+    const width = Number(ratio[1]);
+    const height = Number(ratio[2]);
+    if (width === 0 || height === 0 || Math.max(width, height) / Math.min(width, height) > SIZE_MAX_RATIO) {
+      return { error: `不支持的比例 ${width}:${height}（宽高比需 ≤ ${SIZE_MAX_RATIO}:1）` };
+    }
+    return { size: sizeFromRatio(width, height) };
+  }
+
+  return { error: `无法识别的图像尺寸 "${raw}"：用 WxH、比例（如 16:9）或 auto` };
+}
+
+/** prompt 里的尺寸指令（会从提示词里删掉，不送给模型）。 */
+function takeSizeDirective(prompt: string): { prompt: string; size?: string } {
+  const patterns = [
+    /\[(?:size|aspect|ratio)\s*[=:]\s*([^\]]+)\]/i,
+    /(?:^|\s)--(?:size|aspect|ratio)[=\s]+([^\s]+)/i,
+  ];
+  for (const pattern of patterns) {
+    const match = prompt.match(pattern);
+    if (!match) continue;
+    return {
+      prompt: prompt.replace(match[0], " ").replace(/\s{2,}/g, " ").trim(),
+      size: match[1].trim(),
+    };
+  }
+  return { prompt };
+}
 
 function sniffMime(bytes: Uint8Array): string {
   if (bytes[0] === 0x89 && bytes[1] === 0x50) return "image/png";
@@ -252,12 +329,25 @@ async function generateQwenImages(
     const apiKey = options?.apiKey;
     if (!apiKey) throw new Error(`No API key for provider: ${model.provider}`);
 
-    const prompt = context.input
+    const promptText = context.input
       .filter((block) => block.type === "text")
       .map((block) => block.text)
       .join("\n")
       .trim();
+
+    const directive = takeSizeDirective(promptText);
+    const prompt = directive.prompt;
     if (!prompt) throw new Error("images/generations needs a text prompt");
+
+    // codemode 允许在 context 上传额外字段，pi 原样透传到这里（见 pi 的 checkImagesContext）
+    const contextualSize = (context as ImagesContext & { size?: unknown }).size;
+    if (contextualSize !== undefined && typeof contextualSize !== "string") {
+      throw new Error(`context.size 必须是字符串（WxH / 比例 / auto），收到 ${typeof contextualSize}`);
+    }
+
+    const requestedSize = contextualSize ?? directive.size ?? DEFAULT_IMAGE_SIZE[model.id] ?? "1024x1024";
+    const resolvedSize = parseSizeSpec(requestedSize);
+    if (resolvedSize.error) throw new Error(resolvedSize.error);
 
     const refs = context.input
       .filter((block) => block.type === "image")
@@ -267,7 +357,8 @@ async function generateQwenImages(
       model: model.id,
       prompt,
       n: 1,
-      size: IMAGE_SIZE[model.id] ?? "1024x1024",
+      // auto / default 时不传 size，交给模型按提示词推荐
+      ...(resolvedSize.size ? { size: resolvedSize.size } : {}),
       // 默认会打「AI 生成」水印，agent 产出的图不需要
       watermark: false,
     };
