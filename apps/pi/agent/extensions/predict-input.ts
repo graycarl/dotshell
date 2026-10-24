@@ -43,6 +43,10 @@ import {
 } from "@earendil-works/pi-tui";
 import type { Api, Model } from "@earendil-works/pi-ai";
 
+/** pi-tui's fake-cursor delimiters; FAKE_CURSOR_START/END are not re-exported by the package. */
+const FAKE_CURSOR_START = "\x1b_pi:fc\x07";
+const FAKE_CURSOR_END = "\x1b_pi:/fc\x07";
+
 const MAX_CONTEXT_CHARS = 4000;
 const MAX_SUGGESTION_CHARS = 300;
 const MAX_SUGGESTIONS = 8;
@@ -79,7 +83,8 @@ interface PredictItem extends AutocompleteItem {
 
 /**
  * A CustomEditor that renders the top prediction as a dim ghost right after the
- * cursor. Enter accepts it, Tab opens the autocomplete list with every candidate.
+ * cursor cell (never on top of it). Enter accepts it, Tab opens the autocomplete
+ * list with every candidate.
  *
  * Typing does not throw the candidates away: the ghost is only drawn while the
  * input is empty, so deleting the draft makes the prediction visible again. That
@@ -163,8 +168,17 @@ class PredictEditor extends CustomEditor {
 
     const line = lines[index]!;
     const markerAt = line.indexOf(CURSOR_MARKER);
-    const resetAt = line.indexOf("\x1b[0m", markerAt);
-    const insertAt = resetAt === -1 ? markerAt + CURSOR_MARKER.length : resetAt + "\x1b[0m".length;
+    // The editor draws the cursor cell as CURSOR_MARKER + FAKE_CURSOR_START + char +
+    // FAKE_CURSOR_END, and the TUI resolves that pair before reading the marker.
+    // Insert the ghost *after* the whole cell: the fake cursor stays intact (the
+    // hardware cursor is drawn on it) and the ghost starts one column to its right.
+    // Inserting right after CURSOR_MARKER used to break the fake-cursor pair, which
+    // left an inverted cursor cell at the end of the ghost — it read as if the cursor
+    // were sitting to the right of the prediction.
+    const fakeStart = line.indexOf(FAKE_CURSOR_START, markerAt);
+    const fakeEnd = fakeStart === -1 ? -1 : line.indexOf(FAKE_CURSOR_END, fakeStart);
+    const insertAt =
+      fakeEnd !== -1 ? fakeEnd + FAKE_CURSOR_END.length : markerAt + CURSOR_MARKER.length;
     const merged = line.slice(0, insertAt) + ghost + line.slice(insertAt);
     lines[index] = truncateToWidth(merged, width, "");
     return lines;
