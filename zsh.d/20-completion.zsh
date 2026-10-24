@@ -14,7 +14,7 @@ zstyle ':completion:*:*:*:*:*' menu select
 bindkey -M menuselect '^o' accept-and-infer-next-history
 
 zstyle ':completion:*' special-dirs true   # .. 作为候选目录
-zstyle ':completion:*' list-colors ''
+zstyle ':completion:*' list-colors ''      # 补全候选不上 ls 配色（有意为之）
 zstyle '*' single-ignored show             # 唯一候选时直接显示
 
 # cd 优先补当前目录，其次目录栈，最后 $cdpath
@@ -26,12 +26,3 @@ zstyle ':completion:*' cache-path ${XDG_CACHE_HOME:-$HOME/.cache}/zsh-completion
 
 # kill 时给进程列表上色（PID 蓝色，信号名绿色）
 zstyle ':completion:*:*:kill:*:processes' list-colors '=(#b) #([0-9]#) ([0-9a-z-]#)*=01;34=0=01'
-zstyle ':completion:*:*:*:users' ignored-patterns \
-    adm amanda apache at avahi avahi-autoipd beaglidx bin cacti canna clamav daemon \
-    dbus distcache dnsmasq dovecot ejabberd faxgames ftp games gdm gkrellmd irc \
-    ldap lp mail mailman mailnull mldonkey mysql nagios named netdump news nfsnobody \
-    nobody nscd ntp nut nx openvpn operator pcap postfix postgres privoxy pulse pvm \
-    quagga radvd rpc rpcuser rpm shutdown squid sshd sync uucp vcsa xfs
-
-# 让 bash 的 complete 脚本（各种 *-completion.bash）也能用
-autoload -Uz +X bashcompinit && bashcompinit
