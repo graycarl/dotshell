@@ -33,10 +33,10 @@ zsh
    │   ├── 10-history.zsh        — 历史记录 setopt
    │   ├── 20-completion.zsh     — 补全行为/外观 + zsh/complist
    │   ├── 30-keybindings.zsh    — 键绑定（↑ 前缀搜索、Ctrl-R、Ctrl-X Ctrl-E 等）
-   │   ├── 40-colors-ls.zsh      — colors 变量 + LS_COLORS/LSCOLORS + ls 配色
+   │   ├── 40-colors-ls.zsh      — colors 变量 + LSCOLORS + ls/diff 配色
    │   ├── 45-grep.zsh           — grep 上色 + 跳过版本控制目录
-   │   ├── 50-paste-magic.zsh    — 粘贴保护 + URL 自动加引号
-   │   └── 60-vcs_info-patch.zsh — vcs_info 的 % 引号补丁（prompt 用）
+   │   └── 50-paste-magic.zsh    — URL 自动加引号（手打 + 粘贴）
+   ├── zsh-custom/patches/vcs_info-percent-quote.zsh — vcs_info 的 % 引号补丁（保险，可删）
    ├── zsh-custom/themes/$ZSH_THEME.zsh-theme — 主题（默认 hhb）
    ├── try-init-rust     — 初始化 Rust (~/.cargo/env)
    ├── try-init-neovim   — Neovim 别名
@@ -45,8 +45,12 @@ zsh
 ```
 
 > 2026-10 起不再使用 Oh My Zsh：只保留了当年真正在用的几块能力（补全、历史、
-> 键绑定、配色、grep、粘贴/URL magic、vcs_info 补丁、主题），约 300 行，
-> 启动从 ~170ms 降到 ~90ms。详见 `zsh.d/` 各文件头部注释。
+> 键绑定、配色、grep、粘贴/URL magic、vcs_info 补丁、主题），zsh.d 约 170 行，
+> 启动从 ~170ms 降到 ~85ms。详见 `zsh.d/` 各文件头部注释。
+>
+> 精简原则：不写「探测某命令支不支持某参数」再分支的代码（探测本身每次启动都要
+> spawn 子进程，约 3ms/次），直接按本机实测结果写死；不写 `-M viins/-M vicmd`
+> 这类未激活 keymap 的绑定。
 
 ### Bash 启动链
 
@@ -86,6 +90,12 @@ bash
 - 文件名带数字前缀决定加载顺序：`00-` 最早（compinit 必须在补全相关配置之前）
 - 新增文件 → 直接放进去即可，无需注册
 - 目前每个文件对应一块能力，文件头部注释写了「搬自哪里、为何保留」
+- **准入标准**：只放每天都用得上的东西。像 `vcs_info` 的 % 引号补丁那种「防御极端边界」
+  的代码，放 `zsh-custom/patches/` 并只在 `zshrc.sh` 里 source 一次，别占 `zsh.d/`
+- **不写运行时探测**：不要写 `command xxx --flag && alias ...` 这种「先探测支持什么参数」
+  的代码：每次启动都会 spawn 子进程（约 3ms/次）。按本机实测结果直接写死，并在注释里
+  写清楚「哪条决定已经实测过」
+- **不写未激活 keymap 的绑定**：本仓库只用 emacs keymap，别写 `bindkey -M viins/vicmd`
 
 ### `apps/` — 应用配置
 

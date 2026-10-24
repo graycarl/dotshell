@@ -4,6 +4,10 @@
 # 作用：仓库名/分支名里含 % 或命令替换字符时，prompt 不会错乱，
 #      也不会被 CVE-2021-45444 影响（zsh 5.0.3–5.8）。
 #      hhb 主题走 vcs_info，所以这块对你有实际价值。
+#
+# 位置说明：2026-10 从 zsh.d/ 挪到这里 —— 它防御的是「分支名含 %」这种几乎碰不到的
+#          边界情况，不属于每天用得上的配置，所以不再占着 zsh.d 的 60 行。
+#          **想精简可以直接删掉本文件**，并同时删掉 zshrc.sh 里对应的 source 行。
 
 # Don't skip this file until a Zsh release does the necessary quoting.
 # This is because even though 5.8.1 undid recursive prompt_subst inside

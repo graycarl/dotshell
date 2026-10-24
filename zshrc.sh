@@ -16,6 +16,10 @@ for _zsh_d in $DOTSHELL/zsh.d/*.zsh(N); do
 done
 unset _zsh_d
 
+# 边界情况保险（仓库名/分支名含 % 时 prompt 不错乱），不属于日常配置，
+# 所以放 zsh-custom/patches/ 而不是 zsh.d/。想精简就删文件 + 删这行。
+source $DOTSHELL/zsh-custom/patches/vcs_info-percent-quote.zsh
+
 # 主题：直接 source 自己的主题文件（原来是 oh-my-zsh 的 ZSH_THEME 机制）
 # 兼容 samples.sh / local/shrc 里的 ZSH_THEME 覆盖（hhb / hhb-ys / embeded）
 : ${ZSH_THEME:=hhb}
