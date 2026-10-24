@@ -1,6 +1,8 @@
 import type { AssistantImages, ImageApi, ImageModel, ImagesContext, ImagesOptions } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+// 维护手册（平台文档链接、pi 侧参考、迭代步骤、实测命令）：同目录 README.md
+
 const PROVIDER_ID = "qwen-tokens";
 const IMAGE_API = "qwen-images";
 const PROVIDER_NAME = "Qwen AI Platform (千问AI平台)";
