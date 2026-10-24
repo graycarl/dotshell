@@ -3,10 +3,6 @@
 # 替代 oh-my-zsh/oh-my-zsh.sh 里的 compinit / compfix / zrecompile 编排。
 # 只被 zshrc.sh 加载（含 zsh 专有语法，bash 不能读）。
 
-# 清掉可能从环境里继承来的死路径（例如已经删掉的 oh-my-zsh），并去重
-fpath=(${fpath:#$DOTSHELL/oh-my-zsh/*})
-fpath=(${(u)fpath})
-
 # 把自定义补全目录加进 fpath（如果有）
 [[ -d $DOTSHELL/zsh-custom/completions ]] && fpath=($DOTSHELL/zsh-custom/completions $fpath)
 
@@ -33,8 +29,5 @@ if [[ ! -f $_dump.zwc || $_dump -nt $_dump.zwc ]]; then
         rm -rf "$_dump.lock" "$_dump.zwc.old"
     fi
 fi
-
-# 让补全候选使用与 ls 相同的配色（原 omz 在加载完主题后做这件事）
-[[ -z $LS_COLORS ]] || zstyle ':completion:*' list-colors "${(s.:.)LS_COLORS}"
 
 unset _dump _dump_dir _fresh

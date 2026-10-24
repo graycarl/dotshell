@@ -2,7 +2,6 @@
 #
 # 与原来的差异：history 不再被别名到 omz_history，直接是 zsh 内置的 fc -l。
 
-: ${HISTFILE:=$HOME/.zsh_history}
 (( HISTSIZE < 50000 )) && HISTSIZE=50000
 (( SAVEHIST < 10000 )) && SAVEHIST=10000
 
