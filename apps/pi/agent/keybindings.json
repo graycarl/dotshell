@@ -1,5 +1,13 @@
 {
   "app.interrupt": [
     "ctrl+c"
+  ],
+  "tui.altScreen.top": [
+    "ctrl+home",
+    "ctrl+pageUp"
+  ],
+  "tui.altScreen.bottom": [
+    "ctrl+end",
+    "ctrl+pageDown"
   ]
 }
