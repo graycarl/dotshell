@@ -26,12 +26,12 @@ keybind = alt+backspace=text:\x1b\x7f
 # ---------------------------------------------------------------------------
 # Coding-agent (pi) status bridge
 # pi 自身用 OSC 9;4 报进度（见 pi settings: terminal.showTerminalProgress），
-# 下面两项让 Ghostty 在 agent 跑完 / 需要输入时提醒你。
+# 下面这项让程序响的 BEL 更醒目（pi 的状态桥接扩展用它做 "跑完/等你输入" 提醒）。
+#
+# 不开 notify-on-command-finish：它依赖 shell integration 的 OSC 133，只对 shell
+# 命令生效；交互式 pi 是 TUI，只在 pi 退出时触发，对"一次对话完结"无意义。
 # ---------------------------------------------------------------------------
-# BEL 在未聚焦时：dock 弹跳 + 标题加 🔔 前缀 + surface 边框
+# BEL 未聚焦时：dock 弹跳 + 标题加 🔔 前缀 + surface 边框
 bell-features = no-system,no-audio,attention,title,border
-# 从 shell 启动的长任务退出时提醒（全局生效，不限于 pi）
-notify-on-command-finish = unfocused
-notify-on-command-finish-action = bell,notify
 
 config-file = ?auto/theme.ghostty
