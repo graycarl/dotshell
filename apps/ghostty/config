@@ -23,15 +23,4 @@ keybind = alt+backspace=text:\x1b\x7f
 # auto-generated empty template), the theme lands in
 # `.../com.mitchellh.ghostty/auto/theme.ghostty` and is NEVER loaded by the line
 # below. Keep that file deleted so `w` writes to `./auto/theme.ghostty` here instead.
-# ---------------------------------------------------------------------------
-# Coding-agent (pi) status bridge
-# pi 自身用 OSC 9;4 报进度（见 pi settings: terminal.showTerminalProgress），
-# 下面这项让程序响的 BEL 更醒目（pi 的状态桥接扩展用它做 "跑完/等你输入" 提醒）。
-#
-# 不开 notify-on-command-finish：它依赖 shell integration 的 OSC 133，只对 shell
-# 命令生效；交互式 pi 是 TUI，只在 pi 退出时触发，对"一次对话完结"无意义。
-# ---------------------------------------------------------------------------
-# BEL 未聚焦时：dock 弹跳 + 标题加 🔔 前缀 + surface 边框
-bell-features = no-system,no-audio,attention,title,border
-
 config-file = ?auto/theme.ghostty
