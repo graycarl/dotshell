@@ -13,6 +13,9 @@ zmodload -i zsh/complist
 zstyle ':completion:*:*:*:*:*' menu select
 bindkey -M menuselect '^o' accept-and-infer-next-history
 
+# 补全忽略大小写（只作用于 Tab 补全，不影响 glob：ls *.TXT 仍大小写敏感）
+zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}'
+
 zstyle ':completion:*' special-dirs true   # .. 作为候选目录
 zstyle ':completion:*' list-colors ''      # 补全候选不上 ls 配色（有意为之）
 zstyle '*' single-ignored show             # 唯一候选时直接显示
