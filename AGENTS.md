@@ -111,6 +111,7 @@ bash
 |------|------|
 | `apps/pi/` | pi coding agent 配置（agents, extensions, prompts, keybindings） |
 | `apps/pi/agent/extensions/codegraph/` | codegraph 扩展 — codegraph_explore/node/search 工具 |
+| `apps/pi/agent/extensions/servers/` | servers 扩展 — 后台 server 进程管理（server_start/list/logs/stop/send 工具、/servers overlay、退出时提示停止） |
 | `apps/opencode/` | Opencode 编辑器配置（用到的 skills 从 `apps/agents/skills` 共享） |
 | `apps/agents/` | AI Agent 共享资源（skills, prompts 等） |
 | `apps/alacritty/` | Alacritty 终端配置（多版本并存） |
