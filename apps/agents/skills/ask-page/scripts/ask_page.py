@@ -36,6 +36,7 @@ import argparse
 import hashlib
 import html
 import json
+import math
 import os
 import re
 import shutil
@@ -147,12 +148,14 @@ def page_path(session_dir: Path, page_id: str) -> Path:
 
 def dir_size(path: Path) -> int:
     total = 0
-    for entry in path.rglob("*"):
-        try:
-            if entry.is_file():
-                total += entry.stat().st_size
-        except OSError:
-            pass
+    # os.walk(followlinks=False) + lstat: a symlink pointing outside the page
+    # tree must never be followed or counted here.
+    for root, _dirs, files in os.walk(path, followlinks=False):
+        for name in files:
+            try:
+                total += os.lstat(os.path.join(root, name)).st_size
+            except OSError:
+                pass
     return total
 
 
@@ -164,14 +167,15 @@ def dir_mtime(path: Path) -> float:
     """
     newest = 0.0
     try:
-        newest = path.stat().st_mtime
+        newest = os.lstat(path).st_mtime
     except OSError:
         pass
-    for entry in path.rglob("*"):
-        try:
-            newest = max(newest, entry.stat().st_mtime)
-        except OSError:
-            pass
+    for root, dirs, files in os.walk(path, followlinks=False):
+        for name in dirs + files:
+            try:
+                newest = max(newest, os.lstat(os.path.join(root, name)).st_mtime)
+            except OSError:
+                pass
     return newest
 
 
@@ -378,8 +382,10 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 def cmd_prune(args: argparse.Namespace) -> int:
     base, session, _, _ = workspace(args)
-    if args.older_than <= 0:
-        raise Failure("--older-than 必须是正数（单位为天）")
+    # NaN passes a plain `<= 0` test, and then every `stamp > cutoff`
+    # comparison is False — i.e. it would delete every session directory.
+    if not math.isfinite(args.older_than) or args.older_than <= 0:
+        raise Failure("--older-than 必须是有限正数（单位为天）")
 
     cutoff = time.time() - args.older_than * 86400
     # Never touch the session we are in, and never touch the shared fallback.
@@ -391,6 +397,10 @@ def cmd_prune(args: argparse.Namespace) -> int:
 
     if base.is_dir():
         for directory in sorted(base.iterdir()):
+            # is_dir() follows symlinks and rmtree refuses them, so a link named
+            # like a session would abort the run half-way through. Skip links.
+            if directory.is_symlink():
+                continue
             if not directory.is_dir() or not SESSION_RE.match(directory.name):
                 continue
             if directory.name in keep:
