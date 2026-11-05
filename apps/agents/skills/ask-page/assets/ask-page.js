@@ -3,7 +3,10 @@
  *
  * No server, no network. Everything the page needs is in this file.
  *
- *   - comments are stored in localStorage under `ask-page:<pageId>`
+ *   - comments are stored in localStorage under `ask-page:<session>:<pageId>`
+ *     (all file:// pages share one origin, so the session has to be in the key;
+ *     pages built before sessions existed have no data-page-session and keep
+ *     using the old `ask-page:<pageId>` key)
  *   - "复制结果" builds a Markdown block and copies it to the clipboard
  *   - the user pastes that block back into the chat
  *
@@ -43,7 +46,14 @@
   }
 
   var PAGE_ID = resolvePageId();
-  var KEY = KEY_PREFIX + PAGE_ID;
+  var PAGE_SESSION = resolvePageSession();
+  var KEY = KEY_PREFIX + (PAGE_SESSION ? PAGE_SESSION + ":" : "") + PAGE_ID;
+
+  // Empty for hand-written pages and for pages built before sessions existed.
+  function resolvePageSession() {
+    var declared = (document.body.getAttribute("data-page-session") || "").trim();
+    return declared.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-._]+|[-._]+$/g, "");
+  }
 
   // ── state ──────────────────────────────────────────────────────────────
   var state = { pageId: PAGE_ID, comments: [], options: {}, submittedAt: null };
@@ -565,7 +575,11 @@
   function buildExport() {
     var nodes = anchorNodes();
     var lines = [];
-    lines.push("<!-- ask-page-result · pageId=" + PAGE_ID + " · " + nowIso() + " -->");
+    lines.push(
+      "<!-- ask-page-result · pageId=" + PAGE_ID +
+      (PAGE_SESSION ? " · session=" + PAGE_SESSION : "") +
+      " · " + nowIso() + " -->"
+    );
 
     var opts = optionLines();
     if (opts.length) {
@@ -880,6 +894,7 @@
   var api = {
     __askPage: true,
     pageId: PAGE_ID,
+    session: PAGE_SESSION,
     state: state,
     comment: addComment,
     option: setOption,

@@ -141,7 +141,7 @@ bash apps/pi/setup.sh
 ```
 apps/agents/skills/
 ├── agent-browser/       # 浏览器自动化（agent-browser CLI）
-├── ask-page/            # 把内容做成可交互网页给用户确认/批注（产物落 .pi/ask-page/）
+├── ask-page/            # 把内容做成可交互网页给用户确认/批注（产物落 .pi/ask-pages/<session-id>/）
 ├── brainstorm/          # 创意发散
 ├── context7/            # 库文档查询
 ├── exa-search/          # 互联网搜索

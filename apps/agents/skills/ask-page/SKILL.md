@@ -29,19 +29,42 @@ agent 写正文 → 脚本拼成一份**自包含 HTML** → 打开浏览器 →
 
 ```bash
 SKILL=~/.pi/agent/skills/ask-page     # 本 SKILL.md 所在目录
-mkdir -p .pi/ask-page
+ASK="python3 $SKILL/scripts/ask_page.py"
 ```
 
-**① 写正文**（不是整页 HTML，只写要展示的内容）→ `.pi/ask-page/plan.body.html`
+产物落在 **`.pi/ask-pages/<session-id>/`**，`<session-id>` 取自当前 session
+（`sha1($PI_SESSION_ID)[:8]`，读不到就退回 `default`）。所以同一个项目里开两个
+session，各自的 `plan.html` 和草稿互不干扰。
 
-**② 生成并打开**
+**① 写正文**（不是整页 HTML，只写要展示的内容）
 
 ```bash
-python3 "$SKILL/scripts/ask_page.py" new plan --title "方案确认" --open
-# → {"status":"built","pageId":"plan","path":"…/plan.html","url":"file://…","bytes":27431,"opened":true}
+$ASK new plan --title "方案确认" --open --body - <<'HTML'
+<section>
+  <h2 data-pi-anchor="plan-1">第一段</h2>
+  <p>…</p>
+</section>
+HTML
 ```
 
-stdout 只有一行 JSON；stderr 是进度。
+heredoc 把①②合成一步；脚本会把正文**同时存一份**到 `<session-id>/plan.body.html`，第二轮改那个文件。
+
+**② 生成并打开**（就是上面那条命令；也可以先把正文写成文件再 `new`，见下）
+
+```bash
+$ASK dir                     # → {"session":"3f9a1c2e","dir":"…/.pi/ask-pages/3f9a1c2e"}
+$ASK new plan --title "方案确认" --open      # 不给 --body 时读 <session-id>/plan.body.html
+```
+
+stdout 只有一行 JSON，第二轮要用的路径都在里面：
+
+```json
+{"status":"built","session":"3f9a1c2e","sessionSource":"pi_session","pageId":"plan",
+ "dir":"…/.pi/ask-pages/3f9a1c2e","bodyPath":"…/plan.body.html",
+ "path":"…/plan.html","url":"file://…","bytes":27431,"opened":true}
+```
+
+stderr 是进度，别当结果。
 
 **③ 结束本轮**，告诉用户：
 
@@ -66,7 +89,7 @@ stdout 只有一行 JSON；stderr 是进度。
 现成的例子：`assets/example.html` 覆盖了全部预置组件，直接
 
 ```bash
-python3 "$SKILL/scripts/ask_page.py" new demo --title "组件清单" --body "$SKILL/assets/example.html" --open
+$ASK new demo --title "组件清单" --body "$SKILL/assets/example.html" --open
 ```
 
 可用的样式类（已内置，直接用）：
@@ -82,7 +105,7 @@ python3 "$SKILL/scripts/ask_page.py" new demo --title "组件清单" --body "$SK
 约定：
 
 - **离线**：页面在 `file://` 下打开，不要引用 CDN、外部字体或远程图片。
-  图片和 `plan.html` 放同一目录，用相对路径引用。
+  图片和 `plan.html` 放同一目录（`.pi/ask-pages/<session-id>/`），用相对路径引用。
 - 页面标题用 `--title`，不要在正文里重复写 `<h1>`。
 - 正文只管内容，不要写 `<style>` / `<script>`（会被当成内容渲染）。
 
@@ -91,7 +114,7 @@ python3 "$SKILL/scripts/ask_page.py" new demo --title "组件清单" --body "$SK
 用户粘回来的是一段带哨兵的 Markdown：
 
 ```text
-<!-- ask-page-result · pageId=plan · 2026-05-01T12:00Z -->
+<!-- ask-page-result · pageId=plan · session=3f9a1c2e · 2026-05-01T12:00Z -->
 
 ## 选择
 
@@ -119,6 +142,8 @@ python3 "$SKILL/scripts/ask_page.py" new demo --title "组件清单" --body "$SK
 
 补充：
 
+- `session=` 可能没有（老页面）：有的话建议跟自己 `$ASK dir` 得到的 session 对一下，
+  不一致说明用户粘错窗口了（另一个 session 的页面），先问一句再解析。
 - 选项的 `（值）` 部分可能省略（当标签和值相同时）；多选的值用 `, ` 分隔、标签用 `、` 分隔。
 - 选项可以**不回答**：点了又点一下就能取消。只导出用户真正选了的题。
 - 标题里出现 `⚠ 位置已失效` 表示这一轮的页面里已经没有该 anchor（用户批注时的那段被删了），
@@ -133,8 +158,8 @@ python3 "$SKILL/scripts/ask_page.py" new demo --title "组件清单" --body "$SK
 用户提了修改意见、你改完之后，想让他在**同一个页面**上再看一遍：
 
 ```bash
-# 只改 .pi/ask-page/plan.body.html，然后：
-python3 "$SKILL/scripts/ask_page.py" new plan --title "方案确认（v2）" --open
+# 只改 <session-id>/plan.body.html（路径见上一轮 JSON 的 bodyPath），然后：
+$ASK new plan --title "方案确认（v2）" --open
 ```
 
 然后告诉用户：**「点页面右上角的 ↻ 载入最新内容」**（或者重新打开也行）。
@@ -142,28 +167,43 @@ python3 "$SKILL/scripts/ask_page.py" new plan --title "方案确认（v2）" --o
 两条硬约束：
 
 1. **`<id>` 跨轮次不变**：不要生成 `plan-v2.html`。pageId 变了，用户上一轮的草稿就丢了。
+   也**不要**手工搬目录或换 `--session`：session 变了，草稿同样丢，而且新目录等于新页面。
 2. **anchor 命名跨轮次稳定**：`plan-3` 永远是同一段话。改了 anchor，用户的旧批注会变成「位置已失效」。
 
 ## 6 草稿存在哪
 
-- 存在浏览器的 localStorage 里，key 是 `ask-page:<pageId>`。
-- **`file://` 下所有本地页面共用一个 origin**，所以必须靠 pageId 隔离 —— 这也是不要让 id 乱变的另一个原因。
+- 存在浏览器的 localStorage 里，key 是 **`ask-page:<session-id>:<pageId>`**。
+- **`file://` 下所有本地页面共用一个 origin**，所以 key 里同时带 session 和 pageId：
+  session 隔离不同会话（两个 session 都叫 `plan` 也不串），pageId 隔离同一会话里的不同页面。
+- 页面正文里的 `data-page-session` 是 key 的来源，由脚本注入；没有它的老页面继续用老 key
+  `ask-page:<pageId>`，行为不变。
 - 草稿**跨轮次保留**：用户改好的自己删，没改好的留着再提交一次。页面上有「清空草稿」。
 - 选择题的答案和批注存在同一份草稿里；页面里已经不存在的那道题，它的旧答案不会被导出。
 - 提交过的批注会打上「已提交」标记，但**仍然会被再次导出** —— 提醒用户删掉已解决的。
 - 浏览器禁用本地存储时（隐私模式等），页面会提示「草稿无法保存」，导出仍然可用。
+- 手动跑脚本（没有 `PI_SESSION_ID`，比如在 opencode 里）会落到 `default/`，JSON 里
+  `sessionSource` 为 `fallback`。想自己指定就用 `--session <名字>` 或 `ASK_PAGE_SESSION=<名字>`。
 
 ## 7 收尾
 
-页面会留在 `.pi/ask-page/`，方便用户事后回看：
+页面会留在 `.pi/ask-pages/<session-id>/`，方便用户事后回看：
 
 ```
-.pi/ask-page/
-├── plan.body.html   你写的正文（下一轮改这个）
-└── plan.html        生成的页面（单文件，可直接打开 / 拷贝）
+.pi/ask-pages/
+├── 3f9a1c2e/          ← 本次 session
+│   ├── plan.body.html   你写的正文（下一轮改这个）
+│   └── plan.html        生成的页面（单文件，可直接打开 / 拷贝）
+└── 8b21d0aa/          ← 另一个 session，互不影响
 ```
 
-任务彻底结束后可以删掉，也可以留着。不要把它加进 git（除非用户要求）。
+```bash
+$ASK list                     # 本次 session 的页面
+$ASK list --all               # 所有 session 的页面（带 session 字段）
+$ASK prune --dry-run          # 看看哪些 session 目录 7 天没动过（只报告）
+$ASK prune --older-than 3     # 真删；永远跳过当前 session 和 default/
+```
+
+不要把它加进 git（`.pi/` 已在 `.gitignore` 里，除非用户要求）。
 
 ## 8 坑
 
@@ -172,5 +212,8 @@ python3 "$SKILL/scripts/ask_page.py" new plan --title "方案确认（v2）" --o
 - 页面不会自动刷新（没有服务端），改完必须让用户点「↻ 载入最新内容」。
 - `new` 会覆盖旧的 `plan.html`，但**不会**动 localStorage 里的草稿。
 - 用户可能一条批注都没写就关掉页面 —— 那说明他没意见或不想说，别追问。
-- `list` 可以看目录里有哪些页面：`python3 "$SKILL/scripts/ask_page.py" list`。
+- `list` 只列当前 session；要找别的 session 的页面用 `list --all`。
+- 2026-11 之前的旧目录 `.pi/ask-page/`（单数、平铺）不再被识别：不迁移、不出现在 `list` 里，
+  需要时让用户手动删。
+- `prune` 只删名字是 8 位 hex 的 session 目录，不碰当前 session 和 `default/`；先 `--dry-run` 看一眼。
 - 页面 URL 是普通 `file://` 路径，不含 token，但仍不建议提交进仓库。

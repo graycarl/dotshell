@@ -29,7 +29,9 @@
   <h3 data-pi-anchor="c-code">代码块</h3>
   <pre data-pi-anchor="c-pre"><code>python3 "$SKILL/scripts/ask_page.py" new plan \
   --title "方案确认" \
-  --body .pi/ask-page/plan.body.html --open</code></pre>
+  --body - --open &lt;&lt;'HTML'
+&lt;section&gt;…&lt;/section&gt;
+HTML</code></pre>
 
   <h3 data-pi-anchor="c-diff">Diff 着色 <code>.diff</code></h3>
   <div class="diff" data-pi-anchor="c-diff-body"><div class="hunk">@@ -18,7 +18,8 @@ function submit()</div>
