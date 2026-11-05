@@ -65,7 +65,10 @@ export default function (pi: ExtensionAPI) {
 
   // ── Quit-time prompt ──────────────────────────────────────────────
 
-  pi.on("session_shutdown", async (event, ctx) => {
+  // NOTE: pi stops the TUI BEFORE emitting session_shutdown on interactive
+  // quit, so ctx.ui dialogs cannot be used here — promptShutdownServers
+  // prompts over raw stdio instead (see ui.ts header).
+  pi.on("session_shutdown", async (event, _ctx) => {
     // Only a real process quit prompts. Session switches (/new, /resume,
     // /fork) and extension reloads leave servers running — the next session
     // re-attaches through the registry.
@@ -75,24 +78,16 @@ export default function (pi: ExtensionAPI) {
     const running = manager.list().filter((s) => s.state === "running");
     if (running.length === 0) return;
 
-    if (!ctx.hasUI || ctx.mode !== "tui") {
-      // Non-interactive modes: keep servers, just say so.
-      if (ctx.hasUI) {
-        ctx.ui.notify(`Leaving ${running.length} server(s) running: ${running.map((s) => s.name).join(", ")}`, "warning");
-      }
-      return;
-    }
-
-    const toStop = await promptShutdownServers(ctx, running);
-    for (const name of toStop) {
-      try {
-        await manager.stop(name);
-      } catch {
-        /* already dead — fine */
-      }
-    }
+    const toStop = await promptShutdownServers(running);
+    const kept = running.filter((s) => !toStop.has(s.name));
     if (toStop.size > 0) {
-      ctx.ui.notify(`Stopped ${toStop.size} server(s): ${[...toStop].join(", ")}`, "info");
+      await manager.stopAll([...toStop]);
+      process.stderr.write(`pi servers: stopped ${toStop.size} server(s): ${[...toStop].join(", ")}\n`);
+    }
+    if (kept.length > 0) {
+      process.stderr.write(
+        `pi servers: left running: ${kept.map((s) => `${s.name} (pid ${s.pid})`).join(", ")} — manage via /servers or .pi/servers/\n`,
+      );
     }
   });
 }

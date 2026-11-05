@@ -11,9 +11,15 @@
  * Kill semantics: processes are spawned with `detached: true`, so each server
  * leads its own process group; stopping targets the whole group (kill -pid)
  * so child processes of dev servers (pnpm/npm/node wrappers) die too.
+ *
+ * PID-reuse guard: each start records the process start time (`ps lstart`);
+ * before signalling a *recovered* process (no child handle) we re-check it —
+ * a reused pid belonging to an unrelated process is never signalled.
+ *
+ * Platform: POSIX only (macOS/Linux). Process-group kill is POSIX-specific.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import {
   closeSync,
   existsSync,
@@ -37,6 +43,8 @@ export interface ServerRecord {
   env?: Record<string, string>;
   /** ISO timestamp of (re)start. */
   startedAt: string;
+  /** Process start time from `ps lstart` — pid-reuse guard for recovered processes. */
+  psStart?: string;
   /** Absolute path to the log file. */
   logFile: string;
   state: "running" | "exited";
@@ -72,10 +80,17 @@ const STOP_TIMEOUT_MS = 5000;
 const TAIL_READ_BYTES = 256 * 1024;
 // Matches CSI sequences and other common ANSI escapes from dev-server output.
 // eslint-disable-next-line no-control-regex
-const ANSI_RE = /(?:\[[0-9;?]*[ -/]*[@-~]|\][^]*(?:|\\)|[@-Z\\-_])/g;
+const ANSI_RE = /\u001b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001b\\)|[@-Z\\-_])/g;
 
 export function stripAnsi(text: string): string {
   return text.replace(ANSI_RE, "");
+}
+
+export function formatUptime(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m${s % 60}s`;
+  return `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}m`;
 }
 
 function pidAlive(pid: number): boolean {
@@ -85,6 +100,15 @@ function pidAlive(pid: number): boolean {
   } catch (err) {
     // EPERM means the process exists but belongs to another user.
     return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** Process start time via ps — stable string for pid-reuse detection. */
+function psStartTime(pid: number): string | undefined {
+  try {
+    return execFileSync("ps", ["-o", "lstart=", "-p", String(pid)]).toString().trim() || undefined;
+  } catch {
+    return undefined; // process gone
   }
 }
 
@@ -123,30 +147,52 @@ export class ServerManager {
 
   // ── Registry persistence ────────────────────────────────────────
 
-  private loadFromDisk(): void {
-    if (!existsSync(this.registryPath)) return;
-    let data: RegistryFile;
+  private readDisk(): RegistryFile {
+    if (!existsSync(this.registryPath)) return { servers: {} };
     try {
-      data = JSON.parse(readFileSync(this.registryPath, "utf8")) as RegistryFile;
+      return JSON.parse(readFileSync(this.registryPath, "utf8")) as RegistryFile;
     } catch {
-      return; // corrupt registry — start empty rather than crash the session
+      return { servers: {} }; // corrupt registry — ignore rather than crash the session
     }
-    for (const record of Object.values(data.servers ?? {})) {
+  }
+
+  private loadFromDisk(): void {
+    for (const record of Object.values(this.readDisk().servers ?? {})) {
       if (record.state === "running" && !pidAlive(record.pid)) {
         record.state = "exited";
         record.exitedAt = record.exitedAt ?? new Date().toISOString();
+      } else if (
+        record.state === "exited" &&
+        record.psStart &&
+        pidAlive(record.pid) &&
+        psStartTime(record.pid) === record.psStart
+      ) {
+        // Marked exited but the very same process is still alive (e.g. the
+        // pid-reuse guard fired on a stale entry) — resurrect it.
+        record.state = "running";
+        delete record.exitedAt;
+        delete record.exitCode;
+        delete record.exitSignal;
       }
       this.servers.set(record.name, { record });
     }
     this.persist();
   }
 
+  /**
+   * Merge-then-write: re-read the registry and keep entries only other
+   * sessions know about (in-memory wins on name conflicts), so concurrent
+   * pi sessions on the same project don't erase each other's servers.
+   */
   private persist(): void {
     if (!this.registryPath) return;
     mkdirSync(this.serversDir, { recursive: true });
-    const data: RegistryFile = {
-      servers: Object.fromEntries([...this.servers.entries()].map(([name, s]) => [name, s.record])),
-    };
+    const merged: Record<string, ServerRecord> = { ...this.readDisk().servers };
+    for (const [name, s] of this.servers) merged[name] = s.record;
+    for (const name of Object.keys(merged)) {
+      if (!this.servers.has(name)) this.servers.set(name, { record: merged[name]! });
+    }
+    const data: RegistryFile = { servers: merged };
     const tmp = `${this.registryPath}.tmp-${process.pid}`;
     writeFileSync(tmp, JSON.stringify(data, null, 2));
     renameSync(tmp, this.registryPath);
@@ -160,17 +206,30 @@ export class ServerManager {
     }
     const existing = this.servers.get(name);
     if (existing && existing.record.state === "running") {
-      throw new Error(`Server "${name}" is already running (pid ${existing.record.pid}). Stop or restart it first.`);
+      // Reconcile first: the recovered process may have died since init.
+      if (!existing.child && !pidAlive(existing.record.pid)) {
+        existing.record.state = "exited";
+        existing.record.exitedAt = existing.record.exitedAt ?? new Date().toISOString();
+      } else {
+        throw new Error(`Server "${name}" is already running (pid ${existing.record.pid}). Stop or restart it first.`);
+      }
+    }
+
+    const cwd = opts.cwd ? path.resolve(this.rootDir, opts.cwd) : this.rootDir;
+    if (!cwd.startsWith(this.rootDir + path.sep) && cwd !== this.rootDir) {
+      throw new Error(`cwd must stay within the project root (${this.rootDir}). Use "cd ..." inside the command instead.`);
+    }
+    if (!existsSync(cwd)) {
+      throw new Error(`cwd does not exist: ${cwd}`);
     }
 
     mkdirSync(this.logsDir, { recursive: true });
     const logFile = path.join(this.logsDir, `${name}.log`);
-    const cwd = opts.cwd ? path.resolve(this.rootDir, opts.cwd) : this.rootDir;
-
     const fd = openSync(logFile, "a");
-    const banner = `\n─── pi servers: start ${new Date().toISOString()} | cwd=${cwd} | $ ${command} ───\n`;
-    writeFileSync(fd, banner);
+    writeFileSync(fd, `\n─── pi servers: start ${new Date().toISOString()} | cwd=${cwd} | $ ${command} ───\n`);
 
+    // $SHELL covers zsh/bash/fish (all support -c); PATH etc. is inherited
+    // from pi's environment, so no interactive shell startup is needed.
     const child = spawn(process.env.SHELL || "/bin/sh", ["-c", command], {
       cwd,
       env: { ...process.env, ...(opts.env ?? {}) },
@@ -179,13 +238,9 @@ export class ServerManager {
     });
     closeSync(fd); // child holds its own dup of the fd
 
-    // Don't let the child handle keep pi's event loop alive.
-    child.unref();
-    (child.stdin as unknown as { unref?: () => void } | null)?.unref?.();
-
     const record: ServerRecord = {
       name,
-      pid: child.pid!,
+      pid: child.pid ?? -1,
       command,
       cwd,
       env: opts.env,
@@ -196,21 +251,40 @@ export class ServerManager {
     const managed: ManagedServer = { record, child };
     this.servers.set(name, managed);
 
-    child.on("exit", (code, signal) => {
+    const markExited = (code: number | null, signal: string | null, note?: string) => {
+      if (record.state !== "running") return;
       record.state = "exited";
       record.exitCode = code;
       record.exitSignal = signal;
       record.exitedAt = new Date().toISOString();
       try {
         const lfd = openSync(logFile, "a");
-        writeFileSync(lfd, `─── pi servers: exit code=${code} signal=${signal} ───\n`);
+        writeFileSync(lfd, `─── pi servers: exit code=${code} signal=${signal}${note ? ` (${note})` : ""} ───\n`);
         closeSync(lfd);
       } catch {
         /* log file gone — ignore */
       }
       this.persist();
       this.emitChange();
-    });
+    };
+
+    // Spawn failure (bad shell, resource limits) fires 'error' — without a
+    // listener it would become an uncaughtException and crash pi itself.
+    child.once("error", (err) => markExited(null, null, `spawn error: ${err.message}`));
+    child.on("exit", (code, signal) => markExited(code, signal));
+    // Writing to a server that just exited would raise EPIPE on the socket —
+    // swallow it; send() reports state errors before writing anyway.
+    child.stdin?.on("error", () => {});
+
+    if (child.pid === undefined) {
+      markExited(null, null, "spawn failed");
+      throw new Error(`Failed to spawn "${command}" — see ${logFile}`);
+    }
+    record.psStart = psStartTime(child.pid);
+
+    // Don't let the child handle keep pi's event loop alive.
+    child.unref();
+    (child.stdin as unknown as { unref?: () => void } | null)?.unref?.();
 
     this.persist();
     this.emitChange();
@@ -226,6 +300,7 @@ export class ServerManager {
     const signal = opts.signal ?? "SIGTERM";
     const timeoutMs = opts.timeoutMs ?? STOP_TIMEOUT_MS;
 
+    this.verifyIdentity(managed);
     this.killGroup(record.pid, signal);
 
     const deadline = Date.now() + timeoutMs;
@@ -236,7 +311,9 @@ export class ServerManager {
     while (record.state === "running" && pidAlive(record.pid) && Date.now() < deadline) {
       await sleep(100);
     }
+    let escalated = false;
     if (record.state === "running" && pidAlive(record.pid)) {
+      escalated = true;
       this.killGroup(record.pid, "SIGKILL");
       const killDeadline = Date.now() + 2000;
       while (pidAlive(record.pid) && Date.now() < killDeadline) {
@@ -246,12 +323,25 @@ export class ServerManager {
     if (record.state === "running") {
       // No child handle fired (recovered process) — mark manually.
       record.state = "exited";
-      record.exitSignal = record.exitSignal ?? signal;
+      record.exitSignal = escalated ? "SIGKILL" : signal;
       record.exitedAt = new Date().toISOString();
     }
     this.persist();
     this.emitChange();
     return record;
+  }
+
+  /** Stop all running servers in parallel (used at quit). */
+  async stopAll(names: string[]): Promise<void> {
+    await Promise.all(
+      names.map(async (name) => {
+        try {
+          await this.stop(name);
+        } catch {
+          /* already dead — fine */
+        }
+      }),
+    );
   }
 
   /** Restart with the originally recorded command/cwd/env, appending to the same log. */
@@ -273,6 +363,7 @@ export class ServerManager {
     if (managed.record.state !== "running") {
       throw new Error(`Server "${name}" is not running.`);
     }
+    this.verifyIdentity(managed);
     this.killGroup(managed.record.pid, signal);
   }
 
@@ -296,11 +387,17 @@ export class ServerManager {
 
   list(): ServerSummary[] {
     // Reconcile state for recovered processes (no exit event without a handle).
+    let changed = false;
     for (const { record } of this.servers.values()) {
       if (record.state === "running" && !pidAlive(record.pid)) {
         record.state = "exited";
         record.exitedAt = record.exitedAt ?? new Date().toISOString();
+        changed = true;
       }
+    }
+    if (changed) {
+      this.persist();
+      this.emitChange();
     }
     return [...this.servers.values()].map(({ record, child }) => ({
       name: record.name,
@@ -318,12 +415,6 @@ export class ServerManager {
     return this.servers.get(name);
   }
 
-  running(): ManagedServer[] {
-    return this.list()
-      .filter((s) => s.state === "running")
-      .map((s) => this.servers.get(s.name)!);
-  }
-
   /** Remove exited entries older than the given count, keeping the newest. */
   pruneExited(keep = 5): void {
     const exited = [...this.servers.values()].filter((s) => s.record.state === "exited");
@@ -336,11 +427,11 @@ export class ServerManager {
   }
 
   /** Read the last `lines` lines of a server's log, ANSI codes stripped. */
-  tailLog(name: string, lines = 100): { text: string; logFile: string; totalLines: number } {
+  tailLog(name: string, lines = 100): { text: string; logFile: string } {
     const managed = this.mustGet(name);
     const { logFile } = managed.record;
     if (!existsSync(logFile)) {
-      return { text: "(log file missing)", logFile, totalLines: 0 };
+      return { text: "(log file missing)", logFile };
     }
     const size = statSync(logFile).size;
     const readLen = Math.min(size, TAIL_READ_BYTES);
@@ -348,9 +439,10 @@ export class ServerManager {
     try {
       const buf = Buffer.alloc(readLen);
       readSync(fd, buf, 0, readLen, size - readLen);
-      const all = stripAnsi(buf.toString("utf8")).split("\n");
-      const tail = all.slice(-lines);
-      return { text: tail.join("\n"), logFile, totalLines: all.length };
+      let all = stripAnsi(buf.toString("utf8")).split("\n");
+      // Mid-file reads start on a partial (possibly UTF-8-broken) line — drop it.
+      if (readLen < size) all = all.slice(1);
+      return { text: all.slice(-lines).join("\n"), logFile };
     } finally {
       closeSync(fd);
     }
@@ -376,6 +468,30 @@ export class ServerManager {
       throw new Error(`Unknown server "${name}". Known servers: ${known}`);
     }
     return managed;
+  }
+
+  /**
+   * Pid-reuse guard for recovered processes: a record loaded from the
+   * registry has no child handle, so the pid is the only identity we have.
+   * Compare the current process start time with the one recorded at start;
+   * a mismatch (or missing process) means the server is gone and the pid
+   * now belongs to something unrelated — refuse to signal it.
+   */
+  private verifyIdentity(managed: ManagedServer): void {
+    const { record } = managed;
+    if (managed.child || record.state !== "running") return; // own handle is authoritative
+    const current = psStartTime(record.pid);
+    if (!current || (record.psStart && current !== record.psStart)) {
+      record.state = "exited";
+      record.exitedAt = record.exitedAt ?? new Date().toISOString();
+      this.persist();
+      this.emitChange();
+      throw new Error(
+        `Server "${record.name}" is no longer running (pid ${record.pid} ${
+          current ? "was reused by an unrelated process" : "is gone"
+        }). Its entry was marked exited.`,
+      );
+    }
   }
 
   /** Kill the process group led by the server (detached spawn ⇒ pgid === pid). */

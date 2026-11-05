@@ -2,20 +2,22 @@
  * Servers Extension — Terminal UI
  *
  *  - ServersOverlay: the /servers overlay (list view + per-server log view)
- *  - promptShutdownServers: the quit-time dialog (stop all / keep all / pick)
+ *  - promptShutdownServers: quit-time prompt over raw stdio
  *  - updateStatusWidget: footer "⚙ N servers" indicator via ctx.ui.setStatus
+ *
+ * Why raw stdio for the quit prompt: pi stops the TUI BEFORE emitting
+ * session_shutdown on interactive quit (Ctrl+D / Ctrl+C / /quit), so
+ * ctx.ui dialogs opened from a session_shutdown handler never render and
+ * hang the shutdown forever. After the TUI stops, stdin is back in cooked
+ * mode and a plain readline prompt works. When stdin is not usable
+ * (signal-triggered quit, print/json/RPC modes), we cannot ask — the
+ * caller stops everything to avoid silently leaking processes.
  */
 
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
-import type { ServerManager, ServerSummary } from "./manager.js";
-
-function formatUptime(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
-  if (s < 3600) return `${Math.floor(s / 60)}m${s % 60}s`;
-  return `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}m`;
-}
+import * as readline from "node:readline";
+import { formatUptime, type ServerManager, type ServerSummary } from "./manager.js";
 
 // ── Footer status widget ────────────────────────────────────────────
 
@@ -25,38 +27,75 @@ export function updateStatusWidget(ctx: ExtensionContext, manager: ServerManager
   ctx.ui.setStatus("servers", n > 0 ? `⚙ ${n} server${n > 1 ? "s" : ""}` : undefined);
 }
 
-// ── Quit-time prompt ────────────────────────────────────────────────
+// ── Quit-time prompt (raw stdio — see header comment) ───────────────
 
-const STOP_ALL = "Stop all (default)";
-const KEEP_ALL = "Keep all running";
-const PICK = "Choose individually";
+const PROMPT_TIMEOUT_MS = 15_000;
+
+/** True when the TUI has stopped and stdin is usable for a plain prompt. */
+function canPromptOnStdio(): boolean {
+  if (!process.stdin.isTTY) return false;
+  // isRaw is set while the TUI owns stdin (signal-triggered shutdown path).
+  return !(process.stdin as unknown as { isRaw?: boolean }).isRaw;
+}
+
+type Answer = { kind: "answer"; value: string } | { kind: "eof" } | { kind: "timeout" };
+
+function ask(rl: readline.Interface, question: string): Promise<Answer> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (a: Answer) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      rl.removeListener("close", onClose);
+      resolve(a);
+    };
+    const timer = setTimeout(() => settle({ kind: "timeout" }), PROMPT_TIMEOUT_MS);
+    const onClose = () => settle({ kind: "eof" });
+    rl.once("close", onClose);
+    rl.question(question, (value) => settle({ kind: "answer", value: value.trim().toLowerCase() }));
+  });
+}
 
 /**
- * Ask the user what to do with still-running servers.
- * Returns the set of server names to stop. Defaults to stopping everything
- * (including when the dialog is dismissed with Esc).
+ * Ask the user which still-running servers to stop.
+ * Returns the set of server names to stop.
+ * Defaults: empty answer / timeout → stop all; EOF (Ctrl+D) → keep all.
+ * No usable stdin → stop all (cannot ask; avoid leaking processes).
  */
-export async function promptShutdownServers(ctx: ExtensionContext, running: ServerSummary[]): Promise<Set<string>> {
+export async function promptShutdownServers(running: ServerSummary[]): Promise<Set<string>> {
   const all = new Set(running.map((s) => s.name));
   if (running.length === 0) return new Set();
+  if (!canPromptOnStdio()) return all;
 
   const listText = running
     .map((s) => `  ${s.name} (pid ${s.pid}, up ${s.uptimeMs != null ? formatUptime(s.uptimeMs) : "?"}) — ${s.command}`)
     .join("\n");
-  const choice = await ctx.ui.select(
-    `${running.length} server(s) still running:\n${listText}`,
-    [STOP_ALL, KEEP_ALL, PICK],
-  );
+  process.stdout.write(`\npi servers: ${running.length} server(s) still running:\n${listText}\n`);
 
-  if (choice === KEEP_ALL) return new Set();
-  if (choice === PICK) {
-    const stop = new Set<string>();
-    for (const s of running) {
-      if (await ctx.ui.confirm(`Stop server "${s.name}"?`, s.command)) stop.add(s.name);
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = await ask(rl, `Stop them? [Y/n/pick] (stop all in ${PROMPT_TIMEOUT_MS / 1000}s) `);
+    if (answer.kind === "eof") return new Set(); // cancelled — non-destructive
+    if (answer.kind === "answer" && (answer.value === "n" || answer.value === "no")) return new Set();
+    if (answer.kind === "answer" && (answer.value === "p" || answer.value === "pick")) {
+      const stop = new Set<string>();
+      for (const s of running) {
+        const a = await ask(rl, `  Stop "${s.name}"? [Y/n] `);
+        if (a.kind !== "answer") {
+          // timeout → count as yes (consistent with the outer default);
+          // EOF → cancel the rest, stop what was confirmed so far.
+          if (a.kind === "timeout") stop.add(s.name);
+          break;
+        }
+        if (a.value !== "n" && a.value !== "no") stop.add(s.name);
+      }
+      return stop;
     }
-    return stop;
+    return all; // "y", empty input, or timeout
+  } finally {
+    rl.close();
   }
-  return all; // STOP_ALL or dismissed
 }
 
 // ── /servers overlay ────────────────────────────────────────────────
@@ -76,6 +115,7 @@ export class ServersOverlay {
   private logLines: string[] = [];
   private logOffset = 0;
   private busy = false;
+  private unsubscribeChange: () => void;
 
   constructor(
     private manager: ServerManager,
@@ -84,12 +124,28 @@ export class ServersOverlay {
     private close: () => void,
   ) {
     this.refresh();
+    // Auto-refresh while open: servers can exit / be changed by the agent.
+    this.unsubscribeChange = manager.onChange(() => {
+      this.refresh();
+      if (this.view === "logs") this.reloadLogs();
+      this.requestRender();
+    });
+  }
+
+  dispose(): void {
+    this.unsubscribeChange();
   }
 
   private refresh(): void {
     const summaries = this.manager.list();
     this.rows = summaries.map((summary) => ({ summary, lastLog: this.manager.lastLogLine(summary.name) }));
     if (this.selected >= this.rows.length) this.selected = Math.max(0, this.rows.length - 1);
+  }
+
+  private reloadLogs(): void {
+    const { text } = this.manager.tailLog(this.logName, 500);
+    this.logLines = text.split("\n");
+    // Keep the scroll position stable from the bottom.
   }
 
   handleInput(data: string): void {
@@ -134,9 +190,8 @@ export class ServersOverlay {
   private openLogs(): void {
     const row = this.rows[this.selected];
     if (!row) return;
-    const { text } = this.manager.tailLog(row.summary.name, 500);
     this.logName = row.summary.name;
-    this.logLines = text.split("\n");
+    this.reloadLogs();
     this.logOffset = 0;
     this.view = "logs";
   }

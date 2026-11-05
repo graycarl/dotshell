@@ -15,19 +15,13 @@
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import type { ServerManager, ServerSummary } from "./manager.js";
+import { formatUptime, type ServerManager, type ServerSummary } from "./manager.js";
 
 const MAX_LOG_CHARS = 20_000;
 const SIGNALS = ["SIGHUP", "SIGINT", "SIGTERM", "SIGKILL", "SIGUSR1", "SIGUSR2"] as const;
 
 const nameParam = Type.String({ description: "Server name (as given to server_start)" });
 
-function formatUptime(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
-  if (s < 3600) return `${Math.floor(s / 60)}m${s % 60}s`;
-  return `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}m`;
-}
 
 function summaryLine(s: ServerSummary): string {
   if (s.state === "running") {
@@ -42,7 +36,11 @@ function textResult(text: string, details?: Record<string, unknown>) {
 }
 
 function errorResult(text: string, details?: Record<string, unknown>) {
-  return { content: [{ type: "text" as const, text: `Error: ${text}` }], details: { ...details, error: text } };
+  return {
+    content: [{ type: "text" as const, text: `Error: ${text}` }],
+    details: { ...details, error: text },
+    isError: true,
+  };
 }
 
 interface RenderableResult {
@@ -206,6 +204,9 @@ export function registerAllTools(pi: ExtensionAPI, manager: ServerManager): void
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       try {
+        if (params.signal && params.restart) {
+          return errorResult("signal and restart are mutually exclusive — pick one.");
+        }
         if (params.signal) {
           manager.signal(params.name, params.signal);
           return textResult(`Sent ${params.signal} to "${params.name}" (still running).`);
@@ -269,6 +270,3 @@ export function registerAllTools(pi: ExtensionAPI, manager: ServerManager): void
     },
   });
 }
-
-/** Tool names managed by this extension. */
-export const MANAGED_TOOL_NAMES = new Set(["server_start", "server_list", "server_logs", "server_stop", "server_send"]);
