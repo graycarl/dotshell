@@ -18,6 +18,7 @@ Bash / Zsh 配置管理，统一管理 dotfiles 和工具配置。
 │   ├── py-venv.sh        #   Python 虚拟环境管理 + 自动切换
 │   ├── tmux-manager.sh   #   tmux session 批量管理
 │   ├── worktree.sh       #   Git worktree 管理辅助
+│   ├── magic.sh          #   magic-cli：自然语言转 shell 命令，确认后执行
 │   └── macgui.sh         #   macOS GUI 提示/通知
 │
 ├── apps/                 # 各应用的配置文件
@@ -109,6 +110,24 @@ function my-func() {
     echo "hello"
 }
 ```
+
+### 用自然语言生成命令（magic-cli）
+
+懒得记某个命令时，直接描述需求，`magic-cli` 会调用 pi 生成命令，确认后执行：
+
+```bash
+$ magic-cli 把当前目录的 png 图片的 size 缩小一半
+CMD: for f in *.png; do sips -z ... ; done
+执行? [Y/n/e] (或直接输入修改意见): 
+```
+
+- 回车/`y` 执行，`n` 放弃（退出码 1），`e` 用 `$EDITOR` 改，输入其他文字则当作修改意见重新生成
+- 命令在当前 shell 执行（`cd`、`export` 生效）并写入历史，可用 `↑` 召回（多行脚本会压成单行再入历史）
+- 模型会在输出首行自报用到的命令（`#USES:`）：生成后会做语法检查，自报的命令若本机没装会自动重写一次
+- 危险操作（`rm -rf /`、`mkfs`、`curl | sh`、`git push -f` 等）必须手动输入 `yes`；这只是启发式黑名单，不是安全边界
+- 上下文默认包含最近 5 条 shell 历史并发送给模型（`MAGIC_CTX=off` 关闭）；`echo 需求 | magic-cli` 里的管道内容是「需求」，不是给生成命令的输入
+- 其他开关：`MAGIC_MODEL`（默认 `deepseek/deepseek-flash`）、`MAGIC_THINKING`（默认沿用 pi 配置）、`MAGIC_USES=0`（关掉命令存在性预检，语法检查仍生效）、`MAGIC_DEBUG=1`（打印 prompt）
+- 依赖 [pi coding agent](https://github.com/earendil-works/pi)
 
 ### 使用工具脚本
 
