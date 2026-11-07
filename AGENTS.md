@@ -26,6 +26,7 @@ zsh
    │   ├── libs/py-venv.sh       — Python venv 管理 + 自动切换
    │   ├── libs/tmux-manager.sh  — tmux-init, tmux-clean
    │   ├── libs/worktree.sh      — worktree 管理命令
+   │   ├── libs/magic.sh         — magic-cli：自然语言转 shell 命令，确认后执行
    │   └── libs/macgui.sh        — macOS GUI 通知/对话框
    ├── local/shrc        — 机器级私有配置（可选，不入库）
    ├── zsh.d/*.zsh       — zsh 专有配置（按文件名顺序，bash 不加载）
