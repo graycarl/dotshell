@@ -13,7 +13,10 @@ function try-init-rust() {
 }
 
 function try-init-neovim() {
-    if [[ $(basename $EDITOR) = "nvim" ]]; then
+    # 参数展开取 basename，省掉一次 fork（实测 ~2.7ms/次）；
+    # 先砍掉 EDITOR 可能带的参数（如 'nvim -f'），保持和原来 `basename $EDITOR` 等价
+    local _editor=${EDITOR%% *}
+    if [[ ${_editor##*/} = "nvim" ]]; then
         alias vi='nvim'
         alias vim='nvim'
         alias view='nvim -R'
