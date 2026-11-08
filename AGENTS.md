@@ -228,6 +228,19 @@ local/
 4. 更新 `README.md` 中的应用表格
 5. 可选：在 `AGENTS.md` 中注明新路径
 
+### 改动 shell 配置后先自检
+
+改完 `libs/`、`zsh.d/`、`apps/*/setup.sh` 之类的东西，先跑：
+
+```bash
+bash scripts/check.sh --setup
+```
+
+它会断言：zsh/bash 都能干净加载（两个流都必须无输出）、文档里承诺的函数真的定义了、
+`chpwd`/`compdef` 真的挂上了、每个文件在对应解释器下语法正确、shellcheck 无 error、
+`apps/*/setup.sh` 幂等且落地物齐全。**这类配置的失败方式是静默降级**（功能没了但不报错），
+所以新加函数/新加 setup.sh 时记得同步更新 `scripts/check.sh` 里的 `want` 列表。
+
 ### 添加新 Shell 函数
 
 1. 在 `libs/` 下创建 `xxx.sh`（bash/zsh 通用函数）
