@@ -90,6 +90,19 @@ chsh -s /bin/zsh
 
 ## 进阶用法
 
+### 改动后自检
+
+仓库自带一个自检脚本，把「文档里承诺的东西真的存在」变成断言（函数有没有被某道条件挡住、
+`libs/` 里有没有混进只有 zsh 能解析的语法、`setup.sh` 是不是幂等且没留下悬空软链、
+有没有把 `auth.json` 提交上去）。改完 shell 配置先跑一遍：
+
+```bash
+$ bash scripts/check.sh            # 快速检查（约 2s，不碰你的 $HOME）
+$ bash scripts/check.sh --setup    # 额外验证每个 apps/*/setup.sh
+```
+
+所有检查都在临时沙盒 HOME 里进行，CI（`.github/workflows/check.yml`）跑的是同一套。
+
 ### 添加本地私有配置
 
 机器相关的配置（如 brew 路径、个人 token 等）放入 `local/shrc`，该文件被 `.gitignore` 排除：

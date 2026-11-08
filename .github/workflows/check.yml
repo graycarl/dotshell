@@ -1,0 +1,37 @@
+name: check
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:        # 改 shellcheck 排除列表时想手动跑一次
+
+permissions:
+  contents: read
+
+concurrency:                # 连推同一个 PR 时取消旧的那次
+  group: check-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install zsh + shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq zsh shellcheck
+
+      # 随镜像滚动的 shellcheck 会在某天新增 error 级规则，让无关 PR 变红；
+      # 出问题时先看这行打出来的版本。
+      - name: Tool versions
+        run: |
+          zsh --version
+          shellcheck --version | head -3
+
+      # 让「装了 uv」那条分支也被真实跑到（补全接线）
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Self-check
+        run: bash scripts/check.sh --setup
