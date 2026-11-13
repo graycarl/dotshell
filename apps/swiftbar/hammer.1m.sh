@@ -93,12 +93,12 @@ done
 
 echo "Reset Input Method | bash=$TMPDIR/reset-input-method.sh terminal=false"
 
-# FGW - Dynamic DNS update (hourly, only when ~/.shell/local/hammer-fgw exists)
+# FGW - route self-heal (hourly, only when ~/.shell/local/hammer-fgw exists)
+# 注：DDNS（home.graycarl.me）与 Let's Encrypt 证书已由路由器自己维护
+#     （见 ~/Sources/AgentHome/fgw/router/），这里只负责 WG→Surge 路由自愈。
 FGW_SWITCH=$HOME/.shell/local/hammer-fgw
 if [ -f "$FGW_SWITCH" ]; then
     FGW_LAST_RUN_FILE=$TMPDIR/fgw-last-run
-    FGW_LAST_IP_FILE=$TMPDIR/fgw-last-ip
-    FGW_LAST_STATUS_FILE=$TMPDIR/fgw-last-status
     FGW_SETUP_STATUS_FILE=$TMPDIR/fgw-setup-status
     NOW=$(date +%s)
     SHOULD_RUN=0
@@ -114,28 +114,6 @@ if [ -f "$FGW_SWITCH" ]; then
 
     if [ $SHOULD_RUN -eq 1 ]; then
         echo "$NOW" > "$FGW_LAST_RUN_FILE"
-        NEW_IP=$(curl -s --max-time 10 ip.sb 2>/dev/null)
-        if [ -n "$NEW_IP" ] && [[ "$NEW_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            OLD_IP=$(cat "$FGW_LAST_IP_FILE" 2>/dev/null)
-            if [ "$NEW_IP" != "$OLD_IP" ]; then
-                echo "$NEW_IP" > "$FGW_LAST_IP_FILE"
-                if $HOME/.local/bin/hbkit dns --domain graycarl.me set home A "$NEW_IP" >> "$TMPDIR/log" 2>&1; then
-                    echo "ok|$NOW" > "$FGW_LAST_STATUS_FILE"
-                    echo "$(date): FGW DNS updated: $OLD_IP → $NEW_IP" >> "$TMPDIR/log"
-                else
-                    echo "error: hbkit dns set failed|$NOW" > "$FGW_LAST_STATUS_FILE"
-                    echo "$(date): FGW DNS update failed (hbkit error)" >> "$TMPDIR/log"
-                fi
-            else
-                echo "ok|$NOW" > "$FGW_LAST_STATUS_FILE"
-                echo "$(date): FGW IP unchanged: $NEW_IP" >> "$TMPDIR/log"
-            fi
-        else
-            echo "error: curl ip.sb failed|$NOW" > "$FGW_LAST_STATUS_FILE"
-            echo "$(date): FGW curl ip.sb failed" >> "$TMPDIR/log"
-        fi
-
-        # Run setup-fgw.sh for router/Mac route configuration
         echo "$(date): FGW setup-fgw.sh starting..." >> "$TMPDIR/log"
         if $HOME/.shell/tools/setup-fgw.sh >> "$TMPDIR/log" 2>&1; then
             echo "ok|$NOW" > "$FGW_SETUP_STATUS_FILE"
@@ -148,36 +126,21 @@ if [ -f "$FGW_SWITCH" ]; then
 
     # Menu display
     echo "FGW"
-    if [ -f "$FGW_LAST_STATUS_FILE" ]; then
-        STATUS_LINE=$(cat "$FGW_LAST_STATUS_FILE")
-        STATUS=$(echo "$STATUS_LINE" | cut -d'|' -f1)
-        LAST_TIME_EPOCH=$(echo "$STATUS_LINE" | cut -d'|' -f2)
-        LAST_TIME_STR=$(date -r "$LAST_TIME_EPOCH" "+%Y-%m-%d %H:%M" 2>/dev/null || echo "unknown")
-
-        if [ "$STATUS" = "ok" ]; then
-            if [ -f "$FGW_LAST_IP_FILE" ]; then
-                FGW_DISPLAY_IP=$(cat "$FGW_LAST_IP_FILE")
-                echo "--IP: $FGW_DISPLAY_IP | color=green"
-            fi
-            echo "--Last update: $LAST_TIME_STR | color=gray"
-        else
-            echo "--${STATUS} | color=red"
-            echo "--Last attempt: $LAST_TIME_STR | color=gray"
-        fi
-    else
-        echo "--Waiting for first run... | color=gray"
-    fi
-
-    # Setup-fgw status
     if [ -f "$FGW_SETUP_STATUS_FILE" ]; then
         SETUP_LINE=$(cat "$FGW_SETUP_STATUS_FILE")
         SETUP_STATUS=$(echo "$SETUP_LINE" | cut -d'|' -f1)
+        SETUP_TIME_EPOCH=$(echo "$SETUP_LINE" | cut -d'|' -f2)
+        SETUP_TIME_STR=$(date -r "$SETUP_TIME_EPOCH" "+%Y-%m-%d %H:%M" 2>/dev/null || echo "unknown")
         if [ "$SETUP_STATUS" = "ok" ]; then
             echo "--Route: ok | color=green"
         else
             echo "--Route: failed | color=red"
         fi
+        echo "--Last run: $SETUP_TIME_STR | color=gray"
+    else
+        echo "--Waiting for first run... | color=gray"
     fi
+    echo "--DDNS: 路由器维护 home.graycarl.me | color=gray size=11"
 fi
 
 echo "Utils"
