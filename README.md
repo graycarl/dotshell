@@ -34,7 +34,7 @@ Bash / Zsh 配置管理，统一管理 dotfiles 和工具配置。
 │   ├── swiftbar/         #   SwiftBar 菜单栏插件
 │   └── mac/              #   macOS 专用脚本
 │
-├── tools/                # 实用工具脚本
+├── tools/                # 实用工具脚本（含 fgw/ 网络恢复与路由器 DDNS/证书）
 │   ├── transvideo.py     #   视频转码
 │   ├── pwgen.sh          #   密码生成
 │   ├── totp.py           #   TOTP 验证码
@@ -157,6 +157,17 @@ $ uv run ~/.shell/tools/totp.py
 # 从 YAML 消息历史调用 LLM（流式输出）
 $ uv run ~/.shell/tools/llm-chat.py messages.yaml
 ```
+
+### fgw 网络恢复（WireGuard → Surge + 路由器 DDNS/证书）
+
+```bash
+~/.shell/tools/fgw/start.sh      # 幂等恢复：路由器策略路由/SNAT + cru 自愈 + Mac 静态路由
+~/.shell/tools/fgw/install.sh    # 路由器 DNSPod DDNS + Let's Encrypt（首次/固件升级后，幂等）
+```
+
+- 配套 `tools/setup-fgw.sh` 是薄壳（SwiftBar 每小时调用，`exec` 上面的 `start.sh`）
+- 路由器侧脚本（`ddns-home.sh` / `cert-deploy.sh` / `acme-renew.sh` / `fgw-extra`）也在这里，由 `install.sh` 推送到 `/jffs/scripts/`
+- 设计说明、固件坑与自检清单见 `~/Sources/AgentHome/fgw/README.md`
 
 ### Python 虚拟环境自动切换
 

@@ -1,0 +1,24 @@
+#!/bin/sh
+# 路由器侧附加钩子：DDNS + 证书（开机/自愈时补装）
+#
+# 由 /jffs/scripts/firewall-start 末尾调用：
+#   - 开机时把 cru 任务装回去（stock 固件的 cru 不跨重启持久化）
+#   - 顺带跑一次 DDNS（内部有 nvram 比对快路径，几乎零开销）
+#   - 顺带部署一次证书（内部 cmp 短路，未变化时不做任何事）
+#
+# 安装：~/.shell/tools/fgw/install.sh（Mac 侧执行）
+
+LOG=/jffs/.acme-home.log
+log() { echo "$(date '+%F %T') [fgw-extra] $*" >> "$LOG"; }
+
+if which cru >/dev/null 2>&1; then
+    cru l 2>/dev/null | grep -q 'ddns_home' \
+        || cru a ddns_home "*/5 * * * * /jffs/scripts/ddns-home.sh >/dev/null 2>&1"
+    cru l 2>/dev/null | grep -q 'acme_renew' \
+        || cru a acme_renew "43 4 * * * /jffs/scripts/acme-renew.sh >/dev/null 2>&1"
+fi
+
+[ -x /jffs/scripts/ddns-home.sh ] && /jffs/scripts/ddns-home.sh
+[ -x /jffs/scripts/cert-deploy.sh ] && /jffs/scripts/cert-deploy.sh
+
+exit 0
