@@ -315,23 +315,25 @@ agent 的系统提示词写在这里。
     └── meta.json                         # 运行配置快照 + 活跃时间
 ```
 
-`meta.json`：
+`meta.json`（真实产物示例，`undefined` 字段会被省略）：
 
 ```json
 {
-  "agentId": "worker-3f9a1c02",
   "kind": "spawn",
   "agent": "worker",
-  "agentScope": "user",
+  "source": "user",
   "model": "deepseek/deepseek-flash",
-  "tools": null,
-  "excludeTools": null,
-  "sessionFile": "~/.pi/agent/subagent-sessions/worker-3f9a1c02/2026-...Z_xxx.jsonl",
-  "parentSession": "~/.pi/agent/sessions/--path--/2026-...Z_yyy.jsonl",
-  "createdAt": "2026-11-16T16:50:16.515Z",
-  "lastActiveAt": "2026-11-16T16:50:28.246Z"
+  "parentSession": "/Users/me/.pi/agent/sessions/--Users-me-proj--/2026-11-16T16-57-04-479Z_01a1e54a.jsonl",
+  "agentId": "worker-3f9a1c02",
+  "createdAt": "2026-11-16T16:57:05.538Z",
+  "lastActiveAt": "2026-11-16T16:57:11.521Z",
+  "sessionFile": "/Users/me/.pi/agent/subagent-sessions/worker-3f9a1c02/2026-11-16T16-57-05-790Z_01a1e54a.jsonl"
 }
 ```
+
+- `source` 是 agent 定义的来源（`user` / `project` / `builtin`，fork 为 `builtin`），只影响 TUI 里的标注。
+- `tools` / `excludeTools` 只在设置了对应限制时出现。
+- `sessionFile` / `parentSession` 都是**绝对路径**。读取时会校验 `sessionFile` 必须在自己的目录内，越界时回退为目录内最新的 jsonl。
 
 `agentId` 形如 `<agent 名>-<8 位 hex>`：`worker-3f9a1c02`、`fork-subagent-88de21ab`（fork 用工具名 `fork_subagent`，被安全化为 `fork-subagent`）。它同时是目录名，读取前会做严格校验，防止路径穿越。
 
@@ -341,7 +343,7 @@ agent 的系统提示词写在这里。
 
 - agent 定义后来被改动 / 改名 / 删除，已存在的 `agentId` 仍然可用（跑的是当初的提示词）。
 - 想让新定义生效，需要重新 `spawn_subagent` 创建新的 agent。
-- 只有 `model` 允许在单次 `resume_subagent` 里用参数覆盖，且不写回 `meta.json`。
+- 只有 `model` 允许在单次 `resume_subagent` 里用参数覆盖，且不写回 `meta.json`；未覆盖时用快照里的模型（快照里没有就用子进程 pi 的默认模型，**不会**临时跟随父会话当前模型）。
 - `fork_subagent` 没有 agent 定义，同样以快照（`FORK_SYSTEM_PROMPT`）为准。
 
 ### 续接时的消息结构
@@ -393,8 +395,8 @@ agent 的系统提示词写在这里。
 - **未知 agent**：返回 `Unknown agent: <name>`（标记为 `isError: true`）。
 - **`fork_subagent` 无可继承历史**：直接报错并提示改用 `spawn_subagent`，不会退化成 fresh run。
 - **`resume_subagent` 的 `agentId` 未知或非法**：返回 `Unknown or invalid agentId: ...`，并列出最近 5 个可用 id。
-- **`meta.json` 丢失/损坏**：返回 `Cannot resume <id>: meta.json is missing or unreadable.`。
-- **没有会话文件**（首轮从未真正启动，例如进程启动即失败）：返回 `Cannot resume <id>: it has no session file yet ...`，并删掉该空目录。
+- **`meta.json` 丢失/损坏**（或字段类型不对）：返回 `Cannot resume <id>: meta.json is missing or unreadable.`，不会把坏数据塞进子进程参数。
+- **没有会话文件**（首轮从未真正启动，例如子进程启动即失败）：首轮结束时 `runAgent` 会删掉该空目录，并在结果里去掉 `agentId`、提示 `the run produced no session file; this agent cannot be resumed`；若目录已被删而对方仍在 resume，则返回 `Cannot resume <id>: it has no session file yet ...`。
 - **同一 agent 并发续接**：返回 `Agent <id> is busy; wait for its current run to finish before resuming it.`
 - **持久化目录创建失败**（权限等）：该次调用退化为临时目录，结果首行提示 `session persistence unavailable; this run cannot be resumed`。
 - **exit code != 0**：作为错误返回，并附带 stderr 或子进程输出。

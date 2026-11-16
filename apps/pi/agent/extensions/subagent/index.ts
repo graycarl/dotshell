@@ -329,7 +329,8 @@ interface AgentMeta {
 	kind: "spawn" | "fork";
 	/** Agent definition name (the tool name for fork runs). */
 	agent: string;
-	agentScope?: string;
+	/** Where the agent definition came from; drives the TUI label on resume. */
+	source?: "user" | "project" | "builtin";
 	model?: string;
 	tools?: string;
 	excludeTools?: string;
@@ -363,9 +364,8 @@ function releaseAgentId(agentId: string): void {
 }
 
 function expandTilde(p: string): string {
-	if (p === "~") return os.homedir();
-	if (p.startsWith("~/") || p.startsWith("~\\")) return path.join(os.homedir(), p.slice(2));
-	return p;
+	const expanded = p === "~" ? os.homedir() : p.startsWith("~/") ? path.join(os.homedir(), p.slice(2)) : p;
+	return path.resolve(expanded);
 }
 
 /** Root of the persisted subagent sessions, alongside pi's own session storage. */
@@ -407,6 +407,12 @@ function readAgentMeta(dir: string): AgentMeta | null {
 	try {
 		const parsed = JSON.parse(fs.readFileSync(path.join(dir, "meta.json"), "utf-8")) as AgentMeta;
 		if (!parsed || typeof parsed.agentId !== "string" || !parsed.agentId) return null;
+		if (typeof parsed.agent !== "string" || !parsed.agent.trim()) return null;
+		if (parsed.kind !== "spawn" && parsed.kind !== "fork") return null;
+		if (parsed.source !== undefined && !["user", "project", "builtin"].includes(parsed.source)) return null;
+		// Optional fields feed child argv/session lookup, so reject non-strings outright.
+		const optionalStrings = [parsed.model, parsed.tools, parsed.excludeTools, parsed.sessionFile];
+		if (optionalStrings.some((value) => value !== undefined && typeof value !== "string")) return null;
 		return parsed;
 	} catch {
 		return null;
@@ -436,10 +442,11 @@ function createPersistedRun(meta: Omit<AgentMeta, "agentId" | "createdAt" | "las
 	for (let attempt = 0; attempt < 20; attempt++) {
 		const agentId = `${slug}-${Math.random().toString(16).slice(2, 10).padEnd(8, "0")}`;
 		const dir = path.join(root, agentId);
-		if (fs.existsSync(dir)) continue;
 		try {
-			fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-		} catch {
+			// Non-recursive: an existing directory must be an error, not silently reused.
+			fs.mkdirSync(dir, { mode: 0o700 });
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException)?.code === "EEXIST") continue;
 			return null;
 		}
 		const now = new Date().toISOString();
@@ -472,20 +479,7 @@ function listRecentAgentIds(limit = 5): string[] {
 			.filter((entry) => entry.isDirectory() && AGENT_ID_PATTERN.test(entry.name))
 			.map((entry) => {
 				const dir = path.join(root, entry.name);
-				let lastActive = 0;
-				const meta = readAgentMeta(dir);
-				if (meta?.lastActiveAt) {
-					const parsed = Date.parse(meta.lastActiveAt);
-					if (!Number.isNaN(parsed)) lastActive = parsed;
-				}
-				if (!lastActive) {
-					try {
-						lastActive = fs.statSync(dir).mtimeMs;
-					} catch {
-						/* ignore */
-					}
-				}
-				return { id: entry.name, lastActive };
+				return { id: entry.name, lastActive: agentLastActiveMs(dir) ?? 0 };
 			})
 			.sort((a, b) => b.lastActive - a.lastActive)
 			.slice(0, limit)
@@ -493,6 +487,31 @@ function listRecentAgentIds(limit = 5): string[] {
 	} catch {
 		return [];
 	}
+}
+
+/** Last activity of an agent dir: its recorded timestamp, else the directory mtime. */
+function agentLastActiveMs(dir: string): number | undefined {
+	const meta = readAgentMeta(dir);
+	if (meta?.lastActiveAt) {
+		const parsed = Date.parse(meta.lastActiveAt);
+		if (!Number.isNaN(parsed)) return parsed;
+	}
+	try {
+		return fs.statSync(dir).mtimeMs;
+	} catch {
+		return undefined;
+	}
+}
+
+/** Session file recorded in meta.json, but only when it really lives inside the agent dir. */
+function resolveSessionFile(dir: string, recorded: string | undefined): string | undefined {
+	if (recorded) {
+		const resolved = path.resolve(dir, recorded);
+		if (resolved.startsWith(`${path.resolve(dir)}${path.sep}`) && resolved.endsWith(".jsonl") && fs.existsSync(resolved)) {
+			return resolved;
+		}
+	}
+	return findSessionFile(dir);
 }
 
 /** Newest session file inside an agent dir, ignoring the fork source fixture. */
@@ -531,20 +550,8 @@ function pruneAgentSessions(): void {
 		if (!entry.isDirectory() || !AGENT_ID_PATTERN.test(entry.name)) continue;
 		if (activeAgentIds.has(entry.name)) continue;
 		const dir = path.join(root, entry.name);
-		let lastActive: number | undefined;
-		const meta = readAgentMeta(dir);
-		if (meta?.lastActiveAt) {
-			const parsed = Date.parse(meta.lastActiveAt);
-			if (!Number.isNaN(parsed)) lastActive = parsed;
-		}
-		if (lastActive === undefined) {
-			try {
-				lastActive = fs.statSync(dir).mtimeMs;
-			} catch {
-				continue;
-			}
-		}
-		if (now - lastActive <= RETENTION_MS) continue;
+		const lastActive = agentLastActiveMs(dir);
+		if (lastActive === undefined || now - lastActive <= RETENTION_MS) continue;
 		try {
 			fs.rmSync(dir, { recursive: true, force: true });
 		} catch {
@@ -821,13 +828,32 @@ async function runAgent(defaultCwd: string, spec: AgentSpec, options: RunAgentOp
 				}
 				fs.rmdirSync(sessionDir);
 			} catch { /* ignore */ }
-		} else if (run && !sessionFile) {
+		} else if (run && !resumeSessionFile && !sessionFile) {
 			// Nothing was ever written (e.g. the child failed to start): drop the empty
 			// directory so we do not advertise an agentId that can never be resumed.
 			try { fs.rmSync(run.dir, { recursive: true, force: true }); } catch { /* ignore */ }
 			currentResult.agentId = undefined;
 			currentResult.persistenceWarning = "the run produced no session file; this agent cannot be resumed";
 		}
+	}
+}
+
+/**
+ * Create the persisted session, reserve its agent id, run the agent in it, then
+ * release the id. A failed createPersistedRun degrades to a throwaway run.
+ */
+async function runPersistedAgent(
+	cwd: string,
+	spec: AgentSpec,
+	meta: Omit<AgentMeta, "agentId" | "createdAt" | "lastActiveAt">,
+	options: Omit<RunAgentOptions, "run">,
+): Promise<SingleResult> {
+	const run = createPersistedRun(meta);
+	if (run) claimAgentId(run.agentId);
+	try {
+		return await runAgent(cwd, spec, { ...options, run: run ?? undefined });
+	} finally {
+		if (run) releaseAgentId(run.agentId);
 	}
 }
 
@@ -1040,7 +1066,6 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			let result: SingleResult;
-			let run: PersistedRun | null = null;
 			try {
 				const targetAgent = agents.find((a) => a.name === params.agent);
 				if (!targetAgent) {
@@ -1054,27 +1079,28 @@ export default function (pi: ExtensionAPI) {
 				const spec = toAgentSpec(targetAgent);
 				const parentModel = formatModelLabel(ctx.model);
 				if (params.model) spec.model = params.model;
-				run = createPersistedRun({
-					kind: "spawn",
-					agent: targetAgent.name,
-					agentScope,
-					model: spec.model ?? parentModel,
-					tools: spec.tools,
-					excludeTools: spec.excludeTools,
-					parentSession: ctx.sessionManager.getSessionFile(),
-				});
-				if (run) claimAgentId(run.agentId);
-				result = await runAgent(ctx.cwd, spec, {
-					task: params.task,
-					prompt: buildTaskPrompt(params.task, false),
-					parentModel,
-					run: run ?? undefined,
-					signal,
-					onUpdate,
-					makeDetails,
-				});
+				result = await runPersistedAgent(
+					ctx.cwd,
+					spec,
+					{
+						kind: "spawn",
+						agent: targetAgent.name,
+						source: spec.source,
+						model: spec.model ?? parentModel,
+						tools: spec.tools,
+						excludeTools: spec.excludeTools,
+						parentSession: ctx.sessionManager.getSessionFile(),
+					},
+					{
+						task: params.task,
+						prompt: buildTaskPrompt(params.task, false),
+						parentModel,
+						signal,
+						onUpdate,
+						makeDetails,
+					},
+				);
 			} finally {
-				if (run) releaseAgentId(run.agentId);
 				release();
 			}
 			return finalizeResult(result, makeDetails);
@@ -1164,18 +1190,8 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			let result: SingleResult;
-			let run: PersistedRun | null = null;
 			try {
-				const parentModel = formatModelLabel(ctx.model);
-				run = createPersistedRun({
-					kind: "fork",
-					agent: FORK_SUBAGENT_TOOL,
-					model: params.model ?? parentModel,
-					tools: params.tools,
-					parentSession: ctx.sessionManager.getSessionFile(),
-				});
-				if (run) claimAgentId(run.agentId);
-				result = await runAgent(
+				result = await runPersistedAgent(
 					ctx.cwd,
 					{
 						name: FORK_SUBAGENT_TOOL,
@@ -1185,18 +1201,24 @@ export default function (pi: ExtensionAPI) {
 						tools: params.tools,
 					},
 					{
+						kind: "fork",
+						agent: FORK_SUBAGENT_TOOL,
+						source: "builtin",
+						model: params.model ?? formatModelLabel(ctx.model),
+						tools: params.tools,
+						parentSession: ctx.sessionManager.getSessionFile(),
+					},
+					{
 						task: params.task,
 						prompt: buildTaskPrompt(params.task, true),
-						parentModel,
+						parentModel: formatModelLabel(ctx.model),
 						forkContext,
-						run: run ?? undefined,
 						signal,
 						onUpdate,
 						makeDetails,
 					},
 				);
 			} finally {
-				if (run) releaseAgentId(run.agentId);
 				release();
 			}
 
@@ -1268,8 +1290,7 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			const sessionFile =
-				meta.sessionFile && fs.existsSync(meta.sessionFile) ? meta.sessionFile : findSessionFile(dir);
+			const sessionFile = resolveSessionFile(dir, meta.sessionFile);
 			if (!sessionFile) {
 				return {
 					content: [
@@ -1283,12 +1304,12 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			if (!claimAgentId(meta.agentId)) {
+			if (!claimAgentId(params.agentId)) {
 				return {
 					content: [
 						{
 							type: "text",
-							text: `Agent ${meta.agentId} is busy; wait for its current run to finish before resuming it.`,
+							text: `Agent ${params.agentId} is busy; wait for its current run to finish before resuming it.`,
 						},
 					],
 					details: makeDetails([]),
@@ -1319,7 +1340,7 @@ export default function (pi: ExtensionAPI) {
 						ctx.cwd,
 						{
 							name: meta.agent,
-							source: meta.kind === "fork" ? "builtin" : meta.agentScope === "project" ? "project" : "user",
+							source: meta.source ?? (meta.kind === "fork" ? "builtin" : "user"),
 							systemPrompt,
 							tools: meta.tools,
 							excludeTools: meta.excludeTools,
@@ -1328,8 +1349,9 @@ export default function (pi: ExtensionAPI) {
 						{
 							task: params.message,
 							prompt: buildResumePrompt(params.message),
-							parentModel: formatModelLabel(ctx.model),
-							run: { agentId: meta.agentId, dir, sessionFile },
+							// Deliberately no parentModel fallback: the recorded model (or pi's own
+							// default when none was recorded) keeps resumed runs reproducible.
+							run: { agentId: params.agentId, dir, sessionFile },
 							signal,
 							onUpdate,
 							makeDetails,
@@ -1340,7 +1362,7 @@ export default function (pi: ExtensionAPI) {
 				}
 				return finalizeResult(result, makeDetails);
 			} finally {
-				releaseAgentId(meta.agentId);
+				releaseAgentId(params.agentId);
 			}
 		},
 
