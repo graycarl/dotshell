@@ -31,12 +31,20 @@
 
 - 索引行格式：`- [type] 一句话摘要 -> 主题文件.md`
 - 主题文件带 frontmatter：`type` + `modified`（写入时自动记录 ISO 8601 时间）
-- **只把索引注入 prompt**：全局与项目各截断到 200 行 / 25KB，先到为准。主题文件
-  不预载，模型需要时用 `memory_recall` 读取
+- **只把索引注入 prompt**：每层各截断到 200 行 / 25KB，先到为准（层内独立预算，全局层
+  再大也吃不掉项目层的额度），被截断时注入文本会明说。主题文件不预载，模型需要
+  时用 `memory_recall` 读取
 - 索引超限时写入仍然成功，但工具返回错误，要求模型合并或删除后重写；接近上限
   时返回精简提醒
-- 项目层在首次写入时把 `/.pi/memory/` 追加到 `.git/info/exclude`。这是 git 的
-  本地排除文件，不进版本库、不影响队友，也不动团队共享的 `.gitignore`
+- 索引是**读写对称**的：解析不了的手写行会原样保留（带 `<!-- kept as typed -->`
+  注释），不会被程序重写吃掉
+- 同名记忆在层内唯一：换 `type` 重存会替换旧条目并删掉旧主题文件，不会出现两条
+- 项目层在首次写入时把 `/.pi/memory/` 追加到 `.git/info/exclude`（若仓库的
+  `.gitignore` 已经覆盖 `.pi/`，就不再多此一举）。这是 git 的本地排除文件，不进
+  版本库、不影响队友，也不动团队共享的 `.gitignore`
+- **项目层受 project trust 门控**：项目内存的内容会进 system prompt，所以项目未被
+  信任时不注入、也拒绝写入（提示改用 `global`）——避免 clone 来的仓库往 prompt
+  里塞东西
 
 ### 四种记忆类型
 
@@ -63,8 +71,11 @@
 | `content` | 记忆正文，Markdown（保存时必填） |
 | `scope` | `global` / `project`，默认按类型推断 |
 
-`memory_recall`：`query`（关键词，命中摘要/文件名/正文）、`name`（精确名）、
-`type`、`scope`（all/global/project）、`limit`（默认 3 条正文）。
+`memory_recall`：`query`（关键词，命中摘要/文件名/正文，取并集）、`name`（精确名
+或主题文件名）、`type`、`scope`（all/global/project）、`limit`（默认 3 条正文）。
+
+`delete` 只接受精确名/文件名，不做片段猜测——`name: "release"` 不会误删
+`release-flow`。
 
 ## 命令
 
@@ -85,21 +96,24 @@
 - **项目层放仓库内而不是按路径 slug 藏在家目录**：和 pi 自己的 `.pi/` 惯例一致，
   仓库改名/移动不会丢记忆；代价是 worktree 之间不共享（换来更干净的隔离）。
 - **变更走工具而不是让模型直接编辑文件**：`remember` 负责索引格式、容量检查和
-  权限边界，模型自由编辑 Markdown 会写出格式错乱的索引。
+  权限边界，模型自由编辑 Markdown 会写出格式错乱的索引。索引的读-改-写窗口用
+  `executionMode: "sequential"` 串行化，避免同一轮里并行两次 `remember` 互相覆盖。
 - **关闭是硬关闭**：`/memory off` 同时停掉注入和工具，不只是「不注入」。
 
 ## 已验证
 
-`test.ts` 覆盖 `store.ts` 的索引解析容错、写入/覆盖/删除、名称解析（`release
-flow` 与 `release_flow` 等价）、索引超限、`git` 排除（纯 Node，不需要 pi 运行时）：
+`test.ts` 覆盖 `store.ts` 的索引解析容错、手写行保留、写入/覆盖/删除、名称解析
+（`release flow` 与 `release_flow` 等价、非 ASCII 名互不覆盖）、同名换 type 的替换、
+索引超限、`git` 排除（纯 Node，不需要 pi 运行时）：
 
 ```bash
 cd ~/.shell/apps/pi/agent/extensions/memory
 node --experimental-strip-types test.ts
 ```
 
-扩展层另行验证过：注入分层、非 git 目录降级、关闭后不注入且工具不可用，以及真实
-session 的写入 → 新 session 读取 → 项目层落盘三条路径。
+扩展层另行验证过：注入分层、截断提示、非 git 目录降级、未信任项目的门控、关闭后
+不注入且工具不可用，以及真实 session 的写入 → 新 session 读取 → 项目层落盘三条路径
+（含「AGENTS.md 已经写过的不再重复记」）。
 
 ## 排查
 

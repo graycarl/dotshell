@@ -13,14 +13,16 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-export type MemoryType = "user" | "feedback" | "project" | "reference";
-export type MemoryScope = "global" | "project";
+export const MEMORY_TYPES = ["user", "feedback", "project", "reference"] as const;
+export type MemoryType = (typeof MEMORY_TYPES)[number];
 
-export const MEMORY_TYPES: readonly MemoryType[] = ["user", "feedback", "project", "reference"];
+export const MEMORY_SCOPES = ["global", "project"] as const;
+export type MemoryScope = (typeof MEMORY_SCOPES)[number];
 
 export const INDEX_FILE = "MEMORY.md";
 export const MAX_INDEX_LINES = 200;
@@ -55,6 +57,11 @@ export function globalMemoryDir(): string {
 	return path.join(os.homedir(), ".pi", "agent", "memory");
 }
 
+/** Directory holding one layer's index and topic files. */
+export function scopeDir(context: MemoryContext, scope: MemoryScope): string | undefined {
+	return scope === "global" ? context.globalDir : context.projectDir;
+}
+
 /** Nearest git repository root for `cwd`, or undefined when not in a repository. */
 export function resolveProjectRoot(cwd: string): string | undefined {
 	try {
@@ -80,23 +87,43 @@ export function resolveMemoryContext(cwd: string): MemoryContext {
 	};
 }
 
+/** Short, readable label for a project layer, without leaking the home path. */
+export function projectLabel(context: MemoryContext): string {
+	return context.projectRoot ? path.basename(context.projectRoot) : "none";
+}
+
+// ─── Files ──────────────────────────────────────────────────────────────────
+
+/** Write through a temporary file so a crash never leaves a half-written file. */
+function writeFileAtomic(file: string, text: string): void {
+	fs.mkdirSync(path.dirname(file), { recursive: true });
+	const temp = `${file}.${process.pid}.tmp`;
+	fs.writeFileSync(temp, text, "utf8");
+	fs.renameSync(temp, file);
+}
+
+export function truncate(text: string, max: number): string {
+	return text.length > max ? `${text.slice(0, max - 3)}...` : text;
+}
+
 // ─── Config ─────────────────────────────────────────────────────────────────
+
+const CONFIG_FILE = "config.json";
 
 export function readConfig(): MemoryConfig {
 	try {
-		const raw = JSON.parse(fs.readFileSync(path.join(globalMemoryDir(), "config.json"), "utf8")) as {
-			enabled?: unknown;
-		};
-		return { enabled: raw.enabled !== false };
+		const raw = JSON.parse(fs.readFileSync(path.join(globalMemoryDir(), CONFIG_FILE), "utf8")) as unknown;
+		const enabled = (raw as { enabled?: unknown } | null)?.enabled;
+		// Only a real boolean turns memory off; a hand-edited "false" string or a
+		// broken file must not silently disable a feature the user relies on.
+		return { enabled: typeof enabled === "boolean" ? enabled : true };
 	} catch {
 		return { enabled: true };
 	}
 }
 
 export function writeConfig(config: MemoryConfig): void {
-	const dir = globalMemoryDir();
-	fs.mkdirSync(dir, { recursive: true });
-	fs.writeFileSync(path.join(dir, "config.json"), `${JSON.stringify(config, null, 2)}\n`, "utf8");
+	writeFileAtomic(path.join(globalMemoryDir(), CONFIG_FILE), `${JSON.stringify(config, null, 2)}\n`);
 }
 
 // ─── Index ──────────────────────────────────────────────────────────────────
@@ -117,54 +144,88 @@ export function isMemoryType(value: string): value is MemoryType {
 
 /** Collapse whitespace and cap length so an entry always fits on one index line. */
 export function sanitizeSummary(summary: string): string {
-	const flat = summary.replace(/\s+/g, " ").trim();
-	return flat.length > 160 ? `${flat.slice(0, 157)}...` : flat;
+	return truncate(summary.replace(/\s+/g, " ").trim(), 160);
 }
 
-/** Lowercase, non-alphanumerics collapsed to `_`: the key both file names and lookups use. */
+/** Lowercase, non-alphanumerics collapsed to `_`: the key file names and lookups share. */
 export function slugify(text: string): string {
 	return text
 		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, "_")
+		.replace(/[^\p{L}\p{N}]+/gu, "_")
 		.replace(/^_+|_+$/g, "")
 		.slice(0, 60);
 }
 
-/** `<type>_<slug>.md`, stable across rewrites of the same memory name. */
+/**
+ * `<type>_<slug>.md`. A name with no letters or digits at all (whitespace,
+ * punctuation) still needs a stable file, so it falls back to a short hash of
+ * the original name instead of a constant that would make every such name
+ * overwrite the previous one.
+ */
 export function topicFileName(type: MemoryType, name: string): string {
-	return `${type}_${slugify(name) || "memory"}.md`;
+	const slug = slugify(name) || createHash("sha1").update(name).digest("hex").slice(0, 8);
+	return `${type}_${slug}.md`;
+}
+
+/** The name of a topic file without its extension and `<type>_` prefix. */
+export function memoryKey(file: string): string {
+	return file.replace(/\.md$/i, "").replace(/^[a-z]+_/, "");
 }
 
 export function formatIndexLine(entry: MemoryEntry): string {
 	return `- [${entry.type}] ${entry.summary} -> ${entry.file}`;
 }
 
-/** Parse an index file leniently: bad lines are skipped, never fatal. */
-export function parseIndex(text: string, scope: MemoryScope): MemoryEntry[] {
-	const entries: MemoryEntry[] = [];
-	for (const line of text.split("\n")) {
-		const match = INDEX_LINE.exec(line);
-		if (!match) continue;
-		const [, type, summary, file] = match;
-		if (!type || !isMemoryType(type)) continue;
-		if (!summary || !file) continue;
-		entries.push({ type, summary: summary.trim(), file, scope });
-	}
-	return entries;
+export interface IndexContent {
+	entries: MemoryEntry[];
+	/** Hand-written lines kept verbatim so a user's own notes survive a rewrite. */
+	extras: string[];
 }
 
-export function readIndex(dir: string, scope: MemoryScope): MemoryEntry[] {
+/**
+ * Parse an index leniently: a bad line never breaks anything, it is kept as an
+ * `extra` so the next rewrite does not silently delete what the user typed.
+ */
+export function parseIndex(text: string, scope: MemoryScope): IndexContent {
+	const entries: MemoryEntry[] = [];
+	const extras: string[] = [];
+	for (const line of text.split("\n")) {
+		const trimmed = line.trim();
+		if (!trimmed) continue;
+		const match = INDEX_LINE.exec(trimmed);
+		if (match) {
+			const [, type, summary, file] = match;
+			if (isMemoryType(type) && summary && file) {
+				entries.push({ type, summary: summary.trim(), file, scope });
+				continue;
+			}
+		}
+		// Headings and the managed comment block are regenerated, not preserved.
+		if (trimmed.startsWith("#") || trimmed.startsWith("<!--") || trimmed.startsWith("-->")) continue;
+		extras.push(trimmed);
+	}
+	return { entries, extras };
+}
+
+export function readIndexContent(dir: string, scope: MemoryScope): IndexContent {
 	try {
 		return parseIndex(fs.readFileSync(path.join(dir, INDEX_FILE), "utf8"), scope);
 	} catch {
-		return [];
+		return { entries: [], extras: [] };
 	}
 }
 
-export function writeIndex(dir: string, entries: MemoryEntry[]): void {
-	fs.mkdirSync(dir, { recursive: true });
-	const body = entries.map(formatIndexLine).join("\n");
-	fs.writeFileSync(path.join(dir, INDEX_FILE), `${INDEX_HEADER}${body ? `${body}\n` : ""}`, "utf8");
+export function readIndex(dir: string, scope: MemoryScope): MemoryEntry[] {
+	return readIndexContent(dir, scope).entries;
+}
+
+export function writeIndex(dir: string, content: IndexContent): void {
+	const lines = content.entries.map(formatIndexLine);
+	const tail = content.extras.length > 0 ? `\n<!-- kept as typed -->\n${content.extras.join("\n")}\n` : "";
+	writeFileAtomic(
+		path.join(dir, INDEX_FILE),
+		`${INDEX_HEADER}${lines.length > 0 ? `${lines.join("\n")}\n` : ""}${tail}`,
+	);
 }
 
 export interface IndexSize {
@@ -175,7 +236,7 @@ export interface IndexSize {
 	nearLimit: boolean;
 }
 
-/** Measure an index against the load limits, without reading it back. */
+/** Measure an index against the load limits. */
 export function measureIndex(dir: string): IndexSize {
 	let text = "";
 	try {
@@ -183,14 +244,14 @@ export function measureIndex(dir: string): IndexSize {
 	} catch {
 		// Missing index counts as empty.
 	}
-	const entryLines = text.split("\n").filter((line) => INDEX_LINE.test(line)).length;
+	const lines = text.split("\n").filter((line) => INDEX_LINE.test(line)).length;
 	const bytes = Buffer.byteLength(text, "utf8");
 	return {
-		lines: entryLines,
+		lines,
 		bytes,
-		overLines: entryLines > MAX_INDEX_LINES,
+		overLines: lines > MAX_INDEX_LINES,
 		overBytes: bytes > MAX_INDEX_BYTES,
-		nearLimit: entryLines >= MAX_INDEX_LINES * INDEX_WARN_RATIO || bytes >= MAX_INDEX_BYTES * INDEX_WARN_RATIO,
+		nearLimit: lines >= MAX_INDEX_LINES * INDEX_WARN_RATIO || bytes >= MAX_INDEX_BYTES * INDEX_WARN_RATIO,
 	};
 }
 
@@ -231,9 +292,10 @@ export function readTopic(dir: string, file: string): TopicFile | undefined {
 
 export function writeTopic(dir: string, file: string, type: MemoryType, content: string): string {
 	const modified = new Date().toISOString();
-	fs.mkdirSync(dir, { recursive: true });
-	const text = ["---", `type: ${type}`, `modified: ${modified}`, "---", "", content.trim(), ""].join("\n");
-	fs.writeFileSync(path.join(dir, file), text, "utf8");
+	writeFileAtomic(
+		path.join(dir, file),
+		["---", `type: ${type}`, `modified: ${modified}`, "---", "", content.trim(), ""].join("\n"),
+	);
 	return modified;
 }
 
@@ -248,20 +310,25 @@ export function deleteTopic(dir: string, file: string): boolean {
 
 // ─── Compound operations ────────────────────────────────────────────────────
 
-export function scopeDir(context: MemoryContext, scope: MemoryScope): string | undefined {
-	return scope === "global" ? context.globalDir : context.projectDir;
-}
-
 export interface SaveResult {
 	file: string;
 	scope: MemoryScope;
 	modified: string;
 	size: IndexSize;
-	/** True when the entry replaced an existing memory of the same name. */
+	/** True when this name already existed, under this type or another one. */
 	replaced: boolean;
 }
 
-/** Write one memory: topic file first, then the index line that points at it. */
+/**
+ * Write one memory: topic file first, then the index line that points at it.
+ *
+ * A name is unique per layer regardless of type, so re-saving `release-flow` as
+ * `project` after `user` replaces the old entry instead of leaving a duplicate
+ * index line and an orphan topic file.
+ *
+ * Callers must not run two writes concurrently: the read-modify-write window on
+ * the index is not locked here (the tool declares `executionMode: "sequential"`).
+ */
 export function saveEntry(
 	context: MemoryContext,
 	scope: MemoryScope,
@@ -271,14 +338,20 @@ export function saveEntry(
 	if (!dir) throw new Error("No project memory directory: the current working directory is not a git repository.");
 
 	const file = topicFileName(input.type, input.name);
-	const entries = readIndex(dir, scope);
-	const replaced = entries.some((entry) => entry.file === file);
-	const kept = entries.filter((entry) => entry.file !== file);
-	kept.push({ type: input.type, summary: sanitizeSummary(input.summary), file, scope });
+	const key = memoryKey(file);
+	const content = readIndexContent(dir, scope);
+
+	const stale = content.entries.filter((entry) => memoryKey(entry.file) === key);
+	for (const entry of stale) {
+		if (entry.file !== file) deleteTopic(dir, entry.file);
+	}
+
+	const entries = content.entries.filter((entry) => memoryKey(entry.file) !== key);
+	entries.push({ type: input.type, summary: sanitizeSummary(input.summary), file, scope });
 
 	const modified = writeTopic(dir, file, input.type, input.content);
-	writeIndex(dir, kept);
-	return { file, scope, modified, size: measureIndex(dir), replaced };
+	writeIndex(dir, { entries, extras: content.extras });
+	return { file, scope, modified, size: measureIndex(dir), replaced: stale.length > 0 };
 }
 
 export interface DeleteResult {
@@ -288,34 +361,34 @@ export interface DeleteResult {
 	size: IndexSize;
 }
 
-/** Remove a memory by name (or by topic file name). */
-export function deleteEntry(
-	context: MemoryContext,
-	scope: MemoryScope,
-	nameOrFile: string,
-): DeleteResult {
+/** Remove a memory by exact name (or topic file name). */
+export function deleteEntry(context: MemoryContext, scope: MemoryScope, nameOrFile: string): DeleteResult {
 	const dir = scopeDir(context, scope);
 	if (!dir) throw new Error("No project memory directory: the current working directory is not a git repository.");
 
-	const entries = readIndex(dir, scope);
-	const target = resolveEntryFile(entries, nameOrFile);
+	const content = readIndexContent(dir, scope);
+	const target = resolveEntryFile(content.entries, nameOrFile, { fuzzy: false });
 	if (!target) return { file: nameOrFile, found: false, scope, size: measureIndex(dir) };
 
 	deleteTopic(dir, target);
-	writeIndex(
-		dir,
-		entries.filter((entry) => entry.file !== target),
-	);
+	writeIndex(dir, {
+		entries: content.entries.filter((entry) => entry.file !== target),
+		extras: content.extras,
+	});
 	return { file: target, found: true, scope, size: measureIndex(dir) };
 }
 
 /**
  * Match a memory by topic file name or by memory name, where the name is the
- * file name without its `<type>_` prefix. Both spellings are slugified, so
- * "release flow" and "release_flow" find the same memory. An ambiguous
- * fragment matches the first entry that contains it.
+ * file name without its `<type>_` prefix. Both sides are slugified, so
+ * `release flow` and `release_flow` find the same memory. Fuzzy matching also
+ * accepts a fragment, which is handy for lookup but not for deletion.
  */
-export function resolveEntryFile(entries: MemoryEntry[], nameOrFile: string): string | undefined {
+export function resolveEntryFile(
+	entries: MemoryEntry[],
+	nameOrFile: string,
+	options: { fuzzy?: boolean } = {},
+): string | undefined {
 	const needle = nameOrFile.trim().toLowerCase();
 	if (!needle) return undefined;
 
@@ -325,13 +398,12 @@ export function resolveEntryFile(entries: MemoryEntry[], nameOrFile: string): st
 	if (exact) return exact.file;
 
 	const slug = slugify(needle);
-	if (slug) {
-		const stripped = (file: string) => slugify(file.replace(/^[a-z]+_/, ""));
-		const byName = entries.find((entry) => stripped(entry.file) === slug);
-		if (byName) return byName.file;
-		return entries.find((entry) => stripped(entry.file).includes(slug))?.file;
-	}
-	return undefined;
+	if (!slug) return undefined;
+
+	const byName = entries.find((entry) => memoryKey(entry.file) === slug);
+	if (byName) return byName.file;
+	if (options.fuzzy === false) return undefined;
+	return entries.find((entry) => memoryKey(entry.file).includes(slug))?.file;
 }
 
 /** Keyword match against what the index itself shows: the summary and the file name. */
@@ -354,6 +426,18 @@ export function listEntries(context: MemoryContext, scope: MemoryScope | "all" =
  */
 export function ensureGitExcluded(projectRoot: string): void {
 	try {
+		// Already covered by any rule (`.pi/`, `**/.pi/**`, `.pi/memory`, ...)?
+		try {
+			execFileSync("git", ["check-ignore", "-q", ".pi/memory/"], {
+				cwd: projectRoot,
+				stdio: "ignore",
+				timeout: 5000,
+			});
+			return;
+		} catch {
+			// Not ignored yet: fall through and add the narrowest pattern.
+		}
+
 		const relative = execFileSync("git", ["rev-parse", "--git-path", "info/exclude"], {
 			cwd: projectRoot,
 			encoding: "utf8",
@@ -369,18 +453,8 @@ export function ensureGitExcluded(projectRoot: string): void {
 		} catch {
 			text = "";
 		}
-		const patterns = new Set(
-			text
-				.split("\n")
-				.map((line) => line.trim())
-				.filter((line) => line && !line.startsWith("#")),
-		);
-		if (patterns.has("/.pi/memory/") || patterns.has(".pi/memory/") || patterns.has(".pi/") || patterns.has("/.pi/")) {
-			return;
-		}
-
-		fs.mkdirSync(path.dirname(excludePath), { recursive: true });
 		const lead = text === "" ? "" : text.endsWith("\n") ? "\n" : "\n\n";
+		fs.mkdirSync(path.dirname(excludePath), { recursive: true });
 		fs.appendFileSync(excludePath, `${lead}# pi memory (local only)\n/.pi/memory/\n`, "utf8");
 	} catch {
 		// Best effort: a repository that refuses the write keeps working.

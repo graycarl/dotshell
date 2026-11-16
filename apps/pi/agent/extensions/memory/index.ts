@@ -1,5 +1,5 @@
 /**
- * Memory -跨 session 的用户记忆。
+ * Memory - 跨 session 的用户记忆。
  *
  * 模型用 `remember` 主动记录长期有效的信息（用户偏好、纠正、项目上下文），
  * 用 `memory_recall` 按需查阅详情；`before_agent_start` 把记忆索引注入 system prompt，
@@ -24,19 +24,23 @@ import {
 	MAX_INDEX_BYTES,
 	MAX_INDEX_LINES,
 	MAX_TOPIC_CHARS,
+	MEMORY_SCOPES,
 	MEMORY_TYPES,
+	matchesQuery,
 	type MemoryContext,
 	type MemoryEntry,
 	type MemoryScope,
 	type MemoryType,
-	matchesQuery,
+	projectLabel,
 	readConfig,
 	readIndex,
 	readTopic,
 	resolveEntryFile,
 	resolveMemoryContext,
 	saveEntry,
+	scopeDir,
 	type TopicFile,
+	truncate,
 	writeConfig,
 } from "./store.ts";
 
@@ -54,16 +58,12 @@ function stringEnum<T extends string>(values: readonly T[], description: string)
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function truncate(text: string, max: number): string {
-	return text.length > max ? `${text.slice(0, max - 3)}...` : text;
-}
-
 function contextFor(ctx: ExtensionContext): MemoryContext {
 	return resolveMemoryContext(ctx.cwd);
 }
 
 function scopeLabel(context: MemoryContext, scope: MemoryScope): string {
-	return scope === "global" ? "global" : `project (${context.projectRoot ?? "unknown"})`;
+	return scope === "global" ? "global" : `project (${projectLabel(context)})`;
 }
 
 /** Default layer: personal knowledge is global, repository knowledge is project. */
@@ -72,38 +72,59 @@ function defaultScope(type: MemoryType): MemoryScope {
 }
 
 function entriesOf(context: MemoryContext, scope: MemoryScope): MemoryEntry[] {
-	const dir = scope === "global" ? context.globalDir : context.projectDir;
+	const dir = scopeDir(context, scope);
 	return dir ? readIndex(dir, scope) : [];
+}
+
+/**
+ * Entries from the requested layers, minus the project layer when the project is
+ * not trusted. `.pi/memory` is data, not configuration, but its content reaches
+ * the system prompt, so an untrusted clone must not be able to write there.
+ */
+function visibleEntries(context: MemoryContext, scope: MemoryScope | "all", trusted: boolean): MemoryEntry[] {
+	return listEntries(context, scope).filter((entry) => trusted || entry.scope === "global");
 }
 
 /**
  * System-prompt section carrying both indexes. Omitted entirely when memory is
  * disabled or empty, so a fresh install adds no prompt tokens at all.
  */
-function buildMemorySection(context: MemoryContext): string | undefined {
+function buildMemorySection(
+	context: MemoryContext,
+	options: { projectTrusted: boolean },
+): string | undefined {
 	const groups: string[] = [];
-	let budget = MAX_INDEX_BYTES;
+	let truncated = false;
 
 	const addGroup = (title: string, entries: MemoryEntry[]) => {
-		if (entries.length === 0) return;
+		// Each layer gets its own budget, matching how measureIndex reports limits
+		// per index file, so a large global index cannot starve the project layer.
+		let budget = MAX_INDEX_BYTES;
 		const lines: string[] = [];
 		for (const entry of entries) {
-			if (lines.length >= MAX_INDEX_LINES) break;
+			if (lines.length >= MAX_INDEX_LINES) {
+				truncated = true;
+				break;
+			}
 			const line = formatIndexLine(entry);
 			budget -= Buffer.byteLength(line, "utf8") + 1;
-			if (budget < 0) break;
+			if (budget < 0) {
+				truncated = true;
+				break;
+			}
 			lines.push(line);
 		}
 		if (lines.length > 0) groups.push(`[${title}]\n${lines.join("\n")}`);
 	};
 
 	addGroup("global", entriesOf(context, "global"));
-	addGroup(`project ${context.projectRoot ?? ""}`.trim(), entriesOf(context, "project"));
+	if (options.projectTrusted) addGroup(`project ${projectLabel(context)}`, entriesOf(context, "project"));
 	if (groups.length === 0) return undefined;
 
 	return [
 		"Memories saved in earlier sessions (index only).",
 		"Read one in full with memory_recall; add or update one with remember.",
+		...(truncated ? [`(Showing part of the index; the full set is on disk.)`] : []),
 		"",
 		groups.join("\n\n"),
 	].join("\n");
@@ -134,8 +155,9 @@ function applyEnabled(pi: ExtensionAPI, enabled: boolean): void {
 	pi.setActiveTools(enabled ? [...active, ...TOOL_NAMES] : active);
 }
 
-function disabledMessage(): string {
-	return "Memory is turned off. The user can re-enable it with /memory on.";
+/** Gate for the tool bodies: `/memory off` may happen in another pi window. */
+function disabledMessage(): string | undefined {
+	return readConfig().enabled ? undefined : "Memory is turned off. The user can re-enable it with /memory on.";
 }
 
 // ─── Extension ──────────────────────────────────────────────────────────────
@@ -158,8 +180,11 @@ export default function (pi: ExtensionAPI) {
 			"Call `remember` when the user gives a lasting instruction or preference, corrects your behavior, or shares project context the repository does not show. Skip secrets, temporary state, and anything AGENTS.md already says.",
 		],
 		defaultActive: false,
+		// Saves are read-modify-write on the index; parallel calls would lose one.
+		executionMode: "sequential",
 		parameters: Type.Object({
 			name: Type.String({
+				minLength: 1,
 				description:
 					"Stable short name for this memory, such as 'prefers-pnpm' or 'release-flow'. Saving the same name updates the existing memory.",
 			}),
@@ -168,24 +193,27 @@ export default function (pi: ExtensionAPI) {
 			),
 			type: Type.Optional(
 				stringEnum(
-					["user", "feedback", "project", "reference"] as const,
+					MEMORY_TYPES,
 					"user: role and working preferences. feedback: corrections and approaches the user confirmed. project: ongoing work, decisions, context the code does not show. reference: where to find outside information. Defaults to user.",
 				),
 			),
-			summary: Type.Optional(Type.String({ description: "One short line for the memory index. Required when saving." })),
+			summary: Type.Optional(
+				Type.String({ description: "One short line for the memory index. Required when saving." }),
+			),
 			content: Type.Optional(
 				Type.String({ description: "The memory itself, in Markdown. Required when saving." }),
 			),
 			scope: Type.Optional(
 				stringEnum(
-					["global", "project"] as const,
+					MEMORY_SCOPES,
 					"global: applies to every project on this machine. project: only this git repository. Defaults to global for user/feedback and project for project/reference.",
 				),
 			),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			if (!readConfig().enabled) {
-				return { content: [{ type: "text", text: disabledMessage() }], isError: true, details: {} };
+			const disabled = disabledMessage();
+			if (disabled) {
+				return { content: [{ type: "text", text: disabled }], isError: true, details: {} };
 			}
 
 			const context = contextFor(ctx);
@@ -201,16 +229,14 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			const scope = params.scope ?? defaultScope(type);
-			if (scope === "project" && !context.projectDir) {
+			if (scope === "project" && (!context.projectDir || !ctx.isProjectTrusted())) {
+				const reason = context.projectDir
+					? "this project is not trusted (project memory reaches the system prompt, so an untrusted project cannot write it)"
+					: "the working directory is not a git repository";
 				return {
-					content: [
-						{
-							type: "text",
-							text: "Cannot save project memory: the working directory is not a git repository. Retry with scope \"global\".",
-						},
-					],
+					content: [{ type: "text", text: `Cannot save project memory: ${reason}. Retry with scope "global".` }],
 					isError: true,
-					details: {},
+					details: { scope },
 				};
 			}
 
@@ -220,10 +246,7 @@ export default function (pi: ExtensionAPI) {
 					if (!result.found) {
 						return {
 							content: [
-								{
-									type: "text",
-									text: `No memory named "${params.name}" in ${scopeLabel(context, scope)} memory.`,
-								},
+								{ type: "text", text: `No memory named "${params.name}" in ${scopeLabel(context, scope)} memory.` },
 							],
 							isError: true,
 							details: { scope, found: false },
@@ -256,15 +279,18 @@ export default function (pi: ExtensionAPI) {
 
 				const result = saveEntry(context, scope, { type, name: params.name, summary, content });
 				const warning = indexWarning(result.size);
-				const headline = `${result.replaced ? "Updated" : "Saved"} [${type}] "${summary}" in ${scopeLabel(context, scope)} memory (${result.file}).`;
+				const headline = [
+					`${result.replaced ? "Updated" : "Saved"} [${type}] "${summary}"`,
+					`in ${scopeLabel(context, scope)} memory (${result.file}).`,
+				].join(" ");
 
 				if (ctx.hasUI) ctx.ui.notify(`📝 Memory saved: ${truncate(summary, 80)}`, "info");
 
-				// An index over the load limit still writes, but the overflow never
-				// reaches future sessions, so the model has to prune and report.
 				return {
 					content: [{ type: "text", text: warning ? `${headline}\n\n${warning}` : headline }],
-					isError: warning !== undefined && (result.size.overLines || result.size.overBytes),
+					// Written, but the overflow never reaches future sessions: the model
+					// has to prune and report rather than treat this as done.
+					isError: result.size.overLines || result.size.overBytes,
 					details: { scope, file: result.file, action: "save", replaced: result.replaced, ...result.size },
 				};
 			} catch (error) {
@@ -299,21 +325,30 @@ export default function (pi: ExtensionAPI) {
 			name: Type.Optional(
 				Type.String({ description: "Exact memory name or topic file name, for a direct lookup." }),
 			),
-			type: Type.Optional(
-				stringEnum(["user", "feedback", "project", "reference"] as const, "Restrict results to one memory type."),
-			),
-			scope: Type.Optional(
-				stringEnum(["all", "global", "project"] as const, "Which layer to search. Defaults to all."),
-			),
+			type: Type.Optional(stringEnum(MEMORY_TYPES, "Restrict results to one memory type.")),
+			scope: Type.Optional(stringEnum(["all", ...MEMORY_SCOPES] as const, "Which layer to search. Defaults to all.")),
 			limit: Type.Optional(Type.Number({ description: "Maximum number of full memories to return. Defaults to 3." })),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const disabled = disabledMessage();
+			if (disabled) {
+				return { content: [{ type: "text", text: disabled }], isError: true, details: { count: 0 } };
+			}
+
 			const context = contextFor(ctx);
 			const scope = params.scope ?? "all";
 			const limit = Math.max(1, Math.min(params.limit ?? 3, 10));
 
-			let entries = listEntries(context, scope);
-			if (params.type) entries = entries.filter((entry) => entry.type === params.type);
+			const accessible = visibleEntries(context, scope, ctx.isProjectTrusted());
+			if (accessible.length === 0 && scope === "project" && !ctx.isProjectTrusted()) {
+				return {
+					content: [{ type: "text", text: "Project memory is unavailable: this project is not trusted." }],
+					isError: true,
+					details: { count: 0 },
+				};
+			}
+
+			let entries = params.type ? accessible.filter((entry) => entry.type === params.type) : accessible;
 
 			if (params.name) {
 				const file = resolveEntryFile(entries, params.name);
@@ -328,8 +363,9 @@ export default function (pi: ExtensionAPI) {
 				entries = [wanted];
 			} else if (params.query) {
 				const query = params.query.toLowerCase();
-				const byIndex = entries.filter((entry) => matchesQuery(entry, query));
-				entries = byIndex.length > 0 ? byIndex : entries.filter((entry) => bodyMatches(context, entry, query));
+				// Union of index and body matches: a summary hit must not hide a
+				// memory whose relevance only shows in its body.
+				entries = entries.filter((entry) => matchesQuery(entry, query) || bodyMatches(context, entry, query));
 			}
 
 			if (entries.length === 0) {
@@ -342,9 +378,9 @@ export default function (pi: ExtensionAPI) {
 
 			const sections: string[] = [`${entries.length} match${entries.length === 1 ? "" : "es"}.`];
 			for (const entry of entries.slice(0, limit)) {
-				const dir = entry.scope === "global" ? context.globalDir : context.projectDir;
+				const dir = scopeDir(context, entry.scope);
 				const topic = dir ? readTopic(dir, entry.file) : undefined;
-				sections.push(`\n## [${entry.type}] ${entry.summary}\n${describeTopic(context, entry, topic)}`);
+				sections.push(`\n## [${entry.type}] ${entry.summary}\n${describeTopic(entry, topic)}`);
 			}
 			if (entries.length > limit) {
 				sections.push(`\n(${entries.length - limit} more — narrow the query or raise limit.)`);
@@ -361,7 +397,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("before_agent_start", async (event, ctx) => {
 		if (!readConfig().enabled) return;
-		const section = buildMemorySection(contextFor(ctx));
+		const section = buildMemorySection(contextFor(ctx), { projectTrusted: ctx.isProjectTrusted() });
 		if (!section) return;
 		event.systemPromptOptions.sections["user-memory"] = section;
 	});
@@ -374,36 +410,36 @@ export default function (pi: ExtensionAPI) {
 			const context = contextFor(ctx);
 			const [sub = "list", ...rest] = (args ?? "").trim().split(/\s+/).filter(Boolean);
 
+			const say = (text: string, type: "info" | "warning" = "info") => {
+				if (ctx.hasUI) ctx.ui.notify(text, type);
+				else console.log(text);
+			};
+
 			if (sub === "on" || sub === "off") {
 				const enabled = sub === "on";
 				writeConfig({ enabled });
 				applyEnabled(pi, enabled);
-				if (ctx.hasUI) ctx.ui.notify(`Memory ${enabled ? "enabled" : "disabled"}`, "info");
-				else console.log(`Memory ${enabled ? "enabled" : "disabled"}`);
+				say(`Memory ${enabled ? "enabled" : "disabled"}`);
 				return;
 			}
 
 			if (sub === "path") {
-				const lines = [
-					`global:  ${context.globalDir}`,
-					`project: ${context.projectDir ?? "(not in a git repository)"}`,
-				];
-				if (ctx.hasUI) ctx.ui.notify(lines.join("\n"), "info");
-				else console.log(lines.join("\n"));
+				say(
+					[
+						`global:  ${context.globalDir}`,
+						`project: ${context.projectDir ?? "(not in a git repository)"}`,
+					].join("\n"),
+				);
 				return;
 			}
 
 			if (sub !== "list") {
-				const usage = "Usage: /memory [list|on|off|path]";
-				if (ctx.hasUI) ctx.ui.notify(usage, "warning");
-				else console.log(usage);
+				say("Usage: /memory [list|on|off|path]", "warning");
 				return;
 			}
 
-			const note = rest.join(" ").trim().toLowerCase();
-			const text = renderMemoryList(context, note);
-			if (ctx.hasUI) ctx.ui.notify(text, "info");
-			else console.log(text);
+			const query = rest.join(" ").trim().toLowerCase();
+			say(renderMemoryList(context, query, ctx.isProjectTrusted()));
 		},
 	});
 
@@ -417,20 +453,18 @@ export default function (pi: ExtensionAPI) {
 // ─── Rendering helpers ──────────────────────────────────────────────────────
 
 function bodyMatches(context: MemoryContext, entry: MemoryEntry, query: string): boolean {
-	const dir = entry.scope === "global" ? context.globalDir : context.projectDir;
+	const dir = scopeDir(context, entry.scope);
 	if (!dir) return false;
-	const topic = readTopic(dir, entry.file);
-	return topic?.body.toLowerCase().includes(query) ?? false;
+	return readTopic(dir, entry.file)?.body.toLowerCase().includes(query) ?? false;
 }
 
-function describeTopic(context: MemoryContext, entry: MemoryEntry, topic: TopicFile | undefined): string {
+function describeTopic(entry: MemoryEntry, topic: TopicFile | undefined): string {
 	if (!topic) return `(topic file ${entry.file} is missing)`;
 	const when = topic.modified ? `updated ${topic.modified.slice(0, 10)}` : "no timestamp";
-	const body = truncate(topic.body, MAX_TOPIC_CHARS);
-	return `${body}\n\n_${entry.scope} · ${entry.file} · ${when}_`;
+	return `${truncate(topic.body, MAX_TOPIC_CHARS)}\n\n_${entry.scope} · ${entry.file} · ${when}_`;
 }
 
-function renderMemoryList(context: MemoryContext, query: string): string {
+function renderMemoryList(context: MemoryContext, query: string, projectTrusted: boolean): string {
 	const config = readConfig();
 	const groups: string[] = [];
 
@@ -441,12 +475,15 @@ function renderMemoryList(context: MemoryContext, query: string): string {
 	};
 
 	addGroup("global", entriesOf(context, "global"));
-	addGroup(`project ${context.projectRoot ?? ""}`.trim(), entriesOf(context, "project"));
+	if (projectTrusted) addGroup(`project ${projectLabel(context)}`, entriesOf(context, "project"));
 
 	if (groups.length === 0) {
 		return query ? `No memories matching "${query}".` : "No memories saved yet.";
 	}
 
-	const footer = `\n\n${config.enabled ? "enabled" : "disabled"} · /memory path to locate the files · edit them directly any time`;
-	return groups.join("\n\n") + footer;
+	const notes = [
+		`${config.enabled ? "enabled" : "disabled"} · /memory path to locate the files · edit them directly any time`,
+	];
+	if (!projectTrusted && context.projectDir) notes.push("project memory hidden: this project is not trusted");
+	return `${groups.join("\n\n")}\n\n${notes.join("\n")}`;
 }
