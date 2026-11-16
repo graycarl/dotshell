@@ -46,7 +46,7 @@ bash apps/pi/setup.sh   # extensions/ 目录整体软链，无需单独注册
 
 ## 文件
 
-- `index.ts` — 装配:session_start 恢复注册表、/servers 命令、footer widget、quit 提示
+- `index.ts` — 装配:session_start 恢复注册表、/servers 命令、footer widget、quit 提示。footer 监听绑定 session ctx,`session_shutdown` 里必须解绑（否则 reload 后服务退出会拿失效 ctx 崩 pi）
 - `manager.ts` — 进程生命周期、registry 持久化、pid 存活校验、日志读取
 - `tools.ts` — 5 个 LLM 工具（schema + execute + TUI 渲染）
 - `ui.ts` — /servers overlay、退出确认、footer 状态
