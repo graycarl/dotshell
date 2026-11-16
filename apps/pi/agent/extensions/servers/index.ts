@@ -12,9 +12,16 @@
  *   footer widget       — "⚙ N servers" while anything is running
  *   quit prompt         — on `pi` quit, ask whether to stop running servers
  *                         (session switches / reloads keep them untouched)
+ *
+ * ctx lifetime: the footer widget is driven by a manager change listener that
+ * closes over a session-bound ctx. Pi invalidates that ctx right after
+ * session_shutdown (reload / /new / /resume / /fork), and a child process
+ * exiting afterwards would otherwise call setStatus on a stale ctx and crash
+ * pi from an uncaughtException inside the 'exit' handler. So the listener is
+ * dropped in session_shutdown and re-registered in session_start.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { ServerManager } from "./manager.js";
 import { registerAllTools } from "./tools.js";
 import { promptShutdownServers, ServersOverlay, updateStatusWidget } from "./ui.js";
@@ -22,11 +29,10 @@ import { promptShutdownServers, ServersOverlay, updateStatusWidget } from "./ui.
 export default function (pi: ExtensionAPI) {
   const manager = new ServerManager();
   let toolsRegistered = false;
-  let currentCtx: ExtensionContext | undefined;
   let quitHandled = false;
+  let unsubscribeChange: (() => void) | undefined;
 
   pi.on("session_start", async (_event, ctx) => {
-    currentCtx = ctx;
     quitHandled = false;
     if (!toolsRegistered) {
       registerAllTools(pi, manager);
@@ -35,8 +41,16 @@ export default function (pi: ExtensionAPI) {
     manager.init(ctx.cwd);
     manager.pruneExited();
     updateStatusWidget(ctx, manager);
-    manager.onChange(() => {
-      if (currentCtx) updateStatusWidget(currentCtx, manager);
+    // Rebind to this session's ctx (a previous one may be stale).
+    unsubscribeChange?.();
+    unsubscribeChange = manager.onChange(() => {
+      // The footer is cosmetic — a child exiting concurrently with a session
+      // teardown must never take pi down.
+      try {
+        updateStatusWidget(ctx, manager);
+      } catch {
+        /* ctx went stale — the next session re-registers its own listener */
+      }
     });
   });
 
@@ -69,6 +83,11 @@ export default function (pi: ExtensionAPI) {
   // quit, so ctx.ui dialogs cannot be used here — promptShutdownServers
   // prompts over raw stdio instead (see ui.ts header).
   pi.on("session_shutdown", async (event, _ctx) => {
+    // Drop the ctx-bound listener before pi invalidates this ctx: the manager
+    // outlives the session, the footer binding does not.
+    unsubscribeChange?.();
+    unsubscribeChange = undefined;
+
     // Only a real process quit prompts. Session switches (/new, /resume,
     // /fork) and extension reloads leave servers running — the next session
     // re-attaches through the registry.
