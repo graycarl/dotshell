@@ -7,6 +7,11 @@
  * Delegates one task to a specialized agent. To parallelize, the LLM issues
  * multiple calls in the same assistant turn.
  *
+ * Every run is persisted in its own directory under
+ * `<agent dir>/subagent-sessions/<agentId>/`, so a finished subagent can be
+ * resumed later with `resume_subagent`: the child session file is re-opened
+ * with `pi --session <file>` and keeps its own context across turns.
+ *
  * A process-level semaphore caps how many subagent processes run at once
  * (default 4); excess calls queue until a slot frees up.
  *
@@ -32,12 +37,15 @@ const COLLAPSED_ITEM_COUNT = 10;
 // 工具名；所有子进程都固定排除委派类工具，防止递归
 const SPAWN_SUBAGENT_TOOL = "spawn_subagent";
 const FORK_SUBAGENT_TOOL = "fork_subagent";
-const RECURSION_EXCLUDE_TOOLS = `${SPAWN_SUBAGENT_TOOL},list_agents,${FORK_SUBAGENT_TOOL}`;
+const RESUME_SUBAGENT_TOOL = "resume_subagent";
+const RECURSION_EXCLUDE_TOOLS = `${SPAWN_SUBAGENT_TOOL},list_agents,${FORK_SUBAGENT_TOOL},${RESUME_SUBAGENT_TOOL}`;
 
+// 措辞对多轮续接同样成立：首轮之后的历史是该子 agent 自己的产出。
 const FORK_SYSTEM_PROMPT = [
 	"You are a forked sub-agent of pi.",
-	"The conversation in this session is shared history forked from the main agent, not your own prior work.",
-	"Treat it strictly as background context, then complete the task given in the final user message.",
+	"The beginning of this session was forked from the main agent as background context, not your own prior work.",
+	"Any later turns in this session are your own work; continue from them instead of starting over.",
+	"Treat the inherited history strictly as background, then complete the task given in the final user message.",
 ].join(" ");
 
 /** Context forked from the main agent's active session branch. */
@@ -61,11 +69,16 @@ interface AgentSpec {
 
 /** Options for a single agent run. */
 interface RunAgentOptions {
+	/** Text shown in the TUI (the task on a first run, the message when resuming). */
 	task: string;
+	/** Exact text appended as the final user message. */
+	prompt: string;
 	/** Model to use when the agent spec does not define one (the parent's current model). */
 	parentModel?: string;
 	/** When set, the subprocess forks this context instead of starting fresh. */
 	forkContext?: ForkContext;
+	/** Persisted session to create/continue; without it the run uses a throwaway tmp dir. */
+	run?: PersistedRun;
 	signal?: AbortSignal;
 	onUpdate?: OnUpdateCallback;
 	makeDetails: (results: SingleResult[]) => AgentDetails;
@@ -232,6 +245,8 @@ interface SingleResult {
 	agent: string;
 	agentSource: "user" | "project" | "builtin" | "unknown";
 	task: string;
+	/** Handle used to resume this subagent later; absent when persistence failed. */
+	agentId?: string;
 	exitCode: number;
 	messages: Message[];
 	stderr: string;
@@ -240,6 +255,8 @@ interface SingleResult {
 	stopReason?: string;
 	errorMessage?: string;
 	htmlReportPath?: string;
+	/** Set when the run could not be persisted and therefore cannot be resumed. */
+	persistenceWarning?: string;
 }
 
 interface AgentDetails {
@@ -292,6 +309,250 @@ function getDisplayItems(messages: Message[]): DisplayItem[] {
 	return items;
 }
 
+// ── 持久化子会话：目录布局、元数据、过期清理 ─────────────────
+// 每个可续接的 subagent 拥有独立目录：
+//   <root>/<agentId>/<pi-session>.jsonl  — 子进程的 --session-dir 直接指向该目录
+//   <root>/<agentId>/system.md           — 首轮系统提示词快照，续接时复用
+//   <root>/<agentId>/meta.json           — 运行配置快照 + 活跃时间
+// resume 用 `pi --session <jsonl>` 打开既有会话，因此上下文得以延续。
+const SUBAGENT_SESSION_DIRNAME = "subagent-sessions";
+const SYSTEM_PROMPT_FILENAME = "system.md";
+const FORK_SOURCE_FILENAME = "parent.jsonl";
+/** 未活跃超过该天数的子会话目录会在父进程启动时被清理。 */
+const RETENTION_DAYS = 180;
+const RETENTION_MS = RETENTION_DAYS * 24 * 60 * 60 * 1000;
+/** agentId 同时作为目录名，必须无法逃出 subagent-sessions 根目录。 */
+const AGENT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{2,63}$/;
+
+interface AgentMeta {
+	agentId: string;
+	kind: "spawn" | "fork";
+	/** Agent definition name (the tool name for fork runs). */
+	agent: string;
+	agentScope?: string;
+	model?: string;
+	tools?: string;
+	excludeTools?: string;
+	sessionFile?: string;
+	parentSession?: string;
+	createdAt: string;
+	lastActiveAt: string;
+}
+
+/** A persisted child session that `resume_subagent` can continue. */
+interface PersistedRun {
+	agentId: string;
+	/** Directory holding the child session file, its system prompt and meta.json. */
+	dir: string;
+	/** When set, `pi --session <file>` continues this session instead of starting a new one. */
+	sessionFile?: string;
+}
+
+/** Agent ids currently running in this process; also blocks concurrent resumes. */
+const activeAgentIds = new Set<string>();
+
+/** Reserve an agent id for the duration of one run. */
+function claimAgentId(agentId: string): boolean {
+	if (activeAgentIds.has(agentId)) return false;
+	activeAgentIds.add(agentId);
+	return true;
+}
+
+function releaseAgentId(agentId: string): void {
+	activeAgentIds.delete(agentId);
+}
+
+function expandTilde(p: string): string {
+	if (p === "~") return os.homedir();
+	if (p.startsWith("~/") || p.startsWith("~\\")) return path.join(os.homedir(), p.slice(2));
+	return p;
+}
+
+/** Root of the persisted subagent sessions, alongside pi's own session storage. */
+function agentSessionsRoot(): string {
+	const agentDir = process.env.PI_CODING_AGENT_DIR?.trim();
+	const base = agentDir && agentDir.length > 0 ? expandTilde(agentDir) : path.join(os.homedir(), ".pi", "agent");
+	return path.join(base, SUBAGENT_SESSION_DIRNAME);
+}
+
+/** agentId prefix derived from the agent name, so ids stay recognizable. */
+function sanitizeAgentName(name: string): string {
+	const slug = name
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-+|-+$/g, "")
+		.slice(0, 24)
+		.replace(/-+$/, "");
+	return slug || "agent";
+}
+
+function writeAgentMeta(dir: string, meta: AgentMeta): boolean {
+	const file = path.join(dir, "meta.json");
+	const tmp = `${file}.tmp`;
+	try {
+		fs.writeFileSync(tmp, `${JSON.stringify(meta, null, 2)}\n`, { encoding: "utf-8", mode: 0o600 });
+		fs.renameSync(tmp, file);
+		return true;
+	} catch {
+		try {
+			fs.unlinkSync(tmp);
+		} catch {
+			/* ignore */
+		}
+		return false;
+	}
+}
+
+function readAgentMeta(dir: string): AgentMeta | null {
+	try {
+		const parsed = JSON.parse(fs.readFileSync(path.join(dir, "meta.json"), "utf-8")) as AgentMeta;
+		if (!parsed || typeof parsed.agentId !== "string" || !parsed.agentId) return null;
+		return parsed;
+	} catch {
+		return null;
+	}
+}
+
+/** Refresh the last-active timestamp (and optionally the session file) of a persisted run. */
+function touchAgentMeta(dir: string, patch: Partial<AgentMeta> = {}): void {
+	const meta = readAgentMeta(dir);
+	if (!meta) return;
+	writeAgentMeta(dir, { ...meta, ...patch, lastActiveAt: new Date().toISOString() });
+}
+
+/**
+ * Create the directory + metadata for a fresh run.
+ * Returns null when the directory cannot be created; the caller then runs
+ * without persistence (the result simply cannot be resumed).
+ */
+function createPersistedRun(meta: Omit<AgentMeta, "agentId" | "createdAt" | "lastActiveAt">): PersistedRun | null {
+	const root = agentSessionsRoot();
+	try {
+		fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+	} catch {
+		return null;
+	}
+	const slug = sanitizeAgentName(meta.agent);
+	for (let attempt = 0; attempt < 20; attempt++) {
+		const agentId = `${slug}-${Math.random().toString(16).slice(2, 10).padEnd(8, "0")}`;
+		const dir = path.join(root, agentId);
+		if (fs.existsSync(dir)) continue;
+		try {
+			fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+		} catch {
+			return null;
+		}
+		const now = new Date().toISOString();
+		if (!writeAgentMeta(dir, { ...meta, agentId, createdAt: now, lastActiveAt: now })) {
+			try {
+				fs.rmSync(dir, { recursive: true, force: true });
+			} catch {
+				/* ignore */
+			}
+			return null;
+		}
+		return { agentId, dir };
+	}
+	return null;
+}
+
+/** Resolve an agent id to its directory; null when the id is invalid or unknown. */
+function resolveAgentDir(agentId: string): string | null {
+	if (!AGENT_ID_PATTERN.test(agentId)) return null;
+	const dir = path.join(agentSessionsRoot(), agentId);
+	return fs.existsSync(dir) ? dir : null;
+}
+
+/** Most recently active agent ids, used to hint when an agentId is unknown. */
+function listRecentAgentIds(limit = 5): string[] {
+	const root = agentSessionsRoot();
+	try {
+		return fs
+			.readdirSync(root, { withFileTypes: true })
+			.filter((entry) => entry.isDirectory() && AGENT_ID_PATTERN.test(entry.name))
+			.map((entry) => {
+				const dir = path.join(root, entry.name);
+				let lastActive = 0;
+				const meta = readAgentMeta(dir);
+				if (meta?.lastActiveAt) {
+					const parsed = Date.parse(meta.lastActiveAt);
+					if (!Number.isNaN(parsed)) lastActive = parsed;
+				}
+				if (!lastActive) {
+					try {
+						lastActive = fs.statSync(dir).mtimeMs;
+					} catch {
+						/* ignore */
+					}
+				}
+				return { id: entry.name, lastActive };
+			})
+			.sort((a, b) => b.lastActive - a.lastActive)
+			.slice(0, limit)
+			.map((entry) => entry.id);
+	} catch {
+		return [];
+	}
+}
+
+/** Newest session file inside an agent dir, ignoring the fork source fixture. */
+function findSessionFile(dir: string): string | undefined {
+	try {
+		const candidates = fs
+			.readdirSync(dir)
+			.filter((name) => name.endsWith(".jsonl") && name !== FORK_SOURCE_FILENAME)
+			.map((name) => {
+				const filePath = path.join(dir, name);
+				try {
+					return { filePath, mtime: fs.statSync(filePath).mtimeMs };
+				} catch {
+					return null;
+				}
+			})
+			.filter((entry): entry is { filePath: string; mtime: number } => entry !== null)
+			.sort((a, b) => b.mtime - a.mtime);
+		return candidates[0]?.filePath;
+	} catch {
+		return undefined;
+	}
+}
+
+/** Delete persisted subagent sessions untouched for RETENTION_DAYS. */
+function pruneAgentSessions(): void {
+	const root = agentSessionsRoot();
+	let entries: fs.Dirent[];
+	try {
+		entries = fs.readdirSync(root, { withFileTypes: true });
+	} catch {
+		return;
+	}
+	const now = Date.now();
+	for (const entry of entries) {
+		if (!entry.isDirectory() || !AGENT_ID_PATTERN.test(entry.name)) continue;
+		if (activeAgentIds.has(entry.name)) continue;
+		const dir = path.join(root, entry.name);
+		let lastActive: number | undefined;
+		const meta = readAgentMeta(dir);
+		if (meta?.lastActiveAt) {
+			const parsed = Date.parse(meta.lastActiveAt);
+			if (!Number.isNaN(parsed)) lastActive = parsed;
+		}
+		if (lastActive === undefined) {
+			try {
+				lastActive = fs.statSync(dir).mtimeMs;
+			} catch {
+				continue;
+			}
+		}
+		if (now - lastActive <= RETENTION_MS) continue;
+		try {
+			fs.rmSync(dir, { recursive: true, force: true });
+		} catch {
+			/* best effort */
+		}
+	}
+}
+
 /** Session id for a forked subagent session (must start and end alphanumeric). */
 function createForkSessionId(): string {
 	return `fork-${Math.random().toString(16).slice(2, 10)}${Date.now().toString(16).slice(-4)}`;
@@ -338,9 +599,9 @@ function writeForkSourceFile(
 	entries: SessionEntry[],
 	targetCwd: string,
 	parentSession: string | undefined,
-	tmpDir: string,
+	sessionDir: string,
 ): string {
-	const filePath = path.join(tmpDir, "parent.jsonl");
+	const filePath = path.join(sessionDir, FORK_SOURCE_FILENAME);
 	const header = {
 		type: "session",
 		version: 3,
@@ -366,16 +627,27 @@ function buildTaskPrompt(task: string, isFork: boolean): string {
 	].join("\n");
 }
 
+/** Follow-up message sent to a subagent that already finished its first turn. */
+function buildResumePrompt(message: string): string {
+	return `继续推进上面这项任务，以下是新的输入：\n\n${message}`;
+}
+
 type OnUpdateCallback = (partial: AgentToolResult<AgentDetails>) => void;
 
 async function runAgent(defaultCwd: string, spec: AgentSpec, options: RunAgentOptions): Promise<SingleResult> {
-	const { task, parentModel, forkContext, signal, onUpdate, makeDetails } = options;
+	const { task, prompt, parentModel, forkContext, signal, onUpdate, makeDetails, run } = options;
 	const isFork = !!forkContext && forkContext.entries.length > 0;
 	const effectiveModel = spec.model ?? parentModel;
-	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
-	let tmpPromptPath: string | null = null;
+	const agentId = run?.agentId;
+	const resumeSessionFile = run?.sessionFile;
+	// Persisted runs keep their session in the agent dir so a later resume can
+	// re-open it; runs without a persistent dir fall back to a throwaway tmp dir.
+	const sessionDir = run ? run.dir : fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
+	const disposable = !run;
+	let forkSourcePath: string | null = null;
+	let sessionFile: string | undefined;
 
-	const args: string[] = ["--mode", "json", "-p", "--session-dir", tmpDir];
+	const args: string[] = ["--mode", "json", "-p", "--session-dir", sessionDir];
 	// 子进程不暴露委派类工具，防止无限递归；再叠加 agent 定义的 excludeTools。
 	const effectiveExcludeTools = [spec.excludeTools, RECURSION_EXCLUDE_TOOLS]
 		.filter((s): s is string => !!s && s.trim().length > 0)
@@ -388,8 +660,10 @@ async function runAgent(defaultCwd: string, spec: AgentSpec, options: RunAgentOp
 	const currentResult: SingleResult = {
 		agent: spec.name,
 		agentSource: spec.source,
+		agentId,
 		task,
 		exitCode: 0,
+		persistenceWarning: run ? undefined : "session persistence unavailable; this run cannot be resumed",
 		messages: [],
 		stderr: "",
 		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
@@ -406,19 +680,23 @@ async function runAgent(defaultCwd: string, spec: AgentSpec, options: RunAgentOp
 	};
 
 	try {
-		if (isFork && forkContext) {
-			const sourceFile = writeForkSourceFile(forkContext.entries, defaultCwd, forkContext.parentSession, tmpDir);
-			args.push("--session-id", createForkSessionId(), "--fork", sourceFile);
+		if (resumeSessionFile) {
+			// Continue the same child session: `pi --session <file>` appends to it.
+			args.push("--session", resumeSessionFile);
+		} else if (isFork && forkContext) {
+			forkSourcePath = writeForkSourceFile(forkContext.entries, defaultCwd, forkContext.parentSession, sessionDir);
+			args.push("--session-id", createForkSessionId(), "--fork", forkSourcePath);
 		}
 
 		if (spec.systemPrompt.trim()) {
+			// Persisted runs keep the prompt in the agent dir, so resume reuses it verbatim.
 			const safeName = spec.name.replace(/[^\w.-]+/g, "_");
-			tmpPromptPath = path.join(tmpDir, `prompt-${safeName}.md`);
-			fs.writeFileSync(tmpPromptPath, spec.systemPrompt, { encoding: "utf-8", mode: 0o600 });
-			args.push("--append-system-prompt", tmpPromptPath);
+			const promptPath = path.join(sessionDir, run ? SYSTEM_PROMPT_FILENAME : `prompt-${safeName}.md`);
+			fs.writeFileSync(promptPath, spec.systemPrompt, { encoding: "utf-8", mode: 0o600 });
+			args.push("--append-system-prompt", promptPath);
 		}
 
-		args.push(buildTaskPrompt(task, isFork));
+		args.push(prompt);
 		let wasAborted = false;
 
 		const exitCode = await new Promise<number>((resolve) => {
@@ -510,36 +788,46 @@ async function runAgent(defaultCwd: string, spec: AgentSpec, options: RunAgentOp
 		});
 
 		currentResult.exitCode = exitCode;
+		// Record the child session file so a later resume_subagent can re-open it.
+		sessionFile = findSessionFile(sessionDir);
+		if (run && sessionFile) touchAgentMeta(run.dir, { sessionFile });
 		if (wasAborted) throw new Error("Subagent was aborted");
 
 		// Generate HTML report from the saved session file
-		try {
-			const sessionFiles = fs
-				.readdirSync(tmpDir)
-				.filter((f) => f.endsWith(".jsonl") && f !== "parent.jsonl");
-			if (sessionFiles.length > 0) {
-				const sessionFile = path.join(tmpDir, sessionFiles[0]);
+		if (sessionFile) {
+			try {
 				const safeName = spec.name.replace(/[^\w.-]+/g, "_");
 				const htmlPath = path.join(os.tmpdir(), `pi-subagent-${safeName}-${Date.now()}.html`);
 				const exportResult = spawnSync("pi", ["--export", sessionFile, htmlPath], { timeout: 15000 });
 				if (exportResult.status === 0) {
 					currentResult.htmlReportPath = htmlPath;
 				}
+			} catch {
+				/* export failure is non-fatal */
 			}
-		} catch {
-			/* export failure is non-fatal */
 		}
 
 		return currentResult;
 	} finally {
-		// Clean up tmpDir (prompt file + session files)
-		try {
-			const entries = fs.readdirSync(tmpDir);
-			for (const entry of entries) {
-				try { fs.unlinkSync(path.join(tmpDir, entry)); } catch { /* ignore */ }
-			}
-			fs.rmdirSync(tmpDir);
-		} catch { /* ignore */ }
+		if (forkSourcePath) {
+			try { fs.unlinkSync(forkSourcePath); } catch { /* ignore */ }
+		}
+		if (disposable) {
+			// Throwaway dir: prompt file + session files
+			try {
+				const entries = fs.readdirSync(sessionDir);
+				for (const entry of entries) {
+					try { fs.unlinkSync(path.join(sessionDir, entry)); } catch { /* ignore */ }
+				}
+				fs.rmdirSync(sessionDir);
+			} catch { /* ignore */ }
+		} else if (run && !sessionFile) {
+			// Nothing was ever written (e.g. the child failed to start): drop the empty
+			// directory so we do not advertise an agentId that can never be resumed.
+			try { fs.rmSync(run.dir, { recursive: true, force: true }); } catch { /* ignore */ }
+			currentResult.agentId = undefined;
+			currentResult.persistenceWarning = "the run produced no session file; this agent cannot be resumed";
+		}
 	}
 }
 
@@ -592,6 +880,7 @@ function renderAgentResult(result: any, expanded: boolean, theme: any): Text | C
 	if (expanded) {
 		const container = new Container();
 		let header = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
+		if (r.agentId) header += theme.fg("dim", ` ${r.agentId}`);
 		if (isError && r.stopReason) header += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 		container.addChild(new Text(header, 0, 0));
 		if (isError && r.errorMessage)
@@ -631,6 +920,7 @@ function renderAgentResult(result: any, expanded: boolean, theme: any): Text | C
 	}
 
 	let text = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
+	if (r.agentId) text += theme.fg("dim", ` ${r.agentId}`);
 	if (isError && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 	if (isError && r.errorMessage) text += `\n${theme.fg("error", `Error: ${r.errorMessage}`)}`;
 	else if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
@@ -650,16 +940,24 @@ function finalizeResult(
 	makeDetails: (results: SingleResult[]) => AgentDetails,
 ): AgentToolResult<AgentDetails> {
 	const isError = result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
+	// The agent id is the handle for resuming this subagent in a later turn.
+	const header = [
+		result.agentId ? `agentId: ${result.agentId} (resume with ${RESUME_SUBAGENT_TOOL})` : undefined,
+		result.persistenceWarning,
+	]
+		.filter((line): line is string => !!line)
+		.join("\n");
+	const prefix = header ? `${header}\n` : "";
 	if (isError) {
 		const errorMsg = result.errorMessage || result.stderr || getFinalOutput(result.messages) || "(no output)";
 		return {
-			content: [{ type: "text", text: `Agent ${result.stopReason || "failed"}: ${errorMsg}` }],
+			content: [{ type: "text", text: `${prefix}Agent ${result.stopReason || "failed"}: ${errorMsg}` }],
 			details: makeDetails([result]),
 			isError: true,
 		};
 	}
 	return {
-		content: [{ type: "text", text: getFinalOutput(result.messages) || "(no output)" }],
+		content: [{ type: "text", text: `${prefix}${getFinalOutput(result.messages) || "(no output)"}` }],
 		details: makeDetails([result]),
 	};
 }
@@ -696,6 +994,7 @@ export default function (pi: ExtensionAPI) {
 			"Delegate tasks to specialized subagents with isolated context.",
 			`For tasks that need the parent's accumulated context, use the ${FORK_SUBAGENT_TOOL} tool instead.`,
 			"To parallelize, issue multiple spawn_subagent calls in the same assistant turn; they run concurrently.",
+			"The result starts with `agentId: <id>`; keep that id to send follow-up work to the same subagent with the resume_subagent tool.",
 			`At most ${MAX_SINGLE_CONCURRENCY} subagent processes run at once; excess calls queue until a slot frees.`, "",
 			'Default agent scope is "user" (from ~/.pi/agent/agents).',
 			'To enable project-local agents in .pi/agents, set agentScope: "both" (or "project").',
@@ -704,6 +1003,7 @@ export default function (pi: ExtensionAPI) {
 			"When delegating to a subagent, always specify the exact agent name. If you are unsure which agents are available, first call list_agents to discover available subagents and their descriptions.",
 			`Use the ${FORK_SUBAGENT_TOOL} tool when the sub-task needs the parent's accumulated context; use spawn_subagent for isolated recon with a fresh context.`,
 			"To run independent subagents in parallel, issue multiple spawn_subagent calls in the same assistant turn instead of waiting for each to finish sequentially.",
+			`When the follow-up depends on what a subagent already did, keep its agentId and use ${RESUME_SUBAGENT_TOOL} instead of spawning a new agent.`,
 		],
 		parameters: SubagentParams,
 
@@ -740,6 +1040,7 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			let result: SingleResult;
+			let run: PersistedRun | null = null;
 			try {
 				const targetAgent = agents.find((a) => a.name === params.agent);
 				if (!targetAgent) {
@@ -751,15 +1052,29 @@ export default function (pi: ExtensionAPI) {
 				}
 
 				const spec = toAgentSpec(targetAgent);
+				const parentModel = formatModelLabel(ctx.model);
 				if (params.model) spec.model = params.model;
+				run = createPersistedRun({
+					kind: "spawn",
+					agent: targetAgent.name,
+					agentScope,
+					model: spec.model ?? parentModel,
+					tools: spec.tools,
+					excludeTools: spec.excludeTools,
+					parentSession: ctx.sessionManager.getSessionFile(),
+				});
+				if (run) claimAgentId(run.agentId);
 				result = await runAgent(ctx.cwd, spec, {
 					task: params.task,
-					parentModel: formatModelLabel(ctx.model),
+					prompt: buildTaskPrompt(params.task, false),
+					parentModel,
+					run: run ?? undefined,
 					signal,
 					onUpdate,
 					makeDetails,
 				});
 			} finally {
+				if (run) releaseAgentId(run.agentId);
 				release();
 			}
 			return finalizeResult(result, makeDetails);
@@ -791,11 +1106,13 @@ export default function (pi: ExtensionAPI) {
 			"Delegate a task to a forked subagent that inherits the main agent's full conversation context.",
 			"The forked agent sees the current conversation as shared history and completes the task independently in an isolated session.",
 			"Use it when the sub-task needs context already gathered in this session; use the spawn_subagent tool for isolated recon with a fresh context.",
+			"The result starts with `agentId: <id>`; keep that id to send follow-up work to the same fork with the resume_subagent tool.",
 			`At most ${MAX_SINGLE_CONCURRENCY} subagent processes run at once; excess calls queue until a slot frees.`,
 		].join(" "),
 		promptGuidelines: [
 			`Use ${FORK_SUBAGENT_TOOL} when the sub-task needs the parent's accumulated context; use spawn_subagent for isolated recon with a fresh context.`,
 			`To run independent forks in parallel, issue multiple ${FORK_SUBAGENT_TOOL} calls in the same assistant turn.`,
+			`Keep the returned agentId and use ${RESUME_SUBAGENT_TOOL} when the follow-up builds on what that fork already did.`,
 		],
 		parameters: Type.Object({
 			task: Type.String({ description: "Task for the forked agent to complete independently" }),
@@ -847,7 +1164,17 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			let result: SingleResult;
+			let run: PersistedRun | null = null;
 			try {
+				const parentModel = formatModelLabel(ctx.model);
+				run = createPersistedRun({
+					kind: "fork",
+					agent: FORK_SUBAGENT_TOOL,
+					model: params.model ?? parentModel,
+					tools: params.tools,
+					parentSession: ctx.sessionManager.getSessionFile(),
+				});
+				if (run) claimAgentId(run.agentId);
 				result = await runAgent(
 					ctx.cwd,
 					{
@@ -857,9 +1184,19 @@ export default function (pi: ExtensionAPI) {
 						model: params.model,
 						tools: params.tools,
 					},
-					{ task: params.task, parentModel: formatModelLabel(ctx.model), forkContext, signal, onUpdate, makeDetails },
+					{
+						task: params.task,
+						prompt: buildTaskPrompt(params.task, true),
+						parentModel,
+						forkContext,
+						run: run ?? undefined,
+						signal,
+						onUpdate,
+						makeDetails,
+					},
 				);
 			} finally {
+				if (run) releaseAgentId(run.agentId);
 				release();
 			}
 
@@ -869,6 +1206,150 @@ export default function (pi: ExtensionAPI) {
 		renderCall(args, theme) {
 			const preview = args.task ? (args.task.length > 60 ? `${args.task.slice(0, 60)}...` : args.task) : "...";
 			const text = `${theme.fg("toolTitle", theme.bold(FORK_SUBAGENT_TOOL))}\n  ${theme.fg("dim", preview)}`;
+			return new Text(text, 0, 0);
+		},
+
+		renderResult(result, { expanded }, theme) {
+			return renderAgentResult(result, expanded, theme);
+		},
+	});
+
+	// ── resume_subagent tool ────────────────────────────────────
+
+	pi.registerTool({
+		name: RESUME_SUBAGENT_TOOL,
+		label: "Resume Agent",
+		description: [
+			"Send a follow-up message to a subagent that already finished, continuing its own context.",
+			"Every spawn_subagent / fork_subagent result starts with `agentId: <id>`; pass that id here.",
+			"Use it for review→fix loops: after another agent reviews the work, resume the original coding agent with the review findings so it fixes them with its earlier context intact.",
+			"The subagent keeps the system prompt, tools and model it was created with; only its session is continued.",
+			`Resuming an agent that is still running fails with "is busy"; at most ${MAX_SINGLE_CONCURRENCY} subagent processes run at once.`,
+		].join(" "),
+		promptGuidelines: [
+			`Prefer ${RESUME_SUBAGENT_TOOL} over a fresh spawn_subagent whenever the follow-up depends on what a previous subagent already did.`,
+			`Typical loop: spawn a coding agent → review its work with a fresh subagent → ${RESUME_SUBAGENT_TOOL} the coding agent with the review findings → repeat until clean.`,
+			"Put the full instruction in `message`; the subagent cannot see anything except its own session history.",
+		],
+		parameters: Type.Object({
+			agentId: Type.String({
+				description: 'Agent id returned by spawn_subagent / fork_subagent (e.g. "worker-3f9a1c02")',
+			}),
+			message: Type.String({ description: "Follow-up message to deliver to that subagent" }),
+			model: Type.Optional(
+				Type.String({
+					description:
+						'Model override for this run only (e.g. "deepseek/deepseek-flash"); default: the model the agent was created with',
+				}),
+			),
+		}),
+
+		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			const makeDetails = (results: SingleResult[]): AgentDetails => ({ results });
+
+			const dir = resolveAgentDir(params.agentId);
+			if (!dir) {
+				const recent = listRecentAgentIds();
+				const hint =
+					recent.length > 0 ? ` Recent agent ids: ${recent.join(", ")}.` : " No resumable subagent sessions found.";
+				return {
+					content: [{ type: "text", text: `Unknown or invalid agentId: ${params.agentId}.${hint}` }],
+					details: makeDetails([]),
+					isError: true,
+				};
+			}
+
+			const meta = readAgentMeta(dir);
+			if (!meta) {
+				return {
+					content: [{ type: "text", text: `Cannot resume ${params.agentId}: meta.json is missing or unreadable.` }],
+					details: makeDetails([]),
+					isError: true,
+				};
+			}
+
+			const sessionFile =
+				meta.sessionFile && fs.existsSync(meta.sessionFile) ? meta.sessionFile : findSessionFile(dir);
+			if (!sessionFile) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Cannot resume ${params.agentId}: it has no session file yet (its first run never started).`,
+						},
+					],
+					details: makeDetails([]),
+					isError: true,
+				};
+			}
+
+			if (!claimAgentId(meta.agentId)) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Agent ${meta.agentId} is busy; wait for its current run to finish before resuming it.`,
+						},
+					],
+					details: makeDetails([]),
+					isError: true,
+				};
+			}
+
+			try {
+				// Reuse the system prompt snapshot; a missing one falls back to the child's default prompt.
+				let systemPrompt = "";
+				try {
+					systemPrompt = fs.readFileSync(path.join(dir, SYSTEM_PROMPT_FILENAME), "utf-8");
+				} catch {
+					/* ignore */
+				}
+
+				const release = await acquireSingleSlot(signal);
+				if (!release) {
+					return {
+						content: [{ type: "text", text: "Cancelled while waiting for a subagent concurrency slot." }],
+						details: makeDetails([]),
+					};
+				}
+
+				let result: SingleResult;
+				try {
+					result = await runAgent(
+						ctx.cwd,
+						{
+							name: meta.agent,
+							source: meta.kind === "fork" ? "builtin" : meta.agentScope === "project" ? "project" : "user",
+							systemPrompt,
+							tools: meta.tools,
+							excludeTools: meta.excludeTools,
+							model: params.model ?? meta.model,
+						},
+						{
+							task: params.message,
+							prompt: buildResumePrompt(params.message),
+							parentModel: formatModelLabel(ctx.model),
+							run: { agentId: meta.agentId, dir, sessionFile },
+							signal,
+							onUpdate,
+							makeDetails,
+						},
+					);
+				} finally {
+					release();
+				}
+				return finalizeResult(result, makeDetails);
+			} finally {
+				releaseAgentId(meta.agentId);
+			}
+		},
+
+		renderCall(args, theme) {
+			const preview = args.message ? (args.message.length > 60 ? `${args.message.slice(0, 60)}...` : args.message) : "...";
+			const text =
+				theme.fg("toolTitle", theme.bold(`${RESUME_SUBAGENT_TOOL} `)) +
+				theme.fg("accent", args.agentId || "...") +
+				`\n  ${theme.fg("dim", preview)}`;
 			return new Text(text, 0, 0);
 		},
 
@@ -953,5 +1434,13 @@ export default function (pi: ExtensionAPI) {
 
 			ctx.ui.notify(lines.join("\n").trim(), "info");
 		},
+	});
+
+	// ── 过期子会话清理 ──────────────────────────────────────────────────────────
+
+	pi.on("session_start", async () => {
+		// Only the interactive parent prunes; subagent processes skip it.
+		if (process.env.PI_SUBAGENT) return;
+		pruneAgentSessions();
 	});
 }
