@@ -6,6 +6,7 @@
 
 - **隔离上下文**：每个 subagent 在独立的 `pi` 子进程中运行（独立 `--session-dir`），不污染主会话。
 - **`fork_subagent` 工具**：fork 主 agent 当前的活动分支，继承完整会话上下文后再执行任务；参数仅 `task`（+ 可选 `model`/`tools`）。
+- **`resume_subagent` 工具（多轮）**：子 agent 结束后上下文不丢，主 agent 可用 `agentId` 把新消息发回同一子会话继续干活（典型：coding → review → 把意见发回 coding agent 修复）。
 - **并发**：同一 assistant turn 内发起多个 `spawn_subagent` 调用即可并发；进程级信号量最多同时运行 4 个子进程，超出的排队。
 - **流式输出**：实时显示子 agent 的工具调用与文本进度。
 - **Markdown 渲染**：展开视图（Ctrl+O）以 Markdown 渲染最终输出。
@@ -19,7 +20,7 @@ apps/pi/
 ├── setup.sh
 └── agent/
     ├── extensions/subagent/
-    │   ├── index.ts      # 扩展入口：spawn_subagent / fork_subagent / list_agents 工具、/list-agents 命令
+    │   ├── index.ts      # 扩展入口：spawn / fork / resume / list_agents 工具、/list-agents 命令、子会话持久化与清理
     │   ├── agents.ts     # agent 发现逻辑
     │   └── README.md
     ├── agents/           # markdown agent 定义
@@ -84,6 +85,18 @@ Use fork_subagent to summarize what we decided about the cache layer
 
 `fork_subagent` 把当前会话作为共享历史交给子进程，子进程在其上独立完成 `task`。
 
+### 多轮续接（review → fix）
+
+一次委派结束后，用返回的 `agentId` 把新消息发回同一个子 agent：
+
+```
+先用 worker 按方案实现 token 刷新 → 得到 worker-3f9a1c02
+让另一个 subagent review 这份改动 → 拿到意见
+用 resume_subagent(agentId="worker-3f9a1c02", message="<意见>，请据此修复")
+```
+
+worker 会带着自己上一轮读过的文件、写过的代码继续修，不必重新熟悉现场。详见 [多轮续接（`resume_subagent`）](#多轮续接resume_subagent)。
+
 ### 指定 agent 范围
 
 - `agentScope: "user"`（默认）：只加载 `~/.pi/agent/agents`。
@@ -98,6 +111,7 @@ Use fork_subagent to summarize what we decided about the cache layer
 |------|------|------|
 | `spawn_subagent` | 工具 | 委派一个任务给指定 agent（隔离上下文） |
 | `fork_subagent` | 工具 | 委派任务给继承父会话上下文的子 agent |
+| `resume_subagent` | 工具 | 向已结束的子 agent 追加消息，延续其上下文 |
 | `list_agents` | 工具 | 列出指定 scope 下可用的 agent |
 | `/list-agents` | 命令 | 列出全部 agent（scope 固定为 `both`） |
 
@@ -118,9 +132,19 @@ Use fork_subagent to summarize what we decided about the cache layer
 | `model` | string | 继承主进程 | 覆盖模型（如 `deepseek/deepseek-flash`） |
 | `tools` | string | 子进程 pi 默认 | 逗号分隔的工具白名单（**不**继承父进程的工具集） |
 
-所有子进程（`spawn_subagent` 与 `fork_subagent`）都固定排除 `spawn_subagent`、`list_agents`、`fork_subagent`，不可覆盖。
+所有子进程（`spawn_subagent`、`fork_subagent`、`resume_subagent`）都固定排除 `spawn_subagent`、`list_agents`、`fork_subagent`、`resume_subagent`，不可覆盖。
 
-`model` 默认继承父进程当前模型（`spawn_subagent` 与 `fork_subagent` 都通过显式 `--model` 传入，未指定时回退到子进程 pi 的默认模型）；`tools` **不继承**父进程的工具集，不填时使用子进程 pi 自身的默认工具。
+`model` 默认继承父进程当前模型（`spawn_subagent` 与 `fork_subagent` 都通过显式 `--model` 传入，未指定时回退到子进程 pi 的默认模型）；该值会写进 `meta.json`，后续 resume 沿用它。`tools` **不继承**父进程的工具集，不填时使用子进程 pi 自身的默认工具。
+
+### `resume_subagent` 参数
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `agentId` | string | — | 必填；`spawn_subagent` / `fork_subagent` 结果首行给出的 id（如 `worker-3f9a1c02`） |
+| `message` | string | — | 必填；要发给该子 agent 的新消息（review 意见、补充要求等） |
+| `model` | string | 快照里的模型 | 仅覆盖本次运行的模型，**不写回** `meta.json` |
+
+`resume_subagent` 同样被固定排除在所有子进程之外（防止递归委派）。
 
 ### `list_agents` 参数
 
@@ -132,7 +156,7 @@ Use fork_subagent to summarize what we decided about the cache layer
 
 **折叠视图（默认）**：
 
-- 状态图标（✓ 成功 / ✗ 失败）、agent 名称及其来源
+- 状态图标（✓ 成功 / ✗ 失败）、agent 名称及其来源、可续接的 `agentId`
 - 最后 10 个显示项（文本取前 3 行，工具调用按内置工具风格格式化）
 - 超过 10 项时显示省略数量与 `(Ctrl+O to expand)`
 - 用量统计：`轮数 ↑输入 ↓输出 R缓存读 W缓存写 $费用 ctx:上下文tokens 模型`
@@ -236,10 +260,12 @@ agent 的系统提示词写在这里。
 ```text
 [system]      pi 默认系统提示（cwd、AGENTS.md、工具说明……）
               ＋ 追加片段（--append-system-prompt）：
-              "You are a forked sub-agent of pi. The conversation in this session
-               is shared history forked from the main agent, not your own prior work.
-               Treat it strictly as background context, then complete the task given
-               in the final user message."
+              "You are a forked sub-agent of pi. The beginning of this session was
+               forked from the main agent as background context, not your own prior
+               work. Any later turns in this session are your own work; continue
+               from them instead of starting over. Treat the inherited history
+               strictly as background, then complete the task given in the final
+               user message."
 
 [user]        登录接口偶发 401，帮我排查                       ← 继承
 [assistant]   我先看 auth 中间件 + toolCall(read auth.ts)       ← 继承
@@ -261,11 +287,100 @@ agent 的系统提示词写在这里。
 
 - **继承的是“活动分支”**：被放弃的旁支、其他分支的尝试不会带过去。
 - **继承的是“已完成的部分”**：只有拿到 tool result 的步骤会被带入，进行中的动作一律裁掉。
-- **职责分离**：系统提示只负责**身份重述**（这是 fork 的共享历史、不是你自己的工作），临场的**执行要求**（自主完成、不要问用户、报告格式）放在最后一条 user 消息里。系统提示每次请求重建、永不参与 compaction，因此身份不会因长会话压缩而丢失。
-- **上下文“身份”被改写**：追加的系统提示明确告知子 agent——继承的历史是**别人的**、仅作背景，它自己的任务在最后一条 user 消息里。这能显著降低子 agent 把父任务误当成自己任务、或过早停手的概率。
+- **职责分离**：系统提示只负责**身份重述**（fork 来的那段开头是背景、不是你自己的工作；其后的轮次是你自己的产出），临场的**执行要求**（自主完成、不要问用户、报告格式）放在最后一条 user 消息里。系统提示每次请求重建、永不参与 compaction，因此身份不会因长会话压缩而丢失。
+- **上下文“身份”被改写**：追加的系统提示明确告知子 agent——继承的历史（开头那一段）是**别人的**、仅作背景，它自己的任务在最后一条 user 消息里。措辞对续接同样成立：`resume_subagent` 沿用同一段提示，此时那些轮次确实是它自己的产出，不会把自己的工作当成别人的背景。这能显著降低子 agent 把父任务误当成自己任务、或过早停手的概率。
 - **任务被显式包装**：`task` 永远以最后一条 user 消息出现，保证子 agent 有明确的当前目标。
 - **不回写父会话**：子进程使用独立的 `--session-dir` 与新 session id；其输出只作为父会话中 `fork_subagent` 的 tool result 返回。
 - **可选 `model` / `tools` 只影响子进程运行方式**（用哪个模型、开放哪些工具），不改变上面继承的历史内容。
+
+## 多轮续接（`resume_subagent`）
+
+一次委派结束后子 agent 的会话不会丢，主 agent 可以用 `resume_subagent` 在**同一份上下文**上继续派活。典型场景是 review → fix 循环：coding agent 写完代码 → reviewer 挑问题 → 把意见发回**原来的** coding agent 修复。
+
+### 工作方式
+
+1. 首次调用（`spawn_subagent` / `fork_subagent`）时创建目录 `~/.pi/agent/subagent-sessions/<agentId>/`（若设置了 `$PI_CODING_AGENT_DIR` 则以其为根）。
+2. 子进程的 `--session-dir` 直接指向该目录，会话 jsonl 就落在这里。
+3. `resume_subagent` 用 `pi --session <该目录里的 jsonl>` 打开既有会话并追加消息，因此上下文延续。
+4. 同一 `agentId` 的历史是一条**线性会话**：每次续接都追加在同一个文件末尾，不存在分支。
+5. 运行配置（系统提示词、工具白名单、模型）以首次调用时的**快照**为准。
+
+### 目录布局
+
+```
+~/.pi/agent/subagent-sessions/
+└── worker-3f9a1c02/
+    ├── 2026-...Z_<pi-session-id>.jsonl   # 子 agent 会话（--session-dir 指向本目录）
+    ├── system.md                         # 首轮系统提示词快照，续接时 --append-system-prompt 复用
+    └── meta.json                         # 运行配置快照 + 活跃时间
+```
+
+`meta.json`（真实产物示例，`undefined` 字段会被省略）：
+
+```json
+{
+  "kind": "spawn",
+  "agent": "worker",
+  "source": "user",
+  "model": "deepseek/deepseek-flash",
+  "parentSession": "/Users/me/.pi/agent/sessions/--Users-me-proj--/2026-11-16T16-57-04-479Z_01a1e54a.jsonl",
+  "agentId": "worker-3f9a1c02",
+  "createdAt": "2026-11-16T16:57:05.538Z",
+  "lastActiveAt": "2026-11-16T16:57:11.521Z",
+  "sessionFile": "/Users/me/.pi/agent/subagent-sessions/worker-3f9a1c02/2026-11-16T16-57-05-790Z_01a1e54a.jsonl"
+}
+```
+
+- `source` 是 agent 定义的来源（`user` / `project` / `builtin`，fork 为 `builtin`），只影响 TUI 里的标注。
+- `tools` / `excludeTools` 只在设置了对应限制时出现。
+- `sessionFile` / `parentSession` 都是**绝对路径**。读取时会校验 `sessionFile` 必须在自己的目录内，越界时回退为目录内最新的 jsonl。
+
+`agentId` 形如 `<agent 名>-<8 位 hex>`：`worker-3f9a1c02`、`fork-subagent-88de21ab`（fork 用工具名 `fork_subagent`，被安全化为 `fork-subagent`）。它同时是目录名，读取前会做严格校验，防止路径穿越。
+
+### 快照而非引用
+
+续接时**不重新读取** agent 的 `.md`，而是复用 `system.md` + `meta.json` 里的快照：
+
+- agent 定义后来被改动 / 改名 / 删除，已存在的 `agentId` 仍然可用（跑的是当初的提示词）。
+- 想让新定义生效，需要重新 `spawn_subagent` 创建新的 agent。
+- 只有 `model` 允许在单次 `resume_subagent` 里用参数覆盖，且不写回 `meta.json`；未覆盖时用快照里的模型（快照里没有就用子进程 pi 的默认模型，**不会**临时跟随父会话当前模型）。
+- `fork_subagent` 没有 agent 定义，同样以快照（`FORK_SYSTEM_PROMPT`）为准。
+
+### 续接时的消息结构
+
+系统提示词保持不变（一套提示词同时适用于首轮与续接）。新消息加一行前缀后**原样**发送：
+
+```text
+[user] 继续推进上面这项任务，以下是新的输入：
+
+       <message>
+```
+
+首轮则是 `Task: <task>`（fork 为「自主完成 + 报告格式」包装）。这样父 agent 在 `message` 里写的任何指令都不会被模板话术稀释。
+
+### 清理
+
+- 父会话启动时（`session_start`，子进程跳过）扫描一次，删除 `lastActiveAt` 早于 **180 天**的目录；周期是硬编码常量。
+- 正在运行的 agentId 不会被清理；缺失/损坏的 `meta.json` 会退化用目录 mtime 判断。
+- 手动清理：`rm -rf ~/.pi/agent/subagent-sessions/<agentId>`。
+- HTML 报告仍导出到系统临时目录，不占用这里的空间。
+
+### 并发
+
+- 同一 `agentId` 正在运行时再次 `resume_subagent`，直接返回 `Agent <id> is busy; ...`，不排队。
+- 全局并发上限（4）由 `spawn_subagent` / `fork_subagent` / `resume_subagent` 共享。
+
+### review → fix 的完整例子
+
+```
+1) spawn_subagent(agent="worker", task="按上面的方案实现 token 刷新并补测试")
+   → agentId: worker-3f9a1c02
+2) spawn_subagent(agent="worker", task="review 这次改动，只看代码、不要运行")
+   → 得到 3 条意见
+3) resume_subagent(agentId="worker-3f9a1c02", message="<3 条意见>\n请逐条修复，改完重新跑测试")
+   → worker 带着自己的实现上下文修完
+4) 必要时重复 2)–3)
+```
 
 ## 预置 Markdown Agent
 
@@ -279,6 +394,11 @@ agent 的系统提示词写在这里。
 
 - **未知 agent**：返回 `Unknown agent: <name>`（标记为 `isError: true`）。
 - **`fork_subagent` 无可继承历史**：直接报错并提示改用 `spawn_subagent`，不会退化成 fresh run。
+- **`resume_subagent` 的 `agentId` 未知或非法**：返回 `Unknown or invalid agentId: ...`，并列出最近 5 个可用 id。
+- **`meta.json` 丢失/损坏**（或字段类型不对）：返回 `Cannot resume <id>: meta.json is missing or unreadable.`，不会把坏数据塞进子进程参数。
+- **没有会话文件**（首轮从未真正启动，例如子进程启动即失败）：首轮结束时 `runAgent` 会删掉该空目录，并在结果里去掉 `agentId`、提示 `the run produced no session file; this agent cannot be resumed`；若目录已被删而对方仍在 resume，则返回 `Cannot resume <id>: it has no session file yet ...`。
+- **同一 agent 并发续接**：返回 `Agent <id> is busy; wait for its current run to finish before resuming it.`
+- **持久化目录创建失败**（权限等）：该次调用退化为临时目录，结果首行提示 `session persistence unavailable; this run cannot be resumed`。
 - **exit code != 0**：作为错误返回，并附带 stderr 或子进程输出。
 - **`stopReason: "error"`**：透传错误信息。
 - **`stopReason: "aborted"`**：用户中止（Ctrl+C）会杀掉子进程并报错。
@@ -291,4 +411,9 @@ agent 的系统提示词写在这里。
 - 每次调用都会重新扫描 agent 目录（便于会话中途编辑 agent 定义）。
 - 同一时刻最多运行 4 个子进程，其余排队。
 - `fork_subagent` 会携带父会话的完整上下文，token 成本约等于父上下文；当父会话接近上下文窗口上限时，子进程可能触发自动 compaction。
-- 所有子进程都不含 `spawn_subagent` / `list_agents` / `fork_subagent` 工具，因此无法嵌套委派（`spawn_subagent` 与 `fork_subagent` 均如此）。
+- 所有子进程都不含 `spawn_subagent` / `list_agents` / `fork_subagent` / `resume_subagent` 工具，因此无法嵌套委派。
+- 同一 `agentId` 只能线性追加，无法回到某一轮之前分叉；需要保留另一条尝试就再 `spawn_subagent` 一个。
+- 续接不重新读取 agent 定义（快照），改定义需要重新 spawn。
+- 两个不同的父 `pi` 进程同时 resume 同一 `agentId` 时没有文件锁保护（单进程内有 busy 保护）。
+- 续接的子进程仍在**该子会话创建时的工作目录**里运行（会话 header 记录 cwd），父会话后来切目录不影响它。
+- 超过 180 天未活跃的 `agentId` 会被自动清理，届时旧 id 失效。
