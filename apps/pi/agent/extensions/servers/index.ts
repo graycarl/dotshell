@@ -34,6 +34,11 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     quitHandled = false;
+    // Defensive: pi normally hands a replacement session a fresh extension
+    // instance, but a second session_start without session_shutdown must not
+    // leave the previous ctx bound to the footer.
+    unsubscribeChange?.();
+    unsubscribeChange = undefined;
     if (!toolsRegistered) {
       registerAllTools(pi, manager);
       toolsRegistered = true;
@@ -41,15 +46,15 @@ export default function (pi: ExtensionAPI) {
     manager.init(ctx.cwd);
     manager.pruneExited();
     updateStatusWidget(ctx, manager);
-    // Rebind to this session's ctx (a previous one may be stale).
-    unsubscribeChange?.();
     unsubscribeChange = manager.onChange(() => {
-      // The footer is cosmetic — a child exiting concurrently with a session
-      // teardown must never take pi down.
+      // Last-resort net: a child exiting while pi tears the session down must
+      // never abort pi (an uncaught throw from a process event handler exits
+      // the whole runtime). Real bugs in list()/setStatus still surface via
+      // session_start and the /servers overlay, which are not guarded.
       try {
         updateStatusWidget(ctx, manager);
       } catch {
-        /* ctx went stale — the next session re-registers its own listener */
+        /* stale ctx — see the header note on ctx lifetime */
       }
     });
   });
@@ -83,8 +88,7 @@ export default function (pi: ExtensionAPI) {
   // quit, so ctx.ui dialogs cannot be used here — promptShutdownServers
   // prompts over raw stdio instead (see ui.ts header).
   pi.on("session_shutdown", async (event, _ctx) => {
-    // Drop the ctx-bound listener before pi invalidates this ctx: the manager
-    // outlives the session, the footer binding does not.
+    // Unbind the ctx-bound footer listener before pi invalidates this ctx.
     unsubscribeChange?.();
     unsubscribeChange = undefined;
 
