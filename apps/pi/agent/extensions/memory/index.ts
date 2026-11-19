@@ -13,10 +13,11 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
 	deleteEntry,
-	ensureGitExcluded,
+	formatCapacity,
 	formatIndexLine,
 	type IndexSize,
 	isMemoryType,
@@ -24,27 +25,52 @@ import {
 	MAX_INDEX_BYTES,
 	MAX_INDEX_LINES,
 	MAX_TOPIC_CHARS,
+	measureIndex,
 	MEMORY_SCOPES,
 	MEMORY_TYPES,
 	matchesQuery,
 	type MemoryContext,
 	type MemoryEntry,
+	memoryKey,
 	type MemoryScope,
 	type MemoryType,
+	moveEntry,
 	projectLabel,
 	readConfig,
 	readIndex,
 	readTopic,
+	resolveEntry,
 	resolveEntryFile,
 	resolveMemoryContext,
+	rewriteEntry,
 	saveEntry,
 	scopeDir,
+	slugify,
 	type TopicFile,
 	truncate,
 	writeConfig,
 } from "./store.ts";
+import {
+	MemoryOverlay,
+	type MemoryLayerView,
+	type MemoryPanelResult,
+	type MemoryPanelState,
+} from "./ui.ts";
 
 const TOOL_NAMES = ["remember", "memory_recall"];
+
+/**
+ * Last session's resolved context and trust flag, so `/memory` argument
+ * completion can name memories: `getArgumentCompletions(prefix)` gets no
+ * context, and resolving one shells out to git.
+ */
+let lastContext: MemoryContext | undefined;
+let lastTrusted = false;
+
+function trackSession(cwd: string, trusted: boolean): void {
+	lastContext = resolveMemoryContext(cwd);
+	lastTrusted = trusted;
+}
 
 /**
  * A `{ type: "string", enum: [...] }` schema with a literal static type.
@@ -69,6 +95,37 @@ function scopeLabel(context: MemoryContext, scope: MemoryScope): string {
 /** Default layer: personal knowledge is global, repository knowledge is project. */
 function defaultScope(type: MemoryType): MemoryScope {
 	return type === "user" || type === "feedback" ? "global" : "project";
+}
+
+/** Entries this session may see, optionally narrowed to one layer. */
+function visibleFor(context: MemoryContext, projectTrusted: boolean, scope?: MemoryScope): MemoryEntry[] {
+	return visibleEntries(context, "all", projectTrusted).filter((entry) => !scope || entry.scope === scope);
+}
+
+/** `<type> summary (layer · file)` lines: the file name is what disambiguates. */
+function describeCandidates(candidates: MemoryEntry[], context: MemoryContext): string {
+	const shown = candidates.slice(0, 5).map(
+		(entry) => `  [${entry.type}] ${entry.summary} (${scopeLabel(context, entry.scope)} · ${entry.file})`,
+	);
+	if (candidates.length > shown.length) shown.push(`  … ${candidates.length - shown.length} more`);
+	return shown.join("\n");
+}
+
+/** Why a name did not resolve to exactly one entry, and what to do about it. */
+function ambiguityMessage(name: string, candidates: MemoryEntry[], context: MemoryContext): string {
+	const scopes = [...new Set(candidates.map((entry) => entry.scope))];
+	const hint =
+		scopes.length > 1
+			? `exists in more than one layer — add ${scopes.map((scope) => `--${scope}`).join(" or ")}, or use the full name`
+			: `matches ${candidates.length} memories — use the full name`;
+	return `"${name}" ${hint}:\n${describeCandidates(candidates, context)}`;
+}
+
+/** `--global` / `--project` narrow name resolution to one layer. */
+function scopeFlag(words: string[]): MemoryScope | undefined {
+	if (words.includes("--project")) return "project";
+	if (words.includes("--global")) return "global";
+	return undefined;
 }
 
 function entriesOf(context: MemoryContext, scope: MemoryScope): MemoryEntry[] {
@@ -274,9 +331,6 @@ export default function (pi: ExtensionAPI) {
 					};
 				}
 
-				// Project memory is machine-local; keep it out of git status on first use.
-				if (scope === "project" && context.projectRoot) ensureGitExcluded(context.projectRoot);
-
 				const result = saveEntry(context, scope, { type, name: params.name, summary, content });
 				const warning = indexWarning(result.size);
 				const headline = [
@@ -405,10 +459,12 @@ export default function (pi: ExtensionAPI) {
 	// ── /memory ─────────────────────────────────────────────────────────────
 
 	pi.registerCommand("memory", {
-		description: "List, enable, disable, or locate saved memories",
+		description: "List, inspect, edit, or prune saved memories",
+		getArgumentCompletions: (prefix) => memoryCompletions(prefix),
 		handler: async (args, ctx) => {
 			const context = contextFor(ctx);
-			const [sub = "list", ...rest] = (args ?? "").trim().split(/\s+/).filter(Boolean);
+			trackSession(ctx.cwd, ctx.isProjectTrusted());
+			const [sub = "", ...rest] = (args ?? "").trim().split(/\s+/).filter(Boolean);
 
 			const say = (text: string, type: "info" | "warning" = "info") => {
 				if (ctx.hasUI) ctx.ui.notify(text, type);
@@ -433,24 +489,126 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			if (sub !== "list") {
-				say("Usage: /memory [list|on|off|path]", "warning");
+			if (sub === "help") {
+				say(MEMORY_USAGE);
 				return;
 			}
 
-			const query = rest.join(" ").trim().toLowerCase();
-			say(renderMemoryList(context, query, ctx.isProjectTrusted()));
+			// No subcommand: the panel is the point of the command in a TUI; every
+			// other mode only has text, so it lists.
+			if (sub === "" && ctx.mode === "tui") {
+				await runMemoryPanel(ctx);
+				return;
+			}
+
+			if (sub === "" || sub === "list") {
+				const query = rest.join(" ").trim().toLowerCase();
+				say(renderMemoryList(context, query, ctx.isProjectTrusted()));
+				return;
+			}
+
+			// Only show/rm take a layer flag, but parsing it up front keeps the two
+			// branches from disagreeing about what the user asked for.
+			const requested = scopeFlag(rest);
+			if (sub === "show" || sub === "rm") {
+				if (rest.includes("--global") && rest.includes("--project")) {
+					say("Pick one layer: --global or --project.", "warning");
+					return;
+				}
+				if (requested === "project" && !context.projectDir) {
+					say("No project memory: the working directory is not a git repository.", "warning");
+					return;
+				}
+				if (requested === "project" && !ctx.isProjectTrusted()) {
+					say("Project memory is hidden: this project is not trusted.", "warning");
+					return;
+				}
+			}
+
+			if (sub === "show") {
+				const words = rest.filter((word) => !word.startsWith("--"));
+				const name = words.join(" ").trim();
+				if (!name) {
+					say("Usage: /memory show <name> [--global|--project]", "warning");
+					return;
+				}
+				const { entry, candidates } = resolveEntry(visibleFor(context, ctx.isProjectTrusted(), requested), name);
+				if (!entry) {
+					say(
+						candidates.length > 0 ? ambiguityMessage(name, candidates, context) : `No memory named "${name}".`,
+						"warning",
+					);
+					return;
+				}
+				const dir = scopeDir(context, entry.scope);
+				say(renderMemoryDetail(entry, dir ? readTopic(dir, entry.file) : undefined));
+				return;
+			}
+
+			if (sub === "rm") {
+				const force = rest.includes("--force");
+				const name = rest.filter((word) => word !== "--force" && !word.startsWith("--")).join(" ").trim();
+				if (!name) {
+					say("Usage: /memory rm <name> [--force] [--global|--project]", "warning");
+					return;
+				}
+
+				const trusted = ctx.isProjectTrusted();
+				const scoped = visibleFor(context, trusted, requested);
+				// Deletion never guesses: exact name or topic file name only, so a
+				// fragment cannot unlink a longer name. Fuzzy matches become a hint.
+				const { entry, candidates } = resolveEntry(scoped, name, { fuzzy: false });
+				if (!entry) {
+					const similar = resolveEntry(scoped, name).candidates;
+					say(
+						candidates.length > 0
+							? ambiguityMessage(name, candidates, context)
+							: similar.length > 0
+								? `No memory named "${name}". Did you mean:\n${describeCandidates(similar, context)}`
+								: `No memory named "${name}".`,
+						"warning",
+					);
+					return;
+				}
+
+				if (ctx.mode === "tui") {
+					const ok = await ctx.ui.confirm(
+						"Delete memory",
+						`[${entry.type}] ${entry.summary}\n\n${entry.file} · ${scopeLabel(context, entry.scope)} — this cannot be undone.`,
+					);
+					if (!ok) {
+						say("Cancelled");
+						return;
+					}
+				} else if (!force) {
+					// Nothing can ask outside a TUI, so deletion needs an explicit flag.
+					say(`Refusing to delete without confirmation. Re-run with --force: /memory rm ${name} --force`, "warning");
+					return;
+				}
+
+				const result = deleteEntry(context, entry.scope, entry.file);
+				say(`🗑️  Deleted ${result.file} from ${scopeLabel(context, entry.scope)} memory (${result.size.lines} left).`);
+				return;
+			}
+
+			if (sub === "stat") {
+				say(renderMemoryStats(context, ctx.isProjectTrusted()));
+				return;
+			}
+
+			say(`Unknown subcommand "${sub}".\n\n${MEMORY_USAGE}`, "warning");
 		},
 	});
 
 	// ── Lifecycle ───────────────────────────────────────────────────────────
 
-	pi.on("session_start", async (_event, _ctx) => {
+	pi.on("session_start", async (_event, ctx) => {
+		trackSession(ctx.cwd, ctx.isProjectTrusted());
 		applyEnabled(pi, readConfig().enabled);
 	});
 }
 
-// ─── Rendering helpers ──────────────────────────────────────────────────────
+// ─── Shared helpers ─────────────────────────────────────────────────────────
 
 function bodyMatches(context: MemoryContext, entry: MemoryEntry, query: string): boolean {
 	const dir = scopeDir(context, entry.scope);
@@ -462,6 +620,279 @@ function describeTopic(entry: MemoryEntry, topic: TopicFile | undefined): string
 	if (!topic) return `(topic file ${entry.file} is missing)`;
 	const when = topic.modified ? `updated ${topic.modified.slice(0, 10)}` : "no timestamp";
 	return `${truncate(topic.body, MAX_TOPIC_CHARS)}\n\n_${entry.scope} · ${entry.file} · ${when}_`;
+}
+
+// ─── Command helpers ────────────────────────────────────────────────────────
+
+const MEMORY_USAGE = [
+	"Usage: /memory [subcommand]",
+	"",
+	"  (none)          panel in a TUI, otherwise the list",
+	"  list [query]    list saved memories, optionally filtered",
+	"  show <name>     print one memory in full (--global|--project picks a layer)",
+	"  rm <name>       delete one memory (asks in a TUI, needs --force elsewhere;",
+	"                  also accepts --global|--project)",
+	"  stat            index size and type breakdown per layer",
+	"  on | off        enable or disable memory",
+	"  path            print the two memory directories",
+	"  help            this message",
+].join("\n");
+
+/** Every subcommand, in the order the help text lists them. */
+const SUBCOMMANDS = ["list", "show", "rm", "stat", "on", "off", "path", "help"];
+
+/** One-line capacity for both layers, shown under the list. */
+function capacitySummary(context: MemoryContext, projectTrusted: boolean): string {
+	const parts = [`global ${formatCapacity(measureIndex(context.globalDir))}`];
+	if (projectTrusted && context.projectDir) {
+		parts.push(`project ${formatCapacity(measureIndex(context.projectDir))}`);
+	}
+	return parts.join(" · ");
+}
+
+/** Layers the panel shows: project memory only when the project is trusted. */
+function layersFor(context: MemoryContext, projectTrusted: boolean): MemoryLayerView[] {
+	const layers: MemoryLayerView[] = [
+		{
+			scope: "global",
+			label: "global",
+			dir: context.globalDir,
+			entries: readIndex(context.globalDir, "global"),
+			size: measureIndex(context.globalDir),
+		},
+	];
+	if (projectTrusted && context.projectDir) {
+		layers.push({
+			scope: "project",
+			label: `project ${projectLabel(context)}`,
+			dir: context.projectDir,
+			entries: readIndex(context.projectDir, "project"),
+			size: measureIndex(context.projectDir),
+		});
+	}
+	return layers;
+}
+
+/**
+ * The panel loop. The overlay cannot open a native dialog itself, so it returns
+ * the intent (`filter` / `action`), this loop runs the dialog, then reopens the
+ * panel on the same entry so repeated edits do not lose the cursor.
+ */
+async function runMemoryPanel(ctx: ExtensionContext): Promise<void> {
+	let state: MemoryPanelState = {};
+	for (;;) {
+		const layers = layersFor(contextFor(ctx), ctx.isProjectTrusted());
+		const result = await ctx.ui.custom<MemoryPanelResult>(
+			(tui, theme, _kb, done) =>
+				new MemoryOverlay(state, layers, theme, tui.terminal.rows, () => tui.requestRender(true), done),
+			{ overlay: true, overlayOptions: { width: "80%", maxHeight: "80%" } },
+		);
+		if (!result || result.kind === "close") return;
+
+		if (result.kind === "filter") {
+			// ui.input has no prefill, only a placeholder: the current filter is shown
+			// greyed out, and an empty answer clears it.
+			const next = await ctx.ui.input("Filter memories (empty clears)", state.filter || "keyword");
+			const filter = next === undefined ? state.filter : next.trim();
+			// Keep the cursor where the user left it — but only the row number is
+			// reusable when the filter text changes: rows disappear from the list, so
+			// an old position would point at an unrelated memory.
+			const keepIndex = filter === state.filter;
+			state = {
+				...state,
+				filter,
+				scope: result.scope,
+				selected: result.file,
+				index: keepIndex ? result.index : undefined,
+			};
+			continue;
+		}
+
+		// A move or a type change renames the entry (and a move changes its layer);
+		// follow it so the reopened panel is still on it. Delete returns nothing, so
+		// the cursor falls back to the row number, i.e. the neighbour.
+		const after = await runMemoryActions(ctx, result.scope, result.file);
+		state = {
+			...state,
+			scope: after?.scope ?? result.scope,
+			selected: after?.file ?? result.file,
+			index: result.index,
+		};
+	}
+}
+
+/** Notify after a store write, including the index-limit warning. */
+function reportWrite(ctx: ExtensionContext, file: string, size: IndexSize): void {
+	const over = size.overLines || size.overBytes;
+	ctx.ui.notify(`📝 Memory updated: ${truncate(file, 80)}`, over ? "warning" : "info");
+	const warning = indexWarning(size);
+	if (warning) ctx.ui.notify(warning, "warning");
+}
+
+/**
+ * The action menu behind Enter in the panel's detail view. Returns where the
+ * entry lives now, so a reopened panel can follow a rename or a move; `undefined`
+ * means "nothing to follow" (cancelled, deleted, or the action failed).
+ */
+async function runMemoryActions(
+	ctx: ExtensionContext,
+	scope: MemoryScope,
+	file: string,
+): Promise<{ scope: MemoryScope; file: string } | undefined> {
+	const context = contextFor(ctx);
+	const entry = entriesOf(context, scope).find((candidate) => candidate.file === file);
+	if (!entry) {
+		ctx.ui.notify(`Memory ${file} is gone.`, "warning");
+		return undefined;
+	}
+
+	const dir = scopeDir(context, scope);
+	const topic = dir ? readTopic(dir, file) : undefined;
+	// Every action except delete rewrites the topic file; with the body unreadable
+	// that rewrite would silently drop it, so only deletion is safe here.
+	const readOnlyDelete = !topic;
+
+	// Moving needs a target layer that exists, is trusted, and a readable body.
+	const canMoveToProject = Boolean(context.projectDir) && ctx.isProjectTrusted();
+	const canMove = !readOnlyDelete && (scope === "global" ? canMoveToProject : Boolean(context.projectDir));
+
+	const options = readOnlyDelete ? [] : ["Edit body", "Edit summary", "Change type"];
+	if (canMove) {
+		options.push(scope === "global" ? `Move to project (${projectLabel(context)})` : "Move to global");
+	}
+	options.push("Delete");
+
+	const heading = `[${entry.type}] ${truncate(entry.summary, 60)}`;
+	const title = readOnlyDelete ? `${heading} — no readable topic file, delete only` : heading;
+	const choice = await ctx.ui.select(title, options);
+	if (!choice) return;
+
+	try {
+		if (choice === "Edit body") {
+			const next = await ctx.ui.editor(`Edit body: ${entry.file}`, topic?.body ?? "");
+			const body = next?.trim();
+			if (body === undefined || body === topic?.body) return;
+			const result = rewriteEntry(context, scope, entry, { content: body });
+			reportWrite(ctx, result.file, result.size);
+			return { scope, file: result.file };
+		}
+
+		if (choice === "Edit summary") {
+			const next = await ctx.ui.input("Summary", entry.summary);
+			const summary = next?.trim();
+			// Empty input keeps the current summary: a memory without one cannot exist.
+			if (!summary || summary === entry.summary) return;
+			const result = rewriteEntry(context, scope, entry, { summary });
+			reportWrite(ctx, result.file, result.size);
+			return { scope, file: result.file };
+		}
+
+		if (choice === "Change type") {
+			const next = await ctx.ui.select("Type", [...MEMORY_TYPES]);
+			if (!next || !isMemoryType(next) || next === entry.type) return;
+			// saveEntry keys on the name inside the type prefix, so the old
+			// `<type>_<slug>.md` is removed as part of the rewrite.
+			const result = rewriteEntry(context, scope, entry, { type: next });
+			reportWrite(ctx, result.file, result.size);
+			return { scope, file: result.file };
+		}
+
+		if (choice.startsWith("Move")) {
+			const to: MemoryScope = scope === "global" ? "project" : "global";
+			const ok = await ctx.ui.confirm(
+				"Move memory",
+				`Move "${truncate(entry.summary, 80)}" from ${scopeLabel(context, scope)} to ${scopeLabel(context, to)} memory?`,
+			);
+			if (!ok) return;
+			const moved = moveEntry(context, scope, to, file);
+			if (moved.ok) {
+				ctx.ui.notify(`📝 Moved ${moved.file} to ${scopeLabel(context, to)} memory`, "info");
+				return { scope: moved.to, file: moved.file };
+			} else {
+				const why = {
+					"same-scope": "source and target layer are the same",
+					"no-layer": "that layer does not exist here",
+					"not-found": "the memory is no longer in the index",
+					"no-topic": "its topic file is missing",
+				}[moved.reason];
+				ctx.ui.notify(`Could not move ${file}: ${why}.`, "warning");
+			}
+			return undefined;
+		}
+
+		if (choice === "Delete") {
+			const ok = await ctx.ui.confirm(
+				"Delete memory",
+				`[${entry.type}] ${entry.summary}\n\n${entry.file} · ${scopeLabel(context, scope)} — this cannot be undone.`,
+			);
+			if (!ok) return;
+			const result = deleteEntry(context, scope, file);
+			ctx.ui.notify(
+				result.found ? `🗑️  Deleted ${result.file} (${result.size.lines} left).` : `No memory named "${file}".`,
+				result.found ? "info" : "warning",
+			);
+		}
+	} catch (error) {
+		ctx.ui.notify(`Memory update failed: ${(error as Error).message}`, "error");
+	}
+	return undefined;
+}
+
+function renderMemoryDetail(entry: MemoryEntry, topic: TopicFile | undefined): string {
+	return `[${entry.type}] ${entry.summary}\n\n${describeTopic(entry, topic)}`;
+}
+
+function renderMemoryStats(context: MemoryContext, projectTrusted: boolean): string {
+	const config = readConfig();
+	const lines = [`memory is ${config.enabled ? "enabled" : "disabled"}`];
+	for (const scope of MEMORY_SCOPES) {
+		const dir = scopeDir(context, scope);
+		if (!dir) {
+			lines.push("", `[${scope}] unavailable: not in a git repository`);
+			continue;
+		}
+		if (scope === "project" && !projectTrusted) {
+			lines.push("", `[${scopeLabel(context, scope)}] hidden: this project is not trusted`);
+			continue;
+		}
+		const entries = readIndex(dir, scope);
+		const byType = MEMORY_TYPES.map(
+			(type) => `${type} ${entries.filter((entry) => entry.type === type).length}`,
+		).join(" · ");
+		lines.push(
+			"",
+			`[${scopeLabel(context, scope)}]`,
+			`  index  ${formatCapacity(measureIndex(dir))}`,
+			`  types  ${byType}`,
+			`  dir    ${dir}`,
+		);
+	}
+	return lines.join("\n");
+}
+
+/** `/memory ` argument completion: subcommands, then memory names for show/rm. */
+function memoryCompletions(prefix: string): AutocompleteItem[] | null {
+	const text = prefix ?? "";
+	const words = text.trim() ? text.trim().split(/\s+/) : [];
+	const current = /\s$/.test(text) ? "" : (words.pop() ?? "");
+
+	if (words.length === 0) {
+		const items = SUBCOMMANDS.filter((name) => name.startsWith(current)).map((name) => ({ value: name, label: name }));
+		return items.length > 0 ? items : null;
+	}
+
+	// Only the first argument is a name; a second word cannot resolve.
+	if (words.length > 1 || (words[0] !== "show" && words[0] !== "rm")) return null;
+	const context = lastContext ?? resolveMemoryContext(process.cwd());
+	const needle = slugify(current);
+	const items = visibleFor(context, lastTrusted)
+		.map((entry) => ({
+			value: memoryKey(entry.file),
+			label: memoryKey(entry.file),
+			description: `[${entry.type}] ${truncate(entry.summary, 60)}`,
+		}))
+		.filter((item) => item.value.startsWith(needle));
+	return items.length > 0 ? items : null;
 }
 
 function renderMemoryList(context: MemoryContext, query: string, projectTrusted: boolean): string {
@@ -482,7 +913,8 @@ function renderMemoryList(context: MemoryContext, query: string, projectTrusted:
 	}
 
 	const notes = [
-		`${config.enabled ? "enabled" : "disabled"} · /memory path to locate the files · edit them directly any time`,
+		`${config.enabled ? "enabled" : "disabled"} · ${capacitySummary(context, projectTrusted)}`,
+		"/memory path to locate the files · edit them directly any time",
 	];
 	if (!projectTrusted && context.projectDir) notes.push("project memory hidden: this project is not trusted");
 	return `${groups.join("\n\n")}\n\n${notes.join("\n")}`;

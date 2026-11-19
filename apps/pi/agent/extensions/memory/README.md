@@ -11,7 +11,7 @@
 | 模型主动记录 | `remember` 工具（save / delete） |
 | 按需查阅详情 | `memory_recall` 工具 |
 | 注入新 session | `before_agent_start` 往 system prompt 加一段 `<user-memory>` 索引 |
-| 人查看与管理 | `/memory` 命令（list / on / off / path） |
+| 人查看与管理 | `/memory` 面板（查看正文、改正文/摘要、改类型、跨层迁移、删除）+ 文本子命令 |
 | 写入可见 | 每次写入弹一条非阻塞通知 `📝 Memory saved: ...` |
 
 ## 存储
@@ -80,11 +80,53 @@
 ## 命令
 
 ```
-/memory            # 列出两层记忆
-/memory list foo   # 按关键词过滤
+/memory            # TUI 下打开面板；其他模式打印列表
+/memory list foo   # 按关键词过滤（匹配摘要与文件名，和面板里的 / 过滤同一条规则）
+/memory show foo   # 打印单条正文 + 类型/层/文件/更新时间
+/memory rm foo     # 删除；TUI 下二次确认，其他模式必须带 --force
+/memory stat       # 两层行数/字节 vs 上限、各 type 条数、目录
 /memory on|off     # 开关（写 config.json；关闭时不注入，工具从活跃集里摘掉）
 /memory path       # 打印两层目录，方便直接编辑
+/memory help       # 用法
 ```
+
+`/memory ` 后面有参数补全：先补子命令，`show` / `rm` 后补记忆名（补全走 slug 规则，`Editor`
+与 `editor` 等价）。
+
+`show` / `rm` 都接受记忆名或主题文件名。片段：`show` 在命中多条时列出候选而不猜；
+`rm` **只认精确名/文件名**，片段只会得到「Did you mean: …」提示——删除不会靠猜。
+
+记忆名只在**层内**唯一，同名可以同时存在于 global 与 project。这时 `show` / `rm` 会报
+「exists in more than one layer」并列出候选，用 `--global` / `--project` 指定层即可：
+
+```
+/memory show workflow --project
+/memory rm workflow --global --force     # 非 TUI 场景
+```
+
+删除确认框里会写明层（`user_workflow.md · project (dotshell)`），面板里的动作只作用于
+光标所在层的条目。
+
+### 面板（TUI）
+
+```
+列表：↑/↓（j/k）移动 · PgUp/PgDn 翻页 · Enter 详情 · / 过滤 · Esc / q / Ctrl-C 关闭
+详情：↑/↓ PgUp/PgDn 滚动 · Enter 动作菜单 · Esc / q 返回
+```
+
+列表只渲染光标周围的一屏（超出部分显示 `↑ N more above` / `↓ N more below`），行数按终端
+高度算（`maxHeight` 是从顶部截断的、`render()` 拿不到可用高度，所以由 `tui.terminal.rows`
+推出）。光标在「改类型 / 删除 / 过滤」后都能落回原条目：改名按去掉 `<type>_` 前缀后的名字
+匹配，并连同层一起比较（同名两层各有一份时不会跳错层）；过滤词变了就只保留当前条目、
+不再用旧行号。
+
+动作菜单（原生 `ui.select`）：编辑正文（`ui.editor`）、编辑摘要（`ui.input`）、
+改类型（`ui.select` 四种 type）、迁移到另一层（`ui.confirm`）、删除（`ui.confirm`）。
+每层的分组标题行显示该层索引占用（`3/200 lines · 0.7/25KB`），接近上限变黄、超限变红
+并标注 `(over limit)`。未受信任的项目不显示 project 组——和注入、工具走同一个门控方向。
+
+过滤用 `ui.input`（原生输入框没有 prefill，当前过滤词以 placeholder 显示）：回车留空即
+清除过滤。
 
 ## 设计取舍
 
@@ -99,12 +141,26 @@
   权限边界，模型自由编辑 Markdown 会写出格式错乱的索引。索引的读-改-写窗口用
   `executionMode: "sequential"` 串行化，避免同一轮里并行两次 `remember` 互相覆盖。
 - **关闭是硬关闭**：`/memory off` 同时停掉注入和工具，不只是「不注入」。
+- **面板只读，写操作全部走原生对话框**：pi 不允许在 `ui.custom` 里再弹 `ui.select` /
+  `ui.editor`，所以面板通过 `done(action)` 把意图交回命令层，由命令层弹对话框执行、再重开
+  面板并定位回原条目。好处是键位只有导航（没有 y/N、类型选择这类内联状态机），成本是
+  每次写操作面板会闪一下。
+- **改类型与迁移不需要新逻辑**：`saveEntry` 以「名字去掉 `<type>_` 前缀」为键，所以换 type
+  重存会自然替换索引行并删掉旧主题文件；迁移只是「目标层 saveEntry + 源层 deleteEntry」，
+  且先写后删——中途失败最多留一份副本，不会丢内容。迁移按「一次写入」处理，目标层的
+  `modified` 会刷新（面板里看起来像刚改过）。
+- **主题文件读不出来时只允许删除**：`rewriteEntry` 在没有新正文又没有旧正文时报错，面板里
+  这类条目只剩「Delete」——否则改摘要/改类型会把一个读不到的正文写成空。
+- **索引行的文件名必须落在本层目录内**：手改的 `-> ../foo.md` 这类行会被当作手写行
+  保留，不会被 `show` / 面板 / 删除操作当成主题文件去读或删。未闭合的 `<!--` 注释也
+  不会吞掉后面的内容——那些行会作为手写行保留下来。
 
 ## 已验证
 
 `test.ts` 覆盖 `store.ts` 的索引解析容错、手写行保留、写入/覆盖/删除、名称解析
 （`release flow` 与 `release_flow` 等价、非 ASCII 名互不覆盖）、同名换 type 的替换、
-索引超限、`git` 排除（纯 Node，不需要 pi 运行时）：
+索引超限、**注释块不被当成手写行保留**（否则每次写入都会复制一份头部注释的续行）、
+**改正文/摘要/类型**与**跨层迁移**，`git` 排除（纯 Node，不需要 pi 运行时）：
 
 ```bash
 cd ~/.shell/apps/pi/agent/extensions/memory
@@ -115,11 +171,16 @@ node --experimental-strip-types test.ts
 不注入且工具不可用，以及真实 session 的写入 → 新 session 读取 → 项目层落盘三条路径
 （含「AGENTS.md 已经写过的不再重复记」）。
 
+`/memory` 面板与子命令用桩化 ctx（临时目录里跑，未入库）走过完整回路：列表开窗与
+`↑/↓ more` 标记、过滤、详情滚动、光标在改类型/删除/过滤后落回原位（含同名两层时落到
+正确层）、改正文/摘要/类型、迁移（含 `.git/info/exclude`）、删除、未受信任时隐藏项目层、
+非 TUI 下 `rm` 需要 `--force`、参数补全。TUI 里的真实按键与重绘仍需人手过一遍。
+
 ## 排查
 
 - 看不到记忆注入：`/memory path` 确认目录、`/memory` 确认是 `enabled`；索引超过
   200 行/25KB 的部分不会注入
 - 模型该记却没记：工具描述里限定了「长期有效且代码看不出」的内容；直接说「记住：
   ...」最可靠
-- 记忆被写进了错误的层：`/memory` 看落在哪个目录，用 `remember({action:"delete"})`
-  删掉后按需求重存
+- 记忆被写进了错误的层：`/memory` 看落在哪个目录，在面板里打到条目上按 `Enter` →
+  「Move to …」直接迁移（或在文本模式下 `remember({action:"delete"})` 删掉后按需求重存）

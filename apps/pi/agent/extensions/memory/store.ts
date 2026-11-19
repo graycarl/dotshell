@@ -130,6 +130,15 @@ export function writeConfig(config: MemoryConfig): void {
 
 const INDEX_LINE = /^\s*[-*]\s*\[([a-zA-Z]+)\]\s*(.+?)\s*->\s*([^\s>]+\.md)\s*$/;
 
+/**
+ * A topic file must live inside the layer directory. Without this check a hand
+ * edited (or committed) index line could point at `../../notes.md`, and `show`,
+ * the panel, and `deleteTopic` would then read or unlink an arbitrary file.
+ */
+function isLocalTopicFile(file: string): boolean {
+	return !file.startsWith(".") && !file.includes("/") && !file.includes("\\");
+}
+
 const INDEX_HEADER = [
 	"# Memory Index",
 	"",
@@ -185,25 +194,47 @@ export interface IndexContent {
 /**
  * Parse an index leniently: a bad line never breaks anything, it is kept as an
  * `extra` so the next rewrite does not silently delete what the user typed.
+ *
+ * Comment blocks are skipped as a unit: the managed header is multi-line, so
+ * tracking only the line that opens it would copy its continuation lines into
+ * `extras`, and every rewrite would append another copy of them.
  */
 export function parseIndex(text: string, scope: MemoryScope): IndexContent {
 	const entries: MemoryEntry[] = [];
 	const extras: string[] = [];
+	let inComment = false;
+	let comment: string[] = [];
 	for (const line of text.split("\n")) {
 		const trimmed = line.trim();
+		if (inComment) {
+			if (trimmed.includes("-->")) {
+				inComment = false;
+				comment = [];
+			} else {
+				comment.push(trimmed);
+			}
+			continue;
+		}
 		if (!trimmed) continue;
+		if (trimmed.startsWith("<!--")) {
+			if (!trimmed.includes("-->")) inComment = true;
+			continue;
+		}
 		const match = INDEX_LINE.exec(trimmed);
 		if (match) {
 			const [, type, summary, file] = match;
-			if (isMemoryType(type) && summary && file) {
+			if (isMemoryType(type) && summary && file && isLocalTopicFile(file)) {
 				entries.push({ type, summary: summary.trim(), file, scope });
 				continue;
 			}
 		}
 		// Headings and the managed comment block are regenerated, not preserved.
-		if (trimmed.startsWith("#") || trimmed.startsWith("<!--") || trimmed.startsWith("-->")) continue;
+		if (trimmed.startsWith("#") || trimmed.startsWith("-->")) continue;
 		extras.push(trimmed);
 	}
+	// An unterminated comment must not swallow the rest of the index: keep what
+	// was inside it so the next rewrite cannot silently drop those lines.
+	if (inComment && comment.length > 0) extras.push("<!--", ...comment);
 	return { entries, extras };
 }
 
@@ -253,6 +284,13 @@ export function measureIndex(dir: string): IndexSize {
 		overBytes: bytes > MAX_INDEX_BYTES,
 		nearLimit: lines >= MAX_INDEX_LINES * INDEX_WARN_RATIO || bytes >= MAX_INDEX_BYTES * INDEX_WARN_RATIO,
 	};
+}
+
+/** `12/200 lines · 1.5/25KB`, plus a marker once the layer is close to its cap. */
+export function formatCapacity(size: IndexSize): string {
+	const marker = size.overLines || size.overBytes ? " (over limit)" : size.nearLimit ? " (near limit)" : "";
+	const bytes = `${(size.bytes / 1024).toFixed(1)}/${Math.round(MAX_INDEX_BYTES / 1024)}KB`;
+	return `${size.lines}/${MAX_INDEX_LINES} lines · ${bytes}${marker}`;
 }
 
 // ─── Topic files ────────────────────────────────────────────────────────────
@@ -337,6 +375,10 @@ export function saveEntry(
 	const dir = scopeDir(context, scope);
 	if (!dir) throw new Error("No project memory directory: the current working directory is not a git repository.");
 
+	// Project memory is machine-local; keep it out of git status no matter who
+	// writes (tool, panel, or a programmatic move).
+	if (scope === "project" && context.projectRoot) ensureGitExcluded(context.projectRoot);
+
 	const file = topicFileName(input.type, input.name);
 	const key = memoryKey(file);
 	const content = readIndexContent(dir, scope);
@@ -352,6 +394,79 @@ export function saveEntry(
 	const modified = writeTopic(dir, file, input.type, input.content);
 	writeIndex(dir, { entries, extras: content.extras });
 	return { file, scope, modified, size: measureIndex(dir), replaced: stale.length > 0 };
+}
+
+/**
+ * Rewrite one existing memory: read what is on disk, override the fields the
+ * caller asked for, then save it back under the same name.
+ *
+ * Body, summary, and type edits all go through `saveEntry`, so they inherit its
+ * guarantees: a type change replaces the old topic file instead of leaving an
+ * orphan, and the index line is rewritten rather than duplicated.
+ */
+export function rewriteEntry(
+	context: MemoryContext,
+	scope: MemoryScope,
+	entry: MemoryEntry,
+	patch: { summary?: string; content?: string; type?: MemoryType },
+): SaveResult {
+	const dir = scopeDir(context, scope);
+	if (!dir) throw new Error("No project memory directory: the current working directory is not a git repository.");
+
+	const topic = readTopic(dir, entry.file);
+	if (patch.content === undefined && !topic) {
+		// Rewriting the index of a memory whose body cannot be read would drop that
+		// body; refuse instead of silently writing an empty one.
+		throw new Error(`Cannot read ${entry.file}; fix or delete that memory instead.`);
+	}
+	return saveEntry(context, scope, {
+		type: patch.type ?? entry.type,
+		name: memoryKey(entry.file),
+		summary: patch.summary ?? entry.summary,
+		content: patch.content ?? topic?.body ?? "",
+	});
+}
+
+export type MoveOutcome =
+	| { ok: true; file: string; from: MemoryScope; to: MemoryScope; replaced: boolean }
+	| { ok: false; reason: "same-scope" | "no-layer" | "not-found" | "no-topic" };
+
+/**
+ * Move a memory to the other layer.
+ *
+ * The copy is written first and the source removed second: a failure in between
+ * leaves a duplicate, never a lost memory — and the list the user is looking at
+ * right afterwards would show it. A move counts as a write, so the topic file's
+ * `modified` timestamp is restamped.
+ */
+export function moveEntry(
+	context: MemoryContext,
+	from: MemoryScope,
+	to: MemoryScope,
+	nameOrFile: string,
+): MoveOutcome {
+	if (from === to) return { ok: false, reason: "same-scope" };
+	const fromDir = scopeDir(context, from);
+	const toDir = scopeDir(context, to);
+	if (!fromDir || !toDir) return { ok: false, reason: "no-layer" };
+
+	const entries = readIndex(fromDir, from);
+	const file = resolveEntryFile(entries, nameOrFile, { fuzzy: false });
+	if (!file) return { ok: false, reason: "not-found" };
+	const entry = entries.find((candidate) => candidate.file === file);
+	const topic = readTopic(fromDir, file);
+	// A memory whose topic file went missing cannot be moved (its body would be
+	// lost); its index line is left alone so the user can still see and delete it.
+	if (!entry || !topic) return { ok: false, reason: "no-topic" };
+
+	const saved = saveEntry(context, to, {
+		type: entry.type,
+		name: memoryKey(file),
+		summary: entry.summary,
+		content: topic.body,
+	});
+	deleteEntry(context, from, file);
+	return { ok: true, file: saved.file, from, to, replaced: saved.replaced };
 }
 
 export interface DeleteResult {
@@ -404,6 +519,42 @@ export function resolveEntryFile(
 	if (byName) return byName.file;
 	if (options.fuzzy === false) return undefined;
 	return entries.find((entry) => memoryKey(entry.file).includes(slug))?.file;
+}
+
+/**
+ * Resolve a user-typed name to an entry. Exact matches win; a fragment resolves
+ * only when it is unambiguous, so callers can refuse instead of guessing.
+ *
+ * A name is unique inside a layer, not across layers, so the same name in both
+ * layers comes back as `candidates` — the caller must say which one it means.
+ */
+export function resolveEntry(
+	entries: MemoryEntry[],
+	name: string,
+	options: { fuzzy?: boolean } = {},
+): { entry?: MemoryEntry; candidates: MemoryEntry[] } {
+	const needle = name.trim().toLowerCase();
+	if (!needle) return { candidates: [] };
+
+	// A topic file name is the most specific thing the user can type, so it wins
+	// before the cross-layer name expansion below.
+	const byFile = entries.filter(
+		(entry) => entry.file.toLowerCase() === needle || entry.file.toLowerCase() === `${needle}.md`,
+	);
+	if (byFile.length === 1) return { entry: byFile[0], candidates: [] };
+	if (byFile.length > 1) return { entry: undefined, candidates: byFile };
+
+	const exactFile = resolveEntryFile(entries, needle, { fuzzy: false });
+	if (exactFile) {
+		const key = memoryKey(exactFile);
+		const exact = entries.filter((entry) => memoryKey(entry.file) === key);
+		return exact.length === 1 ? { entry: exact[0], candidates: [] } : { entry: undefined, candidates: exact };
+	}
+	if (options.fuzzy === false) return { candidates: [] };
+
+	const slug = slugify(needle);
+	const candidates = slug ? entries.filter((entry) => memoryKey(entry.file).includes(slug)) : [];
+	return candidates.length === 1 ? { entry: candidates[0], candidates: [] } : { entry: undefined, candidates };
 }
 
 /** Keyword match against what the index itself shows: the summary and the file name. */
