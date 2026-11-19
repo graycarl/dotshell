@@ -95,7 +95,7 @@ echo "Reset Input Method | bash=$TMPDIR/reset-input-method.sh terminal=false"
 
 # FGW - route self-heal (hourly, only when ~/.shell/local/hammer-fgw exists)
 # 注：DDNS（home.graycarl.me）与 Let's Encrypt 证书已由路由器自己维护
-#     （见 ~/Sources/AgentHome/fgw/router/），这里只负责 WG→Surge 路由自愈。
+#     （见 ~/Sources/AgentHome/infra/fgw/ 与 ~/Sources/AgentHome/infra/router/），这里只负责 WG→Surge 路由自愈。
 FGW_SWITCH=$HOME/.shell/local/hammer-fgw
 if [ -f "$FGW_SWITCH" ]; then
     FGW_LAST_RUN_FILE=$TMPDIR/fgw-last-run

@@ -167,7 +167,7 @@ $ uv run ~/.shell/tools/llm-chat.py messages.yaml
 
 - 配套 `tools/setup-fgw.sh` 是薄壳（SwiftBar 每小时调用，`exec` 上面的 `start.sh`）
 - 路由器侧脚本（`ddns-home.sh` / `cert-deploy.sh` / `acme-renew.sh` / `fgw-extra`）也在这里，由 `install.sh` 推送到 `/jffs/scripts/`
-- 设计说明、固件坑与自检清单见 `~/Sources/AgentHome/fgw/README.md`
+- 设计说明、固件坑与自检清单见 `~/Sources/AgentHome/infra/fgw/README.md`
 
 ### Python 虚拟环境自动切换
 
