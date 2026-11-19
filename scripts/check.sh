@@ -170,7 +170,7 @@ check_zsh_symbols() {
         done
         # 「注册」型的东西：函数在但没挂上一样是坏的
         (( ${chpwd_functions[(I)py-venv-auto]} )) || missing+="[hook:py-venv-auto] "
-        (( ${chpwd_functions[(I)steeef_chpwd]} ))  || missing+="[hook:steeef_chpwd] "
+        (( ${precmd_functions[(I)steeef_precmd]} )) || missing+="[hook:steeef_precmd] "
         # brew 装的 uv 会把 _uv 自动塞进 _comps[uv]，所以要断言到具体函数
         if (( $+commands[uv] )); then
             [[ ${_comps[uv]-} == _uv_run_mod ]]     || missing+="[compdef:uv→${_comps[uv]-none}] "

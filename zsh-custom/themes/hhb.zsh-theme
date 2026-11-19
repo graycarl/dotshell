@@ -9,13 +9,12 @@
 #
 # 2026-11 重写 git 状态获取：不再用 vcs_info（check-for-changes 会跑一次
 # `git status`），也不用 `git ls-files --other`（不吃 untracked cache，是最贵的一条），
-# 改成一次 `git status --porcelain=v2 --branch` 自己解析 XY。
+# 改成**每个 prompt 一次** `git status --porcelain=v2 --branch` 自己解析 XY。
 # 详见下面 steeef_precmd 前的注释。
 
 function virtualenv_info {
     [ $VIRTUAL_ENV ] && echo 'workon '$fg[cyan]`basename $VIRTUAL_ENV`%{$reset_color%}
 }
-PR_GIT_UPDATE=1
 
 setopt prompt_subst
 autoload colors
@@ -48,7 +47,7 @@ fi
 #     合计                                      ~800 ms
 # 而单次 `git status --porcelain=v2 --branch` 一份输出就同时给出
 # 分支 / 暂存 / 未暂存 / 未跟踪，不用跑两遍（未开 untracked cache ~600 ms，
-# 开了 core.untrackedCache 之后 ~100 ms）。
+# 开了 core.untrackedCache / core.fsmonitor 之后 ~几十 ms）。
 # 代价：%a（rebase/merge 等 action）需要自己看 .git 下的标记文件，见 _pr_git_action。
 # ---------------------------------------------------------------------------
 
@@ -57,39 +56,30 @@ FMT_STAGED="%{$limegreen%}〄"      # 暂存区有改动
 FMT_UNSTAGED="%{$orange%}〄"       # 工作区有改动
 FMT_UNTRACKED="%{$hotpink%}〄"     # 有未跟踪文件
 
-function steeef_preexec {
-    case "$2" in
-        *git*|*svn*)
-            PR_GIT_UPDATE=1
-            ;;
-    esac
-}
-add-zsh-hook preexec steeef_preexec
-
-function steeef_chpwd {
-    PR_GIT_UPDATE=1
-}
-add-zsh-hook chpwd steeef_chpwd
-
-# 有 rebase/merge 等进行中的操作时把名字写进 REPLY。只做文件存在性检查，
-# 不起 git 子进程。链接 worktree 里 .git 是文本文件，内容是 "gitdir: <path>"。
-function _pr_git_action {
+# 找到当前目录所属仓库的 git 目录，写进 REPLY。只做文件系统检查，不起 git 子进程。
+# 链接 worktree 里 .git 是文本文件，内容是 "gitdir: <path>"。
+function _pr_git_root {
     REPLY=''
-    local d=$PWD gd
+    local d=$PWD
     while :; do
-        if [[ -e $d/.git ]]; then
-            gd=$d/.git
-            break
-        fi
+        [[ -e $d/.git ]] && break
         [[ $d == / ]] && return 1
         d=${d:h}
     done
-    if [[ -f $gd ]]; then
+    REPLY=$d/.git
+    if [[ -f $REPLY ]]; then
         local -a gdfile
-        gdfile=("${(@f)$(<$gd)}")
-        gd=${gdfile[1]#gitdir: }
-        [[ $gd == /* ]] || gd=$d/$gd
+        gdfile=("${(@f)$(<$REPLY)}")
+        REPLY=${gdfile[1]#gitdir: }
+        [[ $REPLY == /* ]] || REPLY=$d/$REPLY
     fi
+    return 0
+}
+
+# 有 rebase/merge 等进行中的操作时把名字写进 REPLY（$1 = gitdir）。
+function _pr_git_action {
+    REPLY=''
+    local gd=$1
     if [[ -d $gd/rebase-merge || -d $gd/rebase-apply ]]; then
         REPLY=rebase
     elif [[ -e $gd/MERGE_HEAD ]]; then
@@ -105,14 +95,16 @@ function _pr_git_action {
 }
 
 function steeef_precmd {
-    # 只有 cd 之后、或上一条命令是 git/svn 时才重算（同上游 steeef 主题）。
-    # 注意：必须用数字比较。老代码是 [[ -n $PR_GIT_UPDATE ]]，而 "0" 是非空字符串，
-    # -n 判真 → 置 0 根本挡不住重算（这就是“改了也不快”的原因）。
-    [[ $PR_GIT_UPDATE == 1 ]] || return 0
-    PR_GIT_UPDATE=0
+    # 每次 prompt 都重算：拿一次 git status 就得到全量状态，不用脏标记、
+    # 也不用 TTL 兜底 —— 别的窗口/编辑器改了文件，下一个 prompt 就能看到。
+    # 成本靠 git 自己的 core.untrackedCache / core.fsmonitor 压（见上面注释）。
+    pr_git_info=''
+    _pr_git_root || return 0      # 不在仓库里：纯内建 walk-up 就挡掉了
+    local gd=$REPLY
 
     local -a lines
-    lines=("${(@f)$(command git status --porcelain=v2 --branch 2>/dev/null)}")
+    # GIT_OPTIONAL_LOCKS=0：不让 prompt 里的 status 去抢 index 锁/回写 index
+    lines=("${(@f)$(GIT_OPTIONAL_LOCKS=0 command git status --porcelain=v2 --branch 2>/dev/null)}")
 
     local branch='' oid='' marker='' line xy
     local staged=0 unstaged=0 untracked=0
@@ -142,7 +134,7 @@ function steeef_precmd {
     (( unstaged ))  && marker+=$FMT_UNSTAGED
     (( untracked )) && marker+=$FMT_UNTRACKED
 
-    _pr_git_action
+    _pr_git_action "$gd"
     pr_git_info="(%{$turquoise%}${branch}${marker}${PR_RST})"
     [[ -n $REPLY ]] && pr_git_info+="(%{$limegreen%}${REPLY}${PR_RST})"
     pr_git_info+=' '
