@@ -39,6 +39,7 @@ Bash / Zsh 配置管理，统一管理 dotfiles 和工具配置。
 │   ├── pwgen.sh          #   密码生成
 │   ├── totp.py           #   TOTP 验证码
 │   ├── mac-app-uninstaller.py
+│   ├── appstore-switch.sh       # App Store 账号切换（国区 ⇄ 加拿大区）
 │   ├── git-sync.sh
 │   └── write-metadata.sh
 │
@@ -157,6 +158,25 @@ $ uv run ~/.shell/tools/totp.py
 # 从 YAML 消息历史调用 LLM（流式输出）
 $ uv run ~/.shell/tools/llm-chat.py messages.yaml
 ```
+
+### App Store 账号切换（国区 ⇄ 加拿大区）
+
+Apple 不提供任何命令行切换 App Store 账号的接口，这个脚本用 Accessibility
+自动化驱动 App Store 自己的「退出登录 / 登录」流程：
+
+```bash
+$ ~/.shell/tools/appstore-switch.sh status      # 当前登录状态 / 上次切到哪个账号
+$ ~/.shell/tools/appstore-switch.sh list        # 配置了哪些账号（首次运行生成配置模板）
+$ ~/.shell/tools/appstore-switch.sh switch ca   # 切到加拿大区
+$ ~/.shell/tools/appstore-switch.sh set-password ca   # 密码写进钥匙串（不回显）
+```
+
+- 配置：`~/.config/appstore/accounts.conf`（alias / apple_id / region 三列）
+- 密码只存钥匙串（`service=appstore-<alias>`），脚本读取后经 argv 传给
+  `osascript`，不落盘、不回显、不进 history
+- 只需要「自动化」权限（控制 System Events），**不需要**「辅助功能」权限；
+  唯一需要你动手的是双重认证的 6 位验证码（面板里手输）
+- 菜单栏入口：SwiftBar 的 `Hm` 菜单 → App Store 分组（`apps/swiftbar/hammer.1m.sh`，点一下开终端执行切换）
 
 ### fgw 网络恢复（WireGuard → Surge + 路由器 DDNS/证书）
 

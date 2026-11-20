@@ -143,6 +143,60 @@ if [ -f "$FGW_SWITCH" ]; then
     echo "--DDNS: 路由器维护 home.graycarl.me | color=gray size=11"
 fi
 
+# ---------------------------------------------------------------- App Store 账号
+# 切换需要 Accessibility UI 自动化，而 SwiftBar 的子进程要单独授「辅助功能」权限，
+# 所以这里只读本地 state/配置做显示，真正的切换用 terminal=true 交给终端里的脚本：
+# 权限沿用你已授权的终端，验证码能输入，出错也看得见。
+AS_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/appstore
+AS_CONF=$AS_DIR/accounts.conf
+AS_STATE=$AS_DIR/state
+AS_TOOL=$TOOLSDIR/appstore-switch.sh
+AS_CUR=
+AS_WHEN=
+AS_AGO=
+AS_STALE=
+if [ -f "$AS_STATE" ]; then
+    IFS=$'\t' read -r AS_CUR _ AS_WHEN < "$AS_STATE"
+fi
+if [ -n "$AS_WHEN" ]; then
+    AS_THEN=$(date -j -f '%Y-%m-%dT%H:%M:%S%z' "$AS_WHEN" '+%s' 2>/dev/null || echo 0)
+    if [ "$AS_THEN" != "0" ]; then
+        AS_AGE=$(( $(date +%s) - AS_THEN ))
+        if [ $AS_AGE -lt 60 ]; then AS_AGO='刚刚'
+        elif [ $AS_AGE -lt 3600 ]; then AS_AGO="$((AS_AGE / 60)) 分钟前"
+        elif [ $AS_AGE -lt 86400 ]; then AS_AGO="$((AS_AGE / 3600)) 小时前"
+        else AS_AGO="$((AS_AGE / 86400)) 天前"
+        fi
+        [ $AS_AGE -gt 604800 ] && AS_STALE=1
+    fi
+fi
+
+echo "App Store"
+if [ -n "$AS_CUR" ]; then
+    if [ -n "$AS_STALE" ]; then
+        echo "--上次切换：${AS_CUR}（${AS_AGO}，可能手动改过） | color=orange"
+    else
+        echo "--上次切换：${AS_CUR}（${AS_AGO}） | color=gray"
+    fi
+else
+    echo "--上次切换：无记录（可用下面的「查看状态」读真实状态） | color=gray"
+fi
+if [ -f "$AS_CONF" ]; then
+    grep -v '^[[:space:]]*#' "$AS_CONF" | while read -r a _id r; do
+        [ -z "$a" ] && continue
+        label="$a"
+        [ -n "$r" ] && label="${a}（${r}）"
+        if [ "$a" = "$AS_CUR" ]; then
+            echo "--✓ 切换到 $label | color=green bash=$AS_TOOL param1=switch param2=$a terminal=true"
+        else
+            echo "--切换到 $label | bash=$AS_TOOL param1=switch param2=$a terminal=true"
+        fi
+    done
+else
+    echo "--初始化配置 | bash=$AS_TOOL param1=list terminal=true"
+fi
+echo "--查看状态 / 诊断 | bash=$AS_TOOL param1=status terminal=true"
+
 echo "Utils"
 echo "--Sync Notes"
 SN_LOG=/tmp/sync-notes.log
