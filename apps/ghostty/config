@@ -3,6 +3,12 @@ font-style-italic = false
 font-style-bold-italic = false
 font-size = 16
 
+# 选中即复制到系统剪贴板。
+# 1.3.x: clipboard = 私有 selection pasteboard + 系统剪贴板
+# 1.4.x: clipboard = 仅系统剪贴板（升级后语义变化，但都是「进系统剪贴板」）
+# 注意：只影响 Ghostty 自己的选区；pi fullscreen 模式因 pi 抓了鼠标不触发。
+copy-on-select = clipboard
+
 # see: <https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent#terminal-setup>
 keybind = alt+backspace=text:\x1b\x7f
 
