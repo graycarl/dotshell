@@ -9,8 +9,9 @@
 - 扫描 /Applications 与 ~/Applications（含一层子目录，如 Adobe/）
 - 读取 Bundle ID（Contents/Info.plist，兼容 Versions/*/Resources 与浅层搜索）
 - 基于 Bundle ID 收集偏好、缓存、容器、LaunchAgent、pkg receipt 等残留
-- 删除前预览（标注需要管理员权限的条目）并确认
-- 提权删除合并为一次 sudo 调用；日志写入 ~/Library/Logs/app-uninstaller.log
+- 删除前预览（标注预计需要管理员权限的条目）并确认
+- 用户容器遇到 EPERM 时提示检查授权，不用 sudo 重试；提权删除合并为一次 sudo 调用，逐项验收
+- 日志写入 ~/Library/Logs/app-uninstaller.log
 
 用法：
   uv run tools/mac-app-uninstaller.py                  # 交互式选择
@@ -21,6 +22,7 @@
 """
 
 import argparse
+import errno
 import logging
 import os
 import plistlib
@@ -47,8 +49,6 @@ PROTECTED_PATHS: frozenset[Path] = frozenset(
         Path.home() / "Library",
     }
 )
-
-PERMISSION_DENIED = "permission-denied"
 
 _COLOR: bool = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
 
@@ -78,18 +78,6 @@ class Target:
         tag = style("[sudo]", "33") if self.admin else "      "
         mode = permission_string(self.path)
         return f"{tag} {mode}  {self.path}"
-
-
-@dataclass(frozen=True, slots=True)
-class Removal:
-    """一次删除的结果。"""
-
-    status: str
-    denied: bool = False
-
-    @property
-    def ok(self) -> bool:
-        return self.status == "deleted"
 
 
 # --------------------------------------------------------------------------- #
@@ -259,9 +247,14 @@ def build_targets(paths: Iterable[Path]) -> list[Target]:
     return [Target(path, requires_admin(path)) for path in sorted(roots)]
 
 
+def is_user_container(path: Path) -> bool:
+    library = Path.home() / "Library"
+    return any(root in path.parents for root in (library / "Containers", library / "Group Containers"))
+
+
 def requires_admin(path: Path) -> bool:
-    """删除需要父目录的写权限，据此判断是否需要 sudo。"""
-    return not os.access(path.parent, os.W_OK | os.X_OK)
+    """用父目录的写入和搜索权限估算；用户容器先用当前身份尝试。"""
+    return not is_user_container(path) and not os.access(path.parent, os.W_OK | os.X_OK)
 
 
 def permission_string(path: Path) -> str:
@@ -274,38 +267,45 @@ def permission_string(path: Path) -> str:
 # --------------------------------------------------------------------------- #
 # 删除
 # --------------------------------------------------------------------------- #
-def _chmod_and_retry(func, path, _exc) -> None:
-    """rmtree 失败时先放开权限再重试（应对只读文件）。"""
-    os.chmod(path, stat.S_IRWXU)
-    func(path)
-
-
-def remove_path(path: Path) -> Removal:
-    """删除单个路径，返回状态；权限不足时标记为需提权而不是直接失败。"""
+def remove_path(path: Path) -> None:
+    """删除单个路径，不修改权限，也不跟随目标符号链接。"""
     try:
-        if path.is_symlink() or not path.is_dir():
-            path.unlink()
+        if stat.S_ISDIR(path.lstat().st_mode):
+            shutil.rmtree(path)
         else:
-            shutil.rmtree(path, onexc=_chmod_and_retry)
-    except PermissionError:
-        return Removal(PERMISSION_DENIED, denied=True)
-    except OSError as exc:
-        return Removal(f"failed: {exc}")
-    return Removal("deleted")
+            path.unlink()
+    except FileNotFoundError:
+        # Python 3.13+ 的 rmtree 会自行忽略子路径的 FileNotFoundError。
+        pass
 
 
-def remove_with_sudo(paths: Sequence[Path]) -> dict[Path, str]:
-    """一次性 sudo 删除，并以删除后是否仍存在来判定结果。"""
-    command = ["sudo", "rm", "-rf", "--", *(str(p) for p in paths)]
+def verify_removed(path: Path) -> str:
+    """用 lstat 区分已不存在、仍存在（含悬空链接）、无法访问。"""
     try:
-        proc = subprocess.run(command, check=False)
+        path.lstat()
+    except FileNotFoundError:
+        return "deleted"
     except OSError as exc:
-        return {path: f"failed: {exc}" for path in paths}
-    default = "deleted" if proc.returncode == 0 else f"failed: sudo exit {proc.returncode}"
-    return {
-        path: default if not (path.exists() or path.is_symlink()) else "failed: still present"
-        for path in paths
-    }
+        return f"unverified: {exc}"
+    return "failed: still present"
+
+
+def remove_with_sudo(paths: Sequence[Path], logger: logging.Logger) -> dict[Path, str]:
+    """提权一次；批次退出码仅用于诊断，各路径独立验收。"""
+    command = ["/usr/bin/sudo", "/bin/rm", "-rf", "--", *(str(p) for p in paths)]
+    try:
+        proc = subprocess.run(command, check=False, stderr=subprocess.PIPE, text=True, errors="replace")
+    except OSError as exc:
+        message = f"Could not run sudo: {exc}"
+    else:
+        logger.info("sudo rm exit code: %d", proc.returncode)
+        message = proc.stderr.rstrip()
+        if proc.returncode and not message:
+            message = f"sudo rm exited with status {proc.returncode}."
+    if message:
+        print(message, file=sys.stderr)
+        logger.info("sudo rm: %s", message)
+    return {path: verify_removed(path) for path in paths}
 
 
 # --------------------------------------------------------------------------- #
@@ -421,7 +421,7 @@ def uninstall(app: App, args: argparse.Namespace, logger: logging.Logger) -> int
         return 0
 
     admin_count = sum(target.admin for target in targets)
-    print(f"\n{len(targets)} item(s) will be deleted ({admin_count} need sudo):")
+    print(f"\n{len(targets)} item(s) selected ({admin_count} expected to need sudo):")
     for index, target in enumerate(targets, 1):
         print(f"  {index:>3}. {target.label}")
 
@@ -434,20 +434,36 @@ def uninstall(app: App, args: argparse.Namespace, logger: logging.Logger) -> int
         return 0
 
     outcomes: dict[Path, str] = {}
-    retry: list[Target] = []
-    for target in (t for t in targets if not t.admin):
-        result = remove_path(target.path)
-        if result.denied:
-            retry.append(target)
+    admin_paths: list[Path] = []
+    container_access_denied = False
+    for target in targets:
+        path = target.path
+        if target.admin:
+            admin_paths.append(path)
+            continue
+        try:
+            remove_path(path)
+        except OSError as exc:
+            logger.info("  initial removal failed for %s: %s", path, exc)
+            if exc.errno == errno.EPERM and is_user_container(path):
+                outcomes[path] = f"failed: container access denied ({exc.strerror})"
+                container_access_denied = True
+            elif exc.errno in (errno.EACCES, errno.EPERM):
+                admin_paths.append(path)
+            else:
+                outcomes[path] = f"failed: {exc}"
         else:
-            outcomes[target.path] = result.status
+            outcomes[path] = "deleted"
 
-    retry.extend(target for target in targets if target.admin)
-    if retry and not args.dry_run:
-        if confirm(f"{len(retry)} item(s) need admin rights, run sudo rm -rf?", assume_yes=args.yes):
-            outcomes |= remove_with_sudo([target.path for target in retry])
+    if admin_paths:
+        print("\nPaths to try with sudo:")
+        for path in admin_paths:
+            note = " (macOS privacy protections may still block access)" if is_user_container(path) else ""
+            print(f"  {path}{note}")
+        if confirm(f"Try deleting {len(admin_paths)} item(s) with sudo?", assume_yes=args.yes):
+            outcomes |= remove_with_sudo(admin_paths, logger)
         else:
-            outcomes |= {target.path: "skipped" for target in retry}
+            outcomes |= dict.fromkeys(admin_paths, "skipped")
 
     print()
     for target in targets:
@@ -458,6 +474,9 @@ def uninstall(app: App, args: argparse.Namespace, logger: logging.Logger) -> int
 
     deleted = sum(status == "deleted" for status in outcomes.values())
     print(f"\nDeleted {deleted}/{len(targets)} item(s).")
+    if container_access_denied:
+        print("macOS may be protecting app data; sudo was not tried for these containers.")
+        print("If you no longer need the data, try Finder or grant your terminal Full Disk Access and reopen it.")
     if not args.no_log:
         print(f"Log: {LOG_FILE}")
     return 0 if deleted == len(targets) else 2
