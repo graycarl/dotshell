@@ -144,7 +144,6 @@ bash apps/pi/setup.sh
 ```
 apps/agents/skills/
 ├── agent-browser/       # 浏览器自动化（agent-browser CLI）
-├── ask-page/            # 把一份 Markdown 做成可逐条批注的网页（产物落 .pi/ask-pages/<session-id>/）
 ├── brainstorm/          # 创意发散
 ├── context7/            # 库文档查询
 ├── exa-search/          # 互联网搜索
