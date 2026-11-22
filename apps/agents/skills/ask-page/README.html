@@ -100,8 +100,8 @@
     <div class="eyebrow">skill · ask-page</div>
     <h1>一份 HTML，<br>把「审阅」从终端里拿出来</h1>
     <p class="lede">
-      Agent 写正文 → 脚本拼成一份<b>自包含的本地网页</b> → 用户在浏览器里逐条批注、
-      在选择题里选一个 → 点「复制结果」→ 粘回对话。没有服务进程、没有端口、没有令牌，产物就是<b>一个文件</b>。
+      Agent 写 Markdown → 脚本在构建时渲染成一份<b>自包含的本地网页</b> → 用户在浏览器里逐条批注
+      → 点「复制结果」→ 粘回对话。没有服务进程、没有端口、没有令牌，产物就是<b>一个文件</b>。
     </p>
     <div class="chips">
       <span class="chip">产物 <b>单文件 HTML</b></span>
@@ -122,7 +122,7 @@
   <a href="#draft">⑥ 草稿模型</a>
   <a href="#export">⑦ 导出格式</a>
   <a href="#rounds">⑧ 多轮迭代</a>
-  <a href="#markers">⑨ 页面标记</a>
+  <a href="#markers">⑨ 只写 Markdown</a>
   <a href="#storage">⑩ localStorage 现实</a>
   <a href="#clipboard">⑪ 剪贴板降级</a>
   <a href="#tradeoffs">⑫ 取舍与坑</a>
@@ -213,7 +213,7 @@
       <text x="20" y="26" font-size="11.5" fill="var(--muted)">生成期</text>
       <rect x="20" y="36" width="190" height="72" rx="12" fill="var(--card)" stroke="var(--line)"/>
       <text x="115" y="62" font-size="13.5" font-weight="700" fill="var(--fg)" text-anchor="middle">Agent 写正文</text>
-      <text x="115" y="82" font-size="11.5" fill="var(--muted)" text-anchor="middle">plan.body.html</text>
+      <text x="115" y="82" font-size="11.5" fill="var(--muted)" text-anchor="middle">plan.md</text>
       <text x="115" y="99" font-size="11" fill="var(--muted)" text-anchor="middle">只有内容，没有机制</text>
 
       <path d="M212 72 L252 72" stroke="var(--accent)" stroke-width="1.7" marker-end="url(#a2)"/>
@@ -256,7 +256,7 @@
       <rect x="158" y="168" width="196" height="76" rx="12" fill="var(--card)" stroke="var(--line)"/>
       <text x="256" y="194" font-size="13.5" font-weight="700" fill="var(--fg)" text-anchor="middle">粘回对话</text>
       <text x="256" y="214" font-size="11.5" fill="var(--muted)" text-anchor="middle">用户按 ⌘V</text>
-      <text x="256" y="232" font-size="11.5" fill="var(--muted)" text-anchor="middle">三条规则解析</text>
+      <text x="256" y="232" font-size="11.5" fill="var(--muted)" text-anchor="middle">两条规则解析</text>
 
       <path d="M154 206 L120 206 L120 112" fill="none" stroke="var(--muted)" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#a2m)"/>
 
@@ -266,7 +266,7 @@
   </figure>
 
   <div class="grid g3">
-    <div class="card"><span class="tag">交接点 ①</span><h4>磁盘</h4><p><code>plan.body.html</code>（你写的）和 <code>plan.html</code>（产物）。没有共享状态、没有数据库。</p></div>
+    <div class="card"><span class="tag">交接点 ①</span><h4>磁盘</h4><p><code>plan.md</code>（你写的）和 <code>plan.html</code>（产物）。没有共享状态、没有数据库。</p></div>
     <div class="card"><span class="tag">交接点 ②</span><h4>剪贴板</h4><p>浏览器写、用户读、对话收。它是唯一「结构化结果」跨越进程的方式。</p></div>
     <div class="card accent"><span class="tag">核心</span><h4>没有中间件</h4><p>没有端口、令牌、Origin 校验、状态机、退出码、daemon 和归档。</p></div>
   </div>
@@ -300,7 +300,7 @@
 
       <g font-size="12" fill="var(--fg)">
         <path d="M104 74 L320 74" stroke="var(--accent)" stroke-width="1.7" marker-end="url(#a3)"/>
-        <text x="212" y="67" text-anchor="middle">① 写 plan.body.html（正文）</text>
+        <text x="212" y="67" text-anchor="middle">① 写 plan.md（Markdown 正文）</text>
 
         <path d="M104 110 L320 110" stroke="var(--accent)" stroke-width="1.7" marker-end="url(#a3)"/>
         <text x="212" y="103" text-anchor="middle">② new plan --open</text>
@@ -324,7 +324,7 @@
         <text x="470" y="323" text-anchor="middle" fill="var(--muted)">⑥ 下一轮：agent 收到这段话</text>
 
         <rect x="34" y="346" width="140" height="26" rx="7" fill="var(--accent-soft)" stroke="var(--line)"/>
-        <text x="104" y="364" text-anchor="middle" font-size="11">解析三条规则</text>
+        <text x="104" y="364" text-anchor="middle" font-size="11">解析两条规则</text>
 
         <path d="M104 394 L320 394" stroke="var(--accent)" stroke-width="1.7" marker-end="url(#a3)"/>
         <text x="212" y="387" text-anchor="middle">⑦ 改进正文 → new → 回到 ①</text>
@@ -361,7 +361,7 @@
       <text x="120" y="187" font-size="10.5" fill="var(--muted)" text-anchor="middle">交互逻辑（可读可改）</text>
 
       <rect x="20" y="210" width="200" height="26" rx="8" fill="var(--accent-soft)" stroke="var(--line)"/>
-      <text x="120" y="228" font-size="11" fill="var(--accent)" text-anchor="middle">plan.body.html（agent 写的）</text>
+      <text x="120" y="228" font-size="11" fill="var(--accent)" text-anchor="middle">plan.md（agent 写的 Markdown）</text>
 
       <path d="M224 54 L300 90" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#a4)"/>
       <path d="M224 114 L300 114" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#a4)"/>
@@ -497,15 +497,12 @@
     <figcaption>图 6 · 删除权永远在用户手里；agent 不替用户清理。</figcaption>
   </figure>
 
-  <p>选择题的答案住在<b>同一份草稿</b>里，只是没有「已提交」圆点：它在页面里是选中态，刷新、换版本都还在。</p>
-
   <div class="grid g2">
-    <div class="card"><span class="tag">机制</span><h4>每个变更立刻落盘</h4><p>没有「保存」按钮。加一条、删一条、改一次选择，都当场写回 localStorage，刷新不丢。</p></div>
+    <div class="card"><span class="tag">机制</span><h4>每个变更立刻落盘</h4><p>没有「保存」按钮。加一条、删一条、改一次文字，都当场写回 localStorage，刷新不丢。</p></div>
     <div class="card"><span class="tag">代价</span><h4>重复提交旧意见</h4><p>用户没删的批注会再次被导出。页面用「已提交」圆点和顶部横幅提示，导出后由用户自己判断要不要清掉。</p></div>
   </div>
 
-  <div class="callout"><b>对 agent 的硬约束：</b>重写页面时 anchor 必须<b>稳定</b>（<code>plan-3</code> 永远指同一段话）。改了 anchor，用户的旧批注会变成「位置已失效」—— 它们仍会被导出，但位置信息丢了。
-  同理，选择题的 <code>data-pi-option</code> 名字也是契约：改了名字，用户选过的答案会<b>静默消失</b>（页面里已经没有这道题，就不再导出）。</div>
+  <div class="callout"><b>对 agent 的硬约束：</b>锚点由每块<b>自身的文本</b>算出（<code>p-c313e5</code> = 段落文本的 sha1 前 6 位）。所以：只调整顺序、不改进文字，锚点不变；<b>把某段改写了，挂在上面的旧批注就变成「位置已失效」</b>—— 它们仍会被导出，但位置信息丢了。这不是 bug：那段确实已经不存在了。</div>
 </section>
 
 <!-- ═══════════ 7 export ═══════════ -->
@@ -515,46 +512,42 @@
 
   <figure>
     <div class="anatomy">
-      <span class="ln hl-sent">&lt;!-- ask-page-result · pageId=plan · 2026-05-01T12:00Z --&gt;</span>
-      <span class="ln"> </span>
-      <span class="ln hl-sel">## 选择</span>
-      <span class="ln"> </span>
-      <span class="ln hl-sel">- 发布优先级（priority）：中（medium）</span>
+      <span class="ln hl-sent">&lt;!-- ask-page-result · pageId=plan · 2026-05-01T12:00:00Z --&gt;</span>
       <span class="ln"> </span>
       <span class="ln hl-head">## 批注（2 条）</span>
       <span class="ln"> </span>
-      <span class="ln hl-head">### [plan-3] 方案要点 3 · 回滚</span>
-      <span class="ln">这里要加回滚步骤</span>
+      <span class="ln hl-head">### [p-c313e5] 现在 submit() 拷贝失败时会静默返回。</span>
+      <span class="ln">  这里要补一句失败时的用户可见提示</span>
       <span class="ln"> </span>
-      <span class="ln hl-quote">&gt; 圈选原文：提交后直接切流量</span>
+      <span class="ln hl-quote">&gt; 圈选原文：拷贝失败</span>
       <span class="ln"> </span>
-      <span class="ln hl-head">### [summary] 摘要</span>
-      <span class="ln">这段没问题，但建议补一句适用范围</span>
+      <span class="ln hl-head">### [li-7fd219] 回归 file:// 下的三条降级路径</span>
+      <span class="ln">  这条我来跑，你先按 plan 改</span>
       <span class="ln"> </span>
       <span class="ln hl-sent">&lt;!-- /ask-page-result --&gt;</span>
     </div>
     <div class="legend">
       <span><i style="background:var(--muted)"></i>哨兵：界定「这是一份结果」</span>
-      <span><i style="background:var(--accent)"></i>选择：每行一道题的答案</span>
+      <span><i style="background:var(--accent)"></i>缩进两格：上一条批注的正文</span>
       <span><i style="background:var(--ok)"></i>批注块：<code>[anchor]</code> + 标签</span>
       <span><i style="background:var(--warn)"></i>圈选原文：用户选中的句子</span>
     </div>
-    <figcaption>图 7 · 解析只需三条规则，写在 SKILL.md 里就够。</figcaption>
+    <figcaption>图 7 · 解析只需两条规则，写在 SKILL.md 里就够。</figcaption>
   </figure>
 
-  <h3>三条解析规则</h3>
+  <h3>两条解析规则</h3>
   <ol>
     <li>取 <code>&lt;!-- ask-page-result</code> 与 <code>&lt;!-- /ask-page-result --&gt;</code> 之间的内容</li>
-    <li><code>## 选择</code> 小节：每行 <code>- 名称（id）：标签（值）</code> 是一道题的答案；没有这一小节 = 用户没选</li>
-    <li>每个 <code>### [锚点] 标签</code> 起一条批注：正文到下一个 <code>&gt;</code> 行 / 下一个 <code>### [</code> / 哨兵为止</li>
+    <li>每个 <code>### [锚点] 标签</code> 起一条批注：其后各行<b>行首有两个空格就去掉，没有则原样保留</b>
+      （旧版导出没有缩进，同样适用），直到行首<b>没有缩进</b>的 <code>&gt; 圈选原文：</code>、
+      下一个 <code>### [</code> 或哨兵</li>
   </ol>
 
   <table>
     <tr><th>情况</th><th>输出长什么样</th></tr>
-    <tr><td>一道题都没答</td><td><code>## 选择</code> 整个小节不出现</td></tr>
-    <tr><td>一条批注都没写</td><td><code>## 批注</code> 整个小节不出现 —— 两者都空就只剩哨兵两行</td></tr>
-    <tr><td>anchor 在新页面里消失了</td><td>标题变成 <code>### [plan-9] 标签 ⚠ 位置已失效</code>，批注仍然导出</td></tr>
-    <tr><td>选项的那道题被删了</td><td>旧答案不导出（题都没了，答案就是噪声）</td></tr>
+    <tr><td>一条批注都没写</td><td><code>## 批注</code> 整个小节不出现，只剩哨兵两行</td></tr>
+    <tr><td>anchor 在新页面里消失了</td><td>标题变成 <code>### [p-9f2a11] 标签 ⚠ 位置已失效</code>，批注仍然导出</td></tr>
+    <tr><td>批注里自己写了 <code>&gt;</code> 或 <code>### [</code></td><td>不会歧义：正文每行都有两格缩进，去掉缩进就是原文</td></tr>
   </table>
 
   <div class="callout"><b>为什么不给一个「纯 JSON」的兜底按钮？</b> 因为它会让 agent 有时拿到结构化、有时拿到文本，反而增加判断成本。出口只有一个，规则就只有一套。</div>
@@ -586,8 +579,8 @@
       <rect x="60" y="64" width="250" height="40" rx="8" fill="var(--code-bg)" stroke="var(--line)"/>
       <text x="185" y="89" font-size="11.5" fill="var(--fg)" text-anchor="middle">v1：3 条批注</text>
       <rect x="340" y="64" width="250" height="40" rx="8" fill="var(--code-bg)" stroke="var(--line)"/>
-      <text x="465" y="82" font-size="11.5" fill="var(--fg)" text-anchor="middle">v2：内容变了，anchor 不变</text>
-      <text x="465" y="97" font-size="10.5" fill="var(--muted)" text-anchor="middle">3 条批注仍在原位</text>
+      <text x="465" y="82" font-size="11.5" fill="var(--fg)" text-anchor="middle">v2：只改了别的段，anchor 不变</text>
+      <text x="465" y="97" font-size="10.5" fill="var(--muted)" text-anchor="middle">那 3 条批注仍在原位</text>
       <rect x="620" y="64" width="260" height="40" rx="8" fill="var(--accent-soft)" stroke="var(--accent)"/>
       <text x="750" y="82" font-size="11.5" fill="var(--accent)" text-anchor="middle">用户删掉已改好的，补 1 条新的</text>
       <text x="750" y="97" font-size="10.5" fill="var(--muted)" text-anchor="middle">然后再点复制</text>
@@ -600,71 +593,64 @@
     <figcaption>图 8 · 换个 query string 是 <code>file://</code> 下唯一可靠的重载手段。</figcaption>
   </figure>
 
-  <div class="callout warn"><b>不要给新版本换文件名。</b><code>plan-v2.html</code> 会让 pageId 变成 <code>plan-v2</code>，上一轮的草稿瞬间「人间蒸发」（其实还在，只是 key 对不上了）。id 和 anchor 都是<b>跨轮次契约</b>。</div>
+  <div class="callout warn"><b>不要给新版本换文件名。</b><code>plan-v2.html</code> 会让 pageId 变成 <code>plan-v2</code>，上一轮的草稿瞬间「人间蒸发」（其实还在，只是 key 对不上了）。<b>pageId 是跨轮次契约；锚点不是</b> —— 它跟着块文本走，改写了就换一个，旧批注变成「位置已失效」。</div>
 </section>
 
 <!-- ═══════════ 9 markers ═══════════ -->
 <section id="markers">
-  <h2><span class="n">09</span>页面怎么写：声明式标记</h2>
-  <p class="sec-sub">Agent 不写 JS。它只在正文里放 <code>data-pi-*</code> 标记，内联的脚本负责把标记变成交互、再变成导出文本。</p>
+  <h2><span class="n">09</span>页面怎么写：只写 Markdown</h2>
+  <p class="sec-sub">Agent 不写 HTML、不写 JS，也不命名锚点。它写的是一份 Markdown，其余的全部发生在构建时。</p>
 
   <figure>
-    <svg viewBox="0 0 940 310" role="img" aria-label="标记到导出结果的映射">
+    <svg viewBox="0 0 940 244" role="img" aria-label="Markdown 到锚点 HTML 的映射">
       <defs>
         <marker id="a9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/>
         </marker>
       </defs>
-      <text x="24" y="26" font-size="12.5" font-weight="700" fill="var(--muted)">你写的正文</text>
-      <text x="560" y="26" font-size="12.5" font-weight="700" fill="var(--muted)">于是就得到</text>
+      <text x="24" y="26" font-size="12.5" font-weight="700" fill="var(--muted)">你写的 Markdown</text>
+      <text x="560" y="26" font-size="12.5" font-weight="700" fill="var(--muted)">构建时就地渲染成</text>
 
       <g font-family="ui-monospace,Menlo,monospace" font-size="11.6">
         <rect x="20" y="40" width="360" height="48" rx="9" fill="var(--code-bg)" stroke="var(--line)"/>
-        <text x="36" y="69" fill="var(--accent)">data-pi-anchor="plan-3"</text>
+        <text x="36" y="69" fill="var(--accent)">## 3 方案要点</text>
 
         <rect x="20" y="108" width="360" height="48" rx="9" fill="var(--code-bg)" stroke="var(--line)"/>
-        <text x="36" y="137" fill="var(--accent)">data-pi-option="priority"</text>
+        <text x="36" y="137" fill="var(--accent)">- 回滚步骤要先写</text>
 
         <rect x="20" y="176" width="360" height="48" rx="9" fill="var(--code-bg)" stroke="var(--line)"/>
-        <text x="36" y="205" fill="var(--accent)">script[type="text/markdown"]</text>
-
-        <rect x="20" y="244" width="360" height="48" rx="9" fill="var(--code-bg)" stroke="var(--line)"/>
-        <text x="36" y="273" fill="var(--accent)">data-ap-copy（复制按钮）</text>
+        <text x="36" y="205" fill="var(--accent)">| 路径 | 改后 |</text>
       </g>
 
       <g stroke="var(--accent)" stroke-width="1.6" stroke-dasharray="5 4">
         <path d="M382 64 L556 64" marker-end="url(#a9)"/>
         <path d="M382 132 L556 132" marker-end="url(#a9)"/>
         <path d="M382 200 L556 200" marker-end="url(#a9)"/>
-        <path d="M382 268 L556 268" marker-end="url(#a9)"/>
       </g>
 
       <g font-family="ui-monospace,Menlo,monospace" font-size="11.2" fill="var(--fg)">
         <rect x="560" y="40" width="356" height="48" rx="9" fill="var(--card)" stroke="var(--line)"/>
-        <text x="574" y="61">### [plan-3] 方案要点 3 · 回滚</text>
-        <text x="574" y="78" fill="var(--muted)">标签取该块首行文字，截 40 字</text>
+        <text x="574" y="61">&lt;h2 data-pi-anchor="h-d5a022"&gt;</text>
+        <text x="574" y="78" fill="var(--muted)">锚点 = 前缀 + 该块文本的 sha1 前 6 位</text>
 
-        <rect x="560" y="108" width="356" height="48" rx="9" fill="var(--card)" stroke="var(--accent)"/>
-        <text x="574" y="129" fill="var(--accent)">## 选择</text>
-        <text x="574" y="146" fill="var(--muted)">- 发布优先级（priority）：中（medium）</text>
+        <rect x="560" y="108" width="356" height="48" rx="9" fill="var(--card)" stroke="var(--line)"/>
+        <text x="574" y="129">&lt;li data-pi-anchor="li-cfa502"&gt;</text>
+        <text x="574" y="146" fill="var(--muted)">每个列表项各一个，可以只批这一条</text>
 
         <rect x="560" y="176" width="356" height="48" rx="9" fill="var(--card)" stroke="var(--line)"/>
-        <text x="574" y="197">就地渲染成 HTML</text>
-        <text x="574" y="214" fill="var(--muted)">约 60 行，离线、无依赖</text>
-
-        <rect x="560" y="244" width="356" height="48" rx="9" fill="var(--accent-soft)" stroke="var(--accent)"/>
-        <text x="574" y="265" fill="var(--accent)">写剪贴板 + 弹出预览</text>
-        <text x="574" y="282" fill="var(--muted)">预览里就是即将粘回去的全文</text>
+        <text x="574" y="197">&lt;table data-pi-anchor="t-ddc951"&gt;</text>
+        <text x="574" y="214" fill="var(--muted)">表格、代码块、引用整块一个锚点</text>
       </g>
     </svg>
-    <figcaption>图 9 · 标记只负责「交互」，导出格式由脚本统一生成。</figcaption>
+    <figcaption>图 9 · 锚点不是手写的标记，而是块的文本哈希。</figcaption>
   </figure>
 
-  <div class="callout"><b>选项也可以是卡片。</b>给容器写 <code>data-pi-option</code>、给里面的元素写 <code>data-pi-value</code>，
-  整块内容就是一个选项 —— 标题、说明、代码都能放。脚本只负责加圆点和点击，不动你的结构；
-  卡片里的链接和按钮照常工作。</div>
+  <div class="callout"><b>支持的语法就是 Markdown 本身：</b>标题、段落、有序/无序列表（可嵌套）、
+  <code>- [ ]</code> 任务项、表格（含对齐）、围栏代码块、引用、分割线、图片，以及行内
+  <code>code</code> / 粗 / 斜 / 删除线 / 链接。没有别的组件，也没有需要背的 <code>data-pi-*</code> 属性。</div>
 
-  <div class="callout warn"><b>离线假设：</b>页面在 <code>file://</code> 下打开，<b>不要引用 CDN</b>；外部图片和 <code>plan.html</code> 放同一目录用相对路径。同理，<code>&lt;script type="module"&gt;</code> 在 <code>file://</code> 下会被 CORS 拦，所以脚本必须是普通 IIFE。</div>
+  <div class="callout warn"><b>两个假设：</b>正文里的原始 HTML 会被<b>转义成文本</b>（页面只接受 Markdown）；
+  页面在 <code>file://</code> 下打开，<b>不要引用 CDN</b>，外部图片和 <code>plan.html</code> 放同一目录用相对路径。</div>
 </section>
 
 <!-- ═══════════ 10 storage ═══════════ -->
@@ -785,11 +771,11 @@
   <h3>常见坑</h3>
   <ul>
     <li><b>stdout 只有一行 JSON</b>（<code>built</code> / <code>opened</code> / <code>list</code> / <code>error</code>），进度都在 stderr。</li>
-    <li><b>id 和 anchor 都是跨轮次契约</b>：换 id 丢草稿，换 anchor 丢位置。</li>
+    <li><b>pageId 是跨轮次契约</b>：换 id 就丢草稿（localStorage key 也跟着变）。锚点不用管，它跟着块文本走。</li>
     <li><b>agent 写完页面就结束本轮</b>，不要试图等待 —— 没有东西可等。</li>
     <li><b>用户可能只写几条批注，也可能什么都不写就关掉</b>，两种都要能处理。</li>
-    <li><b>选择题不选是常态</b>：<code>## 选择</code> 没出现就代表用户跳过了，不要当成出错。</li>
-    <li><b>选项 id 改名 = 静默丢答案</b>，而且不会有「位置已失效」之类的提示 —— 这一条比 anchor 更隐蔽。</li>
+    <li><b>改写用户已经批注过的句子 = 那条批注「位置已失效」</b>：锚点来自块文本，改字就换锚点。要改就改，但别指望旧批注还挂在原地。</li>
+    <li><b>正文里的原始 HTML 会被转义成文本</b>，不会执行 —— 页面只接受 Markdown。</li>
     <li><b><code>new</code> 会覆盖 <code>plan.html</code>，但不动 localStorage</b>；刷新后草稿还在。</li>
     <li><b>别在脚本里写字面量 <code>&lt;/script&gt;</code></b>（包括注释），否则页面静默失效；构建期会拦。</li>
     <li><b>页面不联网也离线可用</b>，所以样式、图标、字体都必须内联或用系统字体。</li>
