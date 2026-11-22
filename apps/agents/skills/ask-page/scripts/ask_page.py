@@ -190,7 +190,10 @@ def dir_mtime(path: Path) -> float:
 # parser, no extensions, no surprises. Anything richer than this belongs in a
 # plain code block (which is also what a diff or a config snippet is).
 
-FENCE = re.compile(r"^\s*(`{3,}|~{3,})\s*([A-Za-z0-9_+.-]*)\s*$")
+# The info string is read for its first token only: ```` ```js title="x" ```` is
+# `js`, the rest is ignored (there is no highlighter to configure). Getting this
+# wrong is expensive — an unmatched fence swallows the rest of the document.
+FENCE = re.compile(r"^\s*(`{3,}|~{3,})\s*([A-Za-z0-9_+#.-]*)")
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 RULE = re.compile(r"^\s*([-*_])(?:\s*\1){2,}\s*$")
 QUOTE = re.compile(r"^\s*>\s?(.*)$")
@@ -209,9 +212,11 @@ class Anchorer:
     Text-derived so that reordering a document does not invalidate comments;
     duplicates get a `-2` suffix in document order. A comment whose block text
     was rewritten by the agent legitimately becomes stale — that block is gone.
-    """
 
-    KINDS = {"p": "p", "pre": "c", "blockquote": "q", "table": "t", "li": "li", "list": "l"}
+    The prefix is chosen by the caller (`h` heading, `p` paragraph, `li` list
+    item, `l` list, `c` code, `q` quote, `t` table), so there is no central
+    table to keep in sync.
+    """
 
     def __init__(self) -> None:
         self.seen: dict[str, int] = {}
@@ -229,25 +234,52 @@ def with_anchor(fragment: str, anchor: str) -> str:
     return re.sub(r"^<([A-Za-z][A-Za-z0-9]*)", lambda m: f'<{m.group(1)} data-pi-anchor="{anchor}"', fragment, count=1)
 
 
+IMAGE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)\)")
+LINK = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
+SCHEME = re.compile(r"^\s*([A-Za-z][A-Za-z0-9+.-]*):")
+SAFE_SCHEMES = ("http", "https", "mailto")
+
+
+def href_ok(url: str) -> bool:
+    """A document may link out, but it may not smuggle a `javascript:` (or
+    `data:`) target into the page the user clicks."""
+    scheme = SCHEME.match(url)
+    return scheme is None or scheme.group(1).lower() in SAFE_SCHEMES
+
+
 def inline(text: str) -> str:
-    """Inline Markdown. Code spans and autolinks are stashed first so that no
-    later rule can touch their contents."""
+    """Inline Markdown. Code spans, autolinks, links and images are stashed as
+    finished HTML first: that both escapes their URLs properly (quote=True) and
+    keeps the emphasis rules from rewriting anything inside them."""
     stash: list[str] = []
 
     def keep(fragment: str) -> str:
         stash.append(fragment)
         return f"\x00{len(stash) - 1}\x00"
 
-    text = CODE_SPAN.sub(lambda m: keep(f"<code>{html.escape(m.group(1), quote=False)}</code>"), text)
-    text = AUTOLINK.sub(
-        lambda m: keep(
-            f'<a href="{html.escape(m.group(1), quote=True)}">{html.escape(m.group(1), quote=False)}</a>'
-        ),
-        text,
-    )
+    def code(m: re.Match) -> str:
+        return keep(f"<code>{html.escape(m.group(1), quote=False)}</code>")
+
+    def autolink(m: re.Match) -> str:
+        url = html.escape(m.group(1), quote=True)
+        return keep(f'<a href="{url}">{html.escape(m.group(1), quote=False)}</a>')
+
+    def image(m: re.Match) -> str:
+        src = html.escape(m.group(2), quote=True)
+        alt = html.escape(m.group(1), quote=True)
+        return keep(f'<img src="{src}" alt="{alt}">')
+
+    def link(m: re.Match) -> str:
+        if not href_ok(m.group(2)):
+            return keep(html.escape(m.group(0), quote=False))
+        href = html.escape(m.group(2), quote=True)
+        return keep(f'<a href="{href}">{html.escape(m.group(1), quote=False)}</a>')
+
+    text = CODE_SPAN.sub(code, text)
+    text = AUTOLINK.sub(autolink, text)
+    text = IMAGE.sub(image, text)
+    text = LINK.sub(link, text)
     text = html.escape(text, quote=False)
-    text = re.sub(r"!\[([^\]]*)\]\(([^)\s]+)\)", r'<img src="\2" alt="\1">', text)
-    text = re.sub(r"\[([^\]]+)\]\(([^)\s]+)\)", r'<a href="\2">\1</a>', text)
     text = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", text)
     text = re.sub(r"(?<![\w_])__([^_]+)__(?![\w_])", r"<strong>\1</strong>", text)
     text = re.sub(r"(?<![\w*])\*([^*\n]+)\*(?!\*)", r"<em>\1</em>", text)
@@ -268,8 +300,15 @@ def starts_block(line: str) -> bool:
 
 
 def cells(line: str) -> list[str]:
-    match = TABLE_ROW.match(line)
-    return [c.strip() for c in (match.group(1) if match else "").split("|")]
+    """Split a table row, tolerating a missing leading/trailing pipe — the
+    header is matched by TABLE_ROW but the separator row is matched by the more
+    lenient TABLE_SEP, and both go through here."""
+    raw = line.strip()
+    if raw.startswith("|"):
+        raw = raw[1:]
+    if raw.endswith("|"):
+        raw = raw[:-1]
+    return [c.strip() for c in raw.split("|")] if raw.strip() else []
 
 
 def align_of(cell: str) -> str:
@@ -392,14 +431,19 @@ def render_blocks(lines: list[str], marks: Anchorer) -> list[str]:
         if fence:
             marker, lang = fence.group(1), fence.group(2)
             close = re.compile(r"^\s*" + re.escape(marker[0]) + "{" + str(len(marker)) + r",}\s*$")
+            start = i
             i += 1
             buf: list[str] = []
             while i < n and not close.match(lines[i]):
                 buf.append(lines[i])
                 i += 1
-            i += 1  # the closing fence, or the end of the document
+            if i >= n:
+                log(f"提示：第 {start + 1} 行的围栏代码块没有闭合，已渲染到文末")
+            else:
+                i += 1  # the closing fence
             code = html.escape("\n".join(buf), quote=False)
-            cls = f' class="language-{lang}"' if lang else ""
+            slug = re.sub(r"[^A-Za-z0-9_+-]", "", lang)
+            cls = f' class="language-{slug}"' if slug else ""
             out.append(with_anchor(f"<pre{cls}><code>{code}</code></pre>", marks.of("c", "\n".join(buf))))
             continue
 
@@ -426,8 +470,13 @@ def render_blocks(lines: list[str], marks: Anchorer) -> list[str]:
 
         if LIST_ITEM.match(line):
             items, i = collect_items(lines, i)
-            fragment, _ = render_list(items, 0, items[0]["indent"], items[0]["ordered"], marks)
-            out.append(fragment)
+            # One render_list call covers one indent level. Ragged indentation
+            # (0, 4, 2) would otherwise drop the trailing items on the floor,
+            # so keep consuming until the whole run is rendered.
+            pos = 0
+            while pos < len(items):
+                fragment, pos = render_list(items, pos, items[pos]["indent"], items[pos]["ordered"], marks)
+                out.append(fragment)
             continue
 
         if TABLE_ROW.match(line) and i + 1 < n and TABLE_SEP.match(lines[i + 1]):
@@ -456,9 +505,13 @@ def render_markdown(source: str) -> tuple[str, str, str]:
     lines = source.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     blocks = render_blocks(lines, Anchorer())
     head, title = "", ""
-    if blocks and re.match(r"<h1\b", blocks[0]):
-        head = blocks[0]
-        title = html.unescape(re.sub(r"<[^>]+>", "", head)).strip()
+    # The first h1 anywhere in the document is the title: a doc that opens with
+    # a paragraph and then `# 标题` would otherwise fall back to the page id.
+    for index, block in enumerate(blocks):
+        if re.match(r"<h1\b", block):
+            head = blocks.pop(index)
+            title = html.unescape(re.sub(r"<[^>]+>", "", head)).strip()
+            break
     return "\n".join(blocks), head, title
 
 

@@ -13,7 +13,7 @@
  *
  * Hooks (all provided by the template; a page never needs to add them):
  *   [data-pi-anchor]                           clickable, becomes one comment
- *   [data-ap-copy] / [data-pi-submit]          copy the result
+ *   [data-ap-copy]                             copy the result
  *   [data-ap-comments] / [data-ap-count]       comment list / counter
  *   [data-ap-clear] / [data-ap-reload]         clear all / reload from disk
  *   [data-ap-pop] / [data-ap-status]           copy preview / status line
@@ -22,9 +22,6 @@
  */
 (function () {
   "use strict";
-
-  if (window.__askPageLoaded) return;
-  window.__askPageLoaded = true;
 
   var KEY_PREFIX = "ask-page:";
   var MAX_QUOTE = 300;
@@ -56,7 +53,7 @@
   var KEY = KEY_PREFIX + (PAGE_SESSION ? PAGE_SESSION + ":" : "") + PAGE_ID;
 
   // ── state ──────────────────────────────────────────────────────────────
-  var state = { pageId: PAGE_ID, comments: [], submittedAt: null };
+  var state = { comments: [], submittedAt: null };
   var storageOK = true;
 
   function nowIso() { return new Date().toISOString().replace(/\.\d+Z$/, "Z"); }
@@ -338,8 +335,6 @@
 
   function setupAnchors() {
     $$("[data-pi-anchor]").forEach(function (el) {
-      if (el.getAttribute("data-ap-anchor-ready") === "1") return;
-      el.setAttribute("data-ap-anchor-ready", "1");
       el.addEventListener("click", function (ev) {
         if (ev.target.closest("a,input,button,textarea,select")) return;
         // Nested anchors (a list item inside an anchored list) must open the
@@ -369,7 +364,11 @@
         var head = "### [" + (c.anchor || "?") + "] " + (label || "（无标签）");
         if (!nodes[c.anchor]) head += " ⚠ 位置已失效";
         lines.push(head);
-        lines.push(c.text);
+        // Every body line is indented: a comment may itself contain a line
+        // starting with `>` or `### [`, and those must not read as structure.
+        lines.push(
+          c.text.split("\n").map(function (line) { return "  " + line; }).join("\n")
+        );
         if (c.selectionText) {
           lines.push("");
           lines.push("> 圈选原文：" + c.selectionText.replace(/\s*\n\s*/g, " "));
@@ -528,21 +527,15 @@
     render();
     updateStatus();
 
-    $$("[data-ap-copy],[data-pi-submit]").forEach(function (el) {
-      if (el.getAttribute("data-ap-ready") === "1") return;
-      el.setAttribute("data-ap-ready", "1");
+    $$("[data-ap-copy]").forEach(function (el) {
       el.addEventListener("click", submit);
     });
 
     $$("[data-ap-clear]").forEach(function (el) {
-      if (el.getAttribute("data-ap-ready") === "1") return;
-      el.setAttribute("data-ap-ready", "1");
       el.addEventListener("click", clearDraft);
     });
 
     $$("[data-ap-reload]").forEach(function (el) {
-      if (el.getAttribute("data-ap-ready") === "1") return;
-      el.setAttribute("data-ap-ready", "1");
       el.addEventListener("click", reloadLatest);
     });
 
@@ -550,23 +543,17 @@
       el.addEventListener("click", hidePop);
     });
 
-    if (!window.__askPagePopBound) {
-      window.__askPagePopBound = true;
-      var popEl = $("[data-ap-pop]");
-      if (popEl) popEl.addEventListener("wheel", onPopWheel, { passive: false });
-      window.addEventListener("scroll", onPageScroll, { passive: true });
-    }
+    var popEl = $("[data-ap-pop]");
+    if (popEl) popEl.addEventListener("wheel", onPopWheel, { passive: false });
+    window.addEventListener("scroll", onPageScroll, { passive: true });
 
-    if (document.body.getAttribute("data-ap-keys") !== "1") {
-      document.body.setAttribute("data-ap-keys", "1");
-      document.addEventListener("keydown", function (ev) {
-        if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) {
-          ev.preventDefault();
-          submit();
-        }
-        if (ev.key === "Escape") hidePop();
-      });
-    }
+    document.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) {
+        ev.preventDefault();
+        submit();
+      }
+      if (ev.key === "Escape") hidePop();
+    });
   }
 
   function updateStatus() {

@@ -103,7 +103,7 @@ pre code{background:none;padding:0;font-size:.9em}
 h1.ap-anchorable,h2.ap-anchorable,h3.ap-anchorable,h4.ap-anchorable{display:inline-block}
 /* Dense or structural blocks: underlining every line is noise, hover is enough. */
 pre.ap-anchorable,table.ap-anchorable,blockquote.ap-anchorable,
-li.ap-anchorable,code.ap-anchorable{text-decoration:none}
+li.ap-anchorable{text-decoration:none}
 .ap-anchorable:hover{background:var(--ap-accent-soft)}
 .ap-anchored{background:color-mix(in srgb,var(--ap-warn) 16%,transparent);text-decoration-color:var(--ap-warn)}
 li.ap-anchored{box-shadow:inset 3px 0 0 var(--ap-warn)}
