@@ -771,7 +771,7 @@
   <h3>常见坑</h3>
   <ul>
     <li><b>stdout 只有一行 JSON</b>（<code>built</code> / <code>opened</code> / <code>list</code> / <code>error</code>），进度都在 stderr。</li>
-    <li><b>id 和 anchor 都是跨轮次契约</b>：换 id 丢草稿，换 anchor 丢位置。</li>
+    <li><b>pageId 是跨轮次契约</b>：换 id 就丢草稿（localStorage key 也跟着变）。锚点不用管，它跟着块文本走。</li>
     <li><b>agent 写完页面就结束本轮</b>，不要试图等待 —— 没有东西可等。</li>
     <li><b>用户可能只写几条批注，也可能什么都不写就关掉</b>，两种都要能处理。</li>
     <li><b>改写用户已经批注过的句子 = 那条批注「位置已失效」</b>：锚点来自块文本，改字就换锚点。要改就改，但别指望旧批注还挂在原地。</li>
