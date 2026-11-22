@@ -256,7 +256,7 @@
       <rect x="158" y="168" width="196" height="76" rx="12" fill="var(--card)" stroke="var(--line)"/>
       <text x="256" y="194" font-size="13.5" font-weight="700" fill="var(--fg)" text-anchor="middle">粘回对话</text>
       <text x="256" y="214" font-size="11.5" fill="var(--muted)" text-anchor="middle">用户按 ⌘V</text>
-      <text x="256" y="232" font-size="11.5" fill="var(--muted)" text-anchor="middle">三条规则解析</text>
+      <text x="256" y="232" font-size="11.5" fill="var(--muted)" text-anchor="middle">两条规则解析</text>
 
       <path d="M154 206 L120 206 L120 112" fill="none" stroke="var(--muted)" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#a2m)"/>
 
@@ -324,7 +324,7 @@
         <text x="470" y="323" text-anchor="middle" fill="var(--muted)">⑥ 下一轮：agent 收到这段话</text>
 
         <rect x="34" y="346" width="140" height="26" rx="7" fill="var(--accent-soft)" stroke="var(--line)"/>
-        <text x="104" y="364" text-anchor="middle" font-size="11">解析三条规则</text>
+        <text x="104" y="364" text-anchor="middle" font-size="11">解析两条规则</text>
 
         <path d="M104 394 L320 394" stroke="var(--accent)" stroke-width="1.7" marker-end="url(#a3)"/>
         <text x="212" y="387" text-anchor="middle">⑦ 改进正文 → new → 回到 ①</text>
@@ -538,8 +538,9 @@
   <h3>两条解析规则</h3>
   <ol>
     <li>取 <code>&lt;!-- ask-page-result</code> 与 <code>&lt;!-- /ask-page-result --&gt;</code> 之间的内容</li>
-    <li>每个 <code>### [锚点] 标签</code> 起一条批注：其后每行去掉行首两个空格就是正文，直到
-      <code>&gt; 圈选原文：</code>、下一个 <code>### [</code> 或哨兵</li>
+    <li>每个 <code>### [锚点] 标签</code> 起一条批注：其后各行<b>行首有两个空格就去掉，没有则原样保留</b>
+      （旧版导出没有缩进，同样适用），直到行首<b>没有缩进</b>的 <code>&gt; 圈选原文：</code>、
+      下一个 <code>### [</code> 或哨兵</li>
   </ol>
 
   <table>
@@ -578,8 +579,8 @@
       <rect x="60" y="64" width="250" height="40" rx="8" fill="var(--code-bg)" stroke="var(--line)"/>
       <text x="185" y="89" font-size="11.5" fill="var(--fg)" text-anchor="middle">v1：3 条批注</text>
       <rect x="340" y="64" width="250" height="40" rx="8" fill="var(--code-bg)" stroke="var(--line)"/>
-      <text x="465" y="82" font-size="11.5" fill="var(--fg)" text-anchor="middle">v2：内容变了，anchor 不变</text>
-      <text x="465" y="97" font-size="10.5" fill="var(--muted)" text-anchor="middle">3 条批注仍在原位</text>
+      <text x="465" y="82" font-size="11.5" fill="var(--fg)" text-anchor="middle">v2：只改了别的段，anchor 不变</text>
+      <text x="465" y="97" font-size="10.5" fill="var(--muted)" text-anchor="middle">那 3 条批注仍在原位</text>
       <rect x="620" y="64" width="260" height="40" rx="8" fill="var(--accent-soft)" stroke="var(--accent)"/>
       <text x="750" y="82" font-size="11.5" fill="var(--accent)" text-anchor="middle">用户删掉已改好的，补 1 条新的</text>
       <text x="750" y="97" font-size="10.5" fill="var(--muted)" text-anchor="middle">然后再点复制</text>
@@ -592,7 +593,7 @@
     <figcaption>图 8 · 换个 query string 是 <code>file://</code> 下唯一可靠的重载手段。</figcaption>
   </figure>
 
-  <div class="callout warn"><b>不要给新版本换文件名。</b><code>plan-v2.html</code> 会让 pageId 变成 <code>plan-v2</code>，上一轮的草稿瞬间「人间蒸发」（其实还在，只是 key 对不上了）。id 和 anchor 都是<b>跨轮次契约</b>。</div>
+  <div class="callout warn"><b>不要给新版本换文件名。</b><code>plan-v2.html</code> 会让 pageId 变成 <code>plan-v2</code>，上一轮的草稿瞬间「人间蒸发」（其实还在，只是 key 对不上了）。<b>pageId 是跨轮次契约；锚点不是</b> —— 它跟着块文本走，改写了就换一个，旧批注变成「位置已失效」。</div>
 </section>
 
 <!-- ═══════════ 9 markers ═══════════ -->

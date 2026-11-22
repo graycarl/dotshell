@@ -247,6 +247,16 @@ def href_ok(url: str) -> bool:
     return scheme is None or scheme.group(1).lower() in SAFE_SCHEMES
 
 
+def emphasis(markup: str) -> str:
+    """Bold/italic/strike on already-escaped text. Shared by the document body
+    and by link labels, which are escaped separately (see inline())."""
+    markup = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", markup)
+    markup = re.sub(r"(?<![\w_])__([^_]+)__(?![\w_])", r"<strong>\1</strong>", markup)
+    markup = re.sub(r"(?<![\w*])\*([^*\n]+)\*(?!\*)", r"<em>\1</em>", markup)
+    markup = re.sub(r"(?<![\w_])_([^_\n]+)_(?![\w_])", r"<em>\1</em>", markup)
+    return re.sub(r"~~([^~]+)~~", r"<del>\1</del>", markup)
+
+
 def inline(text: str) -> str:
     """Inline Markdown. Code spans, autolinks, links and images are stashed as
     finished HTML first: that both escapes their URLs properly (quote=True) and
@@ -273,18 +283,15 @@ def inline(text: str) -> str:
         if not href_ok(m.group(2)):
             return keep(html.escape(m.group(0), quote=False))
         href = html.escape(m.group(2), quote=True)
-        return keep(f'<a href="{href}">{html.escape(m.group(1), quote=False)}</a>')
+        label = emphasis(html.escape(m.group(1), quote=False))
+        return keep(f'<a href="{href}">{label}</a>')
 
     text = CODE_SPAN.sub(code, text)
     text = AUTOLINK.sub(autolink, text)
     text = IMAGE.sub(image, text)
     text = LINK.sub(link, text)
     text = html.escape(text, quote=False)
-    text = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", text)
-    text = re.sub(r"(?<![\w_])__([^_]+)__(?![\w_])", r"<strong>\1</strong>", text)
-    text = re.sub(r"(?<![\w*])\*([^*\n]+)\*(?!\*)", r"<em>\1</em>", text)
-    text = re.sub(r"(?<![\w_])_([^_\n]+)_(?![\w_])", r"<em>\1</em>", text)
-    text = re.sub(r"~~([^~]+)~~", r"<del>\1</del>", text)
+    text = emphasis(text)
     return re.sub(r"\x00(\d+)\x00", lambda m: stash[int(m.group(1))], text)
 
 
@@ -495,24 +502,25 @@ def render_blocks(lines: list[str], marks: Anchorer) -> list[str]:
     return out
 
 
-def render_markdown(source: str) -> tuple[str, str, str]:
-    """(body html, leading h1 html, leading h1 text).
+def render_markdown(source: str, drop_h1: bool = True) -> tuple[str, str]:
+    """(body html, h1 text).
 
-    The h1 is returned separately because a Markdown document almost always
-    opens with its own title, and the page header already shows that title —
-    the caller drops the duplicate (see cmd_new).
+    A Markdown document almost always opens with its own title, and the page
+    header already shows that title, so `drop_h1` removes the duplicate. It is
+    off when the caller passed --title: the h1 is then the author's content.
     """
     lines = source.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     blocks = render_blocks(lines, Anchorer())
-    head, title = "", ""
+    title = ""
     # The first h1 anywhere in the document is the title: a doc that opens with
     # a paragraph and then `# 标题` would otherwise fall back to the page id.
     for index, block in enumerate(blocks):
         if re.match(r"<h1\b", block):
-            head = blocks.pop(index)
-            title = html.unescape(re.sub(r"<[^>]+>", "", head)).strip()
+            title = html.unescape(re.sub(r"<[^>]+>", "", block)).strip()
+            if drop_h1:
+                blocks.pop(index)
             break
-    return "\n".join(blocks), head, title
+    return "\n".join(blocks), title
 
 
 # ─── build ───────────────────────────────────────────────────────────────────
@@ -607,11 +615,8 @@ def cmd_new(args: argparse.Namespace) -> int:
     if not body.is_file() or body.read_text(encoding="utf-8") != content:
         body.write_text(content, encoding="utf-8")
 
-    rendered, head, doc_title = render_markdown(content)
+    rendered, doc_title = render_markdown(content, drop_h1=not args.title.strip())
     title = args.title.strip() or doc_title or page_id
-    if not args.title.strip() and head:
-        # The header shows the title; repeating it at the top of the page is noise.
-        rendered = rendered.replace(head, "", 1)
 
     out = page_path(session_dir, page_id)
     out.write_text(build_page(page_id, session, title, rendered), encoding="utf-8")
