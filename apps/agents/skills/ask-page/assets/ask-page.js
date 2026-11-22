@@ -1,7 +1,8 @@
 /*!
  * ask-page · page behaviour (inlined into the output by `ask_page.py new`)
  *
- * No server, no network. Everything the page needs is in this file.
+ * No server, no network. The Markdown is already rendered to HTML with anchors
+ * baked in at build time — this file only adds the review layer on top:
  *
  *   - comments are stored in localStorage under `ask-page:<session>:<pageId>`
  *     (all file:// pages share one origin, so the session has to be in the key;
@@ -10,21 +11,20 @@
  *   - "复制结果" builds a Markdown block and copies it to the clipboard
  *   - the user pastes that block back into the chat
  *
- * Declarative hooks (see SKILL.md):
- *   [data-pi-anchor="name"]                    clickable, becomes one comment
- *   [data-pi-option="name"]                    option list (radio / checkbox)
- *   [data-pi-submit] / [data-ap-copy]          copy the result
+ * Hooks (all provided by the template; a page never needs to add them):
+ *   [data-pi-anchor]                           clickable, becomes one comment
+ *   [data-ap-copy] / [data-pi-submit]          copy the result
  *   [data-ap-comments] / [data-ap-count]       comment list / counter
  *   [data-ap-clear] / [data-ap-reload]         clear all / reload from disk
- *   [data-ap-pop] / [data-ap-status]            copy preview / status line
- *   script[type="text/markdown"]               rendered in place
+ *   [data-ap-pop] / [data-ap-status]           copy preview / status line
  *
  * Plain IIFE on purpose: ES modules are blocked on file:// .
  */
 (function () {
   "use strict";
 
-  if (window.askPage && window.askPage.__askPage) return;
+  if (window.__askPageLoaded) return;
+  window.__askPageLoaded = true;
 
   var KEY_PREFIX = "ask-page:";
   var MAX_QUOTE = 300;
@@ -45,18 +45,18 @@
     return base || "page";
   }
 
-  var PAGE_ID = resolvePageId();
-  var PAGE_SESSION = resolvePageSession();
-  var KEY = KEY_PREFIX + (PAGE_SESSION ? PAGE_SESSION + ":" : "") + PAGE_ID;
-
   // Empty for hand-written pages and for pages built before sessions existed.
   function resolvePageSession() {
     var declared = (document.body.getAttribute("data-page-session") || "").trim();
     return declared.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-._]+|[-._]+$/g, "");
   }
 
+  var PAGE_ID = resolvePageId();
+  var PAGE_SESSION = resolvePageSession();
+  var KEY = KEY_PREFIX + (PAGE_SESSION ? PAGE_SESSION + ":" : "") + PAGE_ID;
+
   // ── state ──────────────────────────────────────────────────────────────
-  var state = { pageId: PAGE_ID, comments: [], options: {}, submittedAt: null };
+  var state = { pageId: PAGE_ID, comments: [], submittedAt: null };
   var storageOK = true;
 
   function nowIso() { return new Date().toISOString().replace(/\.\d+Z$/, "Z"); }
@@ -112,14 +112,6 @@
           };
         });
       }
-      if (draft.options && typeof draft.options === "object") {
-        Object.keys(draft.options).forEach(function (k) {
-          var v = draft.options[k];
-          if (typeof v === "string" || (Array.isArray(v) && v.every(function (x) { return typeof x === "string"; }))) {
-            state.options[k] = v;
-          }
-        });
-      }
       if (draft.submittedAt) state.submittedAt = draft.submittedAt;
     } catch (err) {
       // A corrupt draft must never break the page.
@@ -170,7 +162,6 @@
   // ── rendering ──────────────────────────────────────────────────────────
   function render() {
     renderComments();
-    renderOptions();
     markAnchors();
   }
 
@@ -185,7 +176,7 @@
     if (!state.comments.length) {
       var empty = document.createElement("div");
       empty.className = "ap-empty";
-      empty.textContent = "还没有批注。点击正文里带下划线的内容即可添加。";
+      empty.textContent = "还没有批注。点击正文里带下划线（或悬停变亮）的段落、标题、列表项即可添加。";
       host.appendChild(empty);
       return;
     }
@@ -209,7 +200,7 @@
         var stale = document.createElement("span");
         stale.className = "ap-flag stale";
         stale.textContent = "位置已失效";
-        stale.title = "这一轮的页面里没有对应的 data-pi-anchor，批注仍会导出";
+        stale.title = "这一轮页面里没有对应的 anchor（那段文字被改写了），批注仍会导出";
         left.appendChild(stale);
       } else if (item.submitted) {
         var sent = document.createElement("span");
@@ -252,221 +243,6 @@
       el.classList.add("ap-anchorable");
       el.title = el.title || "点击添加批注";
     });
-  }
-
-  // ── option lists ───────────────────────────────────────────────────────
-  // Two shapes, one state:
-  //   1. generated rows   <div data-pi-option="x" data-pi-options="a,b" data-pi-labels="甲|乙"></div>
-  //   2. your own markup  <div data-pi-option="x"><div class="card" data-pi-value="a">…</div>…</div>
-  // Shape 2 keeps arbitrary content (cards, descriptions, code) and only adds
-  // a marker plus click handling — so a card can be a choice.
-  function trimList(list) {
-    return list.map(function (s) { return s.trim(); });
-  }
-
-  function firstLabel(node) {
-    var first = null;
-    for (var i = 0; i < node.children.length; i++) {
-      if (!node.children[i].classList.contains("ap-opt-mark")) { first = node.children[i]; break; }
-    }
-    var text = (first ? first.textContent : node.textContent) || "";
-    text = text.replace(/\s+/g, " ").trim();
-    return text.length > 24 ? text.slice(0, 24) + "…" : text;
-  }
-
-  function readOption(el) {
-    var name = (el.getAttribute("data-pi-option") || "").trim();
-    var prompt = (el.getAttribute("data-pi-prompt") || "").trim();
-    var multiple = el.getAttribute("data-pi-multiple") === "true";
-    var entries = [];
-
-    var custom = [];
-    for (var i = 0; i < el.children.length; i++) {
-      if (el.children[i].hasAttribute("data-pi-value")) custom.push(el.children[i]);
-    }
-
-    if (custom.length) {
-      custom.forEach(function (node) {
-        // Freeze the label before the marker is injected, so later reads agree.
-        if (!node.getAttribute("data-pi-label")) {
-          node.setAttribute("data-pi-label", firstLabel(node));
-        }
-        entries.push({
-          value: node.getAttribute("data-pi-value"),
-          label: node.getAttribute("data-pi-label"),
-          node: node
-        });
-      });
-    } else {
-      var values = trimList((el.getAttribute("data-pi-options") || "").split(",")).filter(Boolean);
-      var labels = trimList((el.getAttribute("data-pi-labels") || "").split("|"));
-      values.forEach(function (value, index) {
-        entries.push({ value: value, label: labels[index] || value, node: null });
-      });
-    }
-    return { name: name, prompt: prompt, multiple: multiple, entries: entries };
-  }
-
-  function promptNode(text) {
-    var node = document.createElement("div");
-    node.className = "ap-opt-prompt";
-    node.textContent = text;
-    return node;
-  }
-
-  function toggleOption(name, multiple, value) {
-    if (multiple) {
-      var cur = Array.isArray(state.options[name]) ? state.options[name].slice() : [];
-      var at = cur.indexOf(value);
-      if (at === -1) cur.push(value); else cur.splice(at, 1);
-      setOption(name, cur.length ? cur : null);
-    } else {
-      // Clicking the current answer clears it: a question may stay unanswered,
-      // and a misclick must be undoable.
-      setOption(name, state.options[name] === value ? null : value);
-    }
-  }
-
-  function setOption(name, value) {
-    if (value === null) delete state.options[name];
-    else state.options[name] = value;
-    save();
-    renderOptions();
-  }
-
-  function renderOptions() {
-    $$("[data-pi-option]").forEach(setupOption);
-  }
-
-  function enhanceOptionNode(node, opt) {
-    if (node.getAttribute("data-ap-item") === "1") return;
-    node.setAttribute("data-ap-item", "1");
-    node.setAttribute("data-value", node.getAttribute("data-pi-value"));
-    node.classList.add("ap-opt-item");
-    node.setAttribute("role", opt.multiple ? "checkbox" : "radio");
-
-    var mark = document.createElement("span");
-    mark.className = "ap-opt-mark";
-    node.insertBefore(mark, node.firstChild);
-
-    node.addEventListener("click", function (ev) {
-      // Links and form controls inside a card keep their own behaviour.
-      var hit = ev.target.closest && ev.target.closest("a,input,button,textarea,select");
-      if (hit && hit !== node) return;
-      toggleOption(opt.name, opt.multiple, node.getAttribute("data-value"));
-    });
-  }
-
-  function setupOption(el) {
-    var opt = readOption(el);
-    if (!opt.name || !opt.entries.length) return;
-
-    if (el.getAttribute("data-ap-ready") !== "1") {
-      el.setAttribute("data-ap-ready", "1");
-      el.classList.add("ap-opt");
-      el.setAttribute("role", opt.multiple ? "group" : "radiogroup");
-      if (opt.multiple) el.setAttribute("data-multiple", "true");
-      if (opt.prompt) el.setAttribute("aria-label", opt.prompt);
-
-      var custom = opt.entries.some(function (e) { return !!e.node; });
-
-      if (custom) {
-        el.setAttribute("data-layout", "content");
-        if (opt.prompt) el.insertBefore(promptNode(opt.prompt), el.firstChild);
-        opt.entries.forEach(function (entry) { enhanceOptionNode(entry.node, opt); });
-      } else {
-        el.textContent = "";
-        if (opt.prompt) el.appendChild(promptNode(opt.prompt));
-        var list = document.createElement("div");
-        list.className = "ap-opt-list";
-        opt.entries.forEach(function (entry) {
-          var item = document.createElement("button");
-          item.type = "button";
-          item.className = "ap-opt-item";
-          item.setAttribute("data-value", entry.value);
-          item.setAttribute("role", opt.multiple ? "checkbox" : "radio");
-          var mark = document.createElement("span");
-          mark.className = "ap-opt-mark";
-          var label = document.createElement("span");
-          label.className = "ap-opt-label";
-          label.textContent = entry.label;
-          item.appendChild(mark);
-          item.appendChild(label);
-          item.addEventListener("click", function () {
-            toggleOption(opt.name, opt.multiple, entry.value);
-          });
-          list.appendChild(item);
-        });
-        el.appendChild(list);
-      }
-
-      // Arrow keys move the selection inside a radio group, like native radios.
-      el.addEventListener("keydown", function (ev) {
-        if (opt.multiple) return;
-        var items = $$(".ap-opt-item", el);
-        var idx = items.indexOf(document.activeElement);
-        if (idx === -1) return;
-        var delta = (ev.key === "ArrowDown" || ev.key === "ArrowRight") ? 1
-          : (ev.key === "ArrowUp" || ev.key === "ArrowLeft") ? -1 : 0;
-        if (!delta) return;
-        ev.preventDefault();
-        var next = items[(idx + delta + items.length) % items.length];
-        next.focus();
-        next.click();
-      });
-
-      if (el.hasAttribute("data-pi-default") && state.options[opt.name] === undefined) {
-        var preset = el.getAttribute("data-pi-default");
-        state.options[opt.name] = opt.multiple
-          ? preset.split(",").map(function (s) { return s.trim(); }).filter(Boolean)
-          : preset.trim();
-        save();
-      }
-    }
-
-    // Paint from state. Roving tabindex keeps the group a single tab stop.
-    var current = state.options[opt.name];
-    var items = $$(".ap-opt-item", el);
-    var focusAt = 0;
-    items.forEach(function (item, index) {
-      var value = item.getAttribute("data-value");
-      var on = opt.multiple
-        ? Array.isArray(current) && current.indexOf(value) !== -1
-        : current === value;
-      item.setAttribute("aria-checked", on ? "true" : "false");
-      if (on) focusAt = index;
-    });
-    if (!opt.multiple) {
-      items.forEach(function (item, index) {
-        item.setAttribute("tabindex", index === focusAt ? "0" : "-1");
-      });
-    }
-  }
-
-  // Only options whose container is still on the page are exported: if the
-  // question is gone, its old answer is noise.
-  function optionLines() {
-    var out = [];
-    $$("[data-pi-option]").forEach(function (el) {
-      var opt = readOption(el);
-      if (!opt.name) return;
-      var value = state.options[opt.name];
-      if (value === undefined || value === null || value === "") return;
-      var values = Array.isArray(value) ? value.filter(Boolean) : [value];
-      if (!values.length) return;
-
-      var labels = values.map(function (v) {
-        for (var i = 0; i < opt.entries.length; i++) {
-          if (opt.entries[i].value === v) return opt.entries[i].label || v;
-        }
-        return v;
-      });
-      var head = opt.prompt && opt.prompt !== opt.name ? opt.prompt + "（" + opt.name + "）" : opt.name;
-      var labelText = labels.join("、");
-      var valueText = values.join(", ");
-      out.push("- " + head + "：" + (labelText === valueText ? valueText : labelText + "（" + valueText + "）"));
-    });
-    return out;
   }
 
   // ── composer ───────────────────────────────────────────────────────────
@@ -566,6 +342,9 @@
       el.setAttribute("data-ap-anchor-ready", "1");
       el.addEventListener("click", function (ev) {
         if (ev.target.closest("a,input,button,textarea,select")) return;
+        // Nested anchors (a list item inside an anchored list) must open the
+        // innermost one only, so the click stops here.
+        ev.stopPropagation();
         openComposer(el);
       });
     });
@@ -580,14 +359,6 @@
       (PAGE_SESSION ? " · session=" + PAGE_SESSION : "") +
       " · " + nowIso() + " -->"
     );
-
-    var opts = optionLines();
-    if (opts.length) {
-      lines.push("");
-      lines.push("## 选择");
-      lines.push("");
-      opts.forEach(function (line) { lines.push(line); });
-    }
 
     if (state.comments.length) {
       lines.push("");
@@ -735,14 +506,9 @@
 
   // ── misc actions ───────────────────────────────────────────────────────
   function clearDraft() {
-    var options = optionLines().length;
-    if (!state.comments.length && !options) return;
-    var what = [];
-    if (state.comments.length) what.push(state.comments.length + " 条批注");
-    if (options) what.push(options + " 项选择");
-    if (!window.confirm("清空" + what.join("、") + "？这一步不能撤销。")) return;
+    if (!state.comments.length) return;
+    if (!window.confirm("清空 " + state.comments.length + " 条批注？这一步不能撤销。")) return;
     state.comments = [];
-    state.options = {};
     state.submittedAt = null;
     save();
     render();
@@ -755,82 +521,9 @@
     location.replace(base + "?r=" + Date.now());
   }
 
-  // ── markdown blocks (offline, ~60 lines) ───────────────────────────────
-  function renderMarkdown(src) {
-    function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
-    function inline(s) {
-      return esc(s)
-        .replace(/`([^`]+)`/g, "<code>$1</code>")
-        .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-        .replace(/(^|\W)\*([^*]+)\*/g, "$1<em>$2</em>")
-        .replace(/~~([^~]+)~~/g, "<del>$1</del>")
-        .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-    }
-    var lines = String(src).replace(/\r\n?/g, "\n").split("\n");
-    var out = [];
-    var i = 0;
-    while (i < lines.length) {
-      var line = lines[i];
-      if (/^\s*$/.test(line)) { i++; continue; }
-      if (/^```(\w*)\s*$/.test(line)) {
-        i++;
-        var buf = [];
-        while (i < lines.length && !/^```\s*$/.test(lines[i])) buf.push(lines[i++]);
-        i++;
-        out.push("<pre><code>" + esc(buf.join("\n")) + "</code></pre>");
-        continue;
-      }
-      var h = line.match(/^(#{1,6})\s+(.*)$/);
-      if (h) { out.push("<h" + h[1].length + ">" + inline(h[2]) + "</h" + h[1].length + ">"); i++; continue; }
-      if (/^\s*([-*_])\s*\1\s*\1\s*$/.test(line)) { out.push("<hr>"); i++; continue; }
-      if (/^\s*>\s?/.test(line)) {
-        var q = [];
-        while (i < lines.length && /^\s*>\s?/.test(lines[i])) q.push(lines[i++].replace(/^\s*>\s?/, ""));
-        out.push("<blockquote>" + inline(q.join(" ")) + "</blockquote>");
-        continue;
-      }
-      if (/^\s*([-*+]|\d+\.)\s+/.test(line)) {
-        var ordered = /^\s*\d+\./.test(line);
-        var items = [];
-        while (i < lines.length && /^\s*([-*+]|\d+\.)\s+/.test(lines[i])) {
-          items.push(lines[i++].replace(/^\s*([-*+]|\d+\.)\s+/, ""));
-        }
-        out.push((ordered ? "<ol>" : "<ul>") + items.map(function (t) { return "<li>" + inline(t) + "</li>"; }).join("") + (ordered ? "</ol>" : "</ul>"));
-        continue;
-      }
-      if (/^\s*\|.*\|\s*$/.test(line) && i + 1 < lines.length && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1])) {
-        var cells = function (l) { return l.trim().replace(/^\||\|$/g, "").split("|").map(function (c) { return c.trim(); }); };
-        var head = cells(lines[i]);
-        i += 2;
-        var rows = [];
-        while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) rows.push(cells(lines[i++]));
-        out.push("<table><thead><tr>" + head.map(function (c) { return "<th>" + inline(c) + "</th>"; }).join("") +
-          "</tr></thead><tbody>" + rows.map(function (r) {
-            return "<tr>" + r.map(function (c) { return "<td>" + inline(c) + "</td>"; }).join("") + "</tr>";
-          }).join("") + "</tbody></table>");
-        continue;
-      }
-      var para = [];
-      while (i < lines.length && !/^\s*$/.test(lines[i]) && !/^(#{1,6}\s|```|\s*>|\s*([-*+]|\d+\.)\s|\s*\|)/.test(lines[i])) {
-        para.push(lines[i++]);
-      }
-      out.push("<p>" + inline(para.join(" ")) + "</p>");
-    }
-    return out.join("\n");
-  }
-
-  function renderMarkdownBlocks() {
-    $$('script[type="text/markdown"]').forEach(function (node) {
-      var host = document.createElement("div");
-      host.innerHTML = renderMarkdown(node.textContent || "");
-      node.parentNode.replaceChild(host, node);
-    });
-  }
-
   // ── wiring ─────────────────────────────────────────────────────────────
   function setup() {
     load();
-    renderMarkdownBlocks();
     setupAnchors();
     render();
     updateStatus();
@@ -874,38 +567,20 @@
         if (ev.key === "Escape") hidePop();
       });
     }
-
   }
 
   function updateStatus() {
     if (!storageOK) return;
     var el = $("[data-ap-status]");
     if (!el) return;
-    var picked = [];
-    if (state.comments.length) picked.push(state.comments.length + " 条批注");
-    var options = optionLines().length;
-    if (options) picked.push(options + " 项选择");
-    var parts = [picked.length ? "草稿已保存 · " + picked.join(" · ") : "草稿保存在本机浏览器，刷新不会丢"];
+    var parts = [
+      state.comments.length
+        ? "草稿已保存 · " + state.comments.length + " 条批注"
+        : "草稿保存在本机浏览器，刷新不会丢"
+    ];
     if (state.submittedAt) parts.push("上次导出 " + fmtTime(state.submittedAt));
     el.textContent = parts.join(" · ");
   }
-
-  // ── public api (for custom pages) ──────────────────────────────────────
-  var api = {
-    __askPage: true,
-    pageId: PAGE_ID,
-    session: PAGE_SESSION,
-    state: state,
-    comment: addComment,
-    option: setOption,
-    submit: submit,
-    exportText: buildExport,
-    preview: showPop,
-    reload: reloadLatest,
-    rescan: function () { setupAnchors(); render(); }
-  };
-  window.askPage = api;
-  window.pi = window.pi || api; // older pages may still call pi.*
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", setup);

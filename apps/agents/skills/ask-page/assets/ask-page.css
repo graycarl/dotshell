@@ -1,18 +1,20 @@
 /* ask-page · page styles (inlined into the output by `ask_page.py new`)
-   Prefix: .ap-*  |  Theme: light + dark via prefers-color-scheme. */
+   Prefix: .ap-*  |  Theme: light + dark via prefers-color-scheme.
+
+   Scope: one Markdown document, typeset. There are no widgets here — no
+   callouts, no diff colouring, no card grids, no choice lists. Anything the
+   document needs is expressed in Markdown itself. */
 
 :root{
   --ap-accent:#2f6fed; --ap-accent-soft:rgba(47,111,237,.10);
   --ap-bg:#f6f7f9; --ap-fg:#14171d; --ap-muted:#6b7280; --ap-line:rgba(0,0,0,.10);
   --ap-card:#fff; --ap-code:#f2f3f6; --ap-ok:#1a7f37; --ap-warn:#b8860b; --ap-bad:#c0392b;
-  --ap-quote:rgba(0,0,0,.06);
 }
 @media (prefers-color-scheme:dark){
   :root{
     --ap-accent:#6f9bff; --ap-accent-soft:rgba(111,155,255,.14);
     --ap-bg:#0f1115; --ap-fg:#e7e9ee; --ap-muted:#9aa3b2; --ap-line:rgba(255,255,255,.12);
     --ap-card:#171a20; --ap-code:#1e222a; --ap-ok:#4fd07a; --ap-warn:#e0b24a; --ap-bad:#f0705f;
-    --ap-quote:rgba(255,255,255,.07);
   }
 }
 
@@ -20,21 +22,17 @@ html{color-scheme:light dark; scroll-behavior:smooth}
 *{box-sizing:border-box}
 body{
   margin:0;background:var(--ap-bg);color:var(--ap-fg);padding-bottom:92px;
-  font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  font:16px/1.72 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
   -webkit-font-smoothing:antialiased;
 }
 a{color:var(--ap-accent)}
-code,pre,kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.92em}
-code{background:var(--ap-code);padding:.12em .38em;border-radius:5px}
-pre{background:var(--ap-code);padding:14px 16px;border-radius:10px;overflow:auto;border:1px solid var(--ap-line)}
-pre code{background:none;padding:0}
 img{max-width:100%}
 
 /* ── header ─────────────────────────────────────────── */
 .ap-head{max-width:1180px;margin:0 auto;padding:34px 24px 6px}
 .ap-eyebrow{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--ap-muted)}
 .ap-head h1{margin:6px 0 4px;font-size:26px;letter-spacing:-.01em}
-.ap-head .ap-sub{margin:0;color:var(--ap-muted);max-width:80ch}
+.ap-head .ap-sub{margin:0;color:var(--ap-muted);max-width:80ch;font-size:14px}
 .ap-meta{margin-top:10px;font-size:12.5px;color:var(--ap-muted);display:flex;gap:16px;flex-wrap:wrap;align-items:center}
 .ap-meta .ap-warn-text{color:var(--ap-warn)}
 .ap-link{
@@ -44,107 +42,78 @@ img{max-width:100%}
 .ap-link:hover{color:var(--ap-fg);border-color:var(--ap-accent)}
 
 /* ── layout ─────────────────────────────────────────── */
-.ap-layout{max-width:1180px;margin:0 auto;padding:18px 24px 40px;display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:26px;align-items:start}
+.ap-layout{max-width:1180px;margin:0 auto;padding:18px 24px 48px;display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:32px;align-items:start}
 @media (max-width:960px){.ap-layout{grid-template-columns:minmax(0,1fr)}}
 
-main{min-width:0}
-main section{background:var(--ap-card);border:1px solid var(--ap-line);border-radius:14px;padding:20px 22px;margin-bottom:18px}
-main section > :first-child{margin-top:0}
-main section > :last-child{margin-bottom:0}
-h2{font-size:19px;margin:26px 0 8px}
-h3{font-size:16px;margin:20px 0 6px}
-ul,ol{padding-left:22px}
-.muted{color:var(--ap-muted)}
+/* ── the document ───────────────────────────────────── */
+.ap-doc{
+  min-width:0;max-width:78ch;padding:38px 44px;
+  background:var(--ap-card);border:1px solid var(--ap-line);border-radius:14px;
+}
+@media (max-width:640px){.ap-doc{padding:22px 18px}}
+.ap-doc > :first-child{margin-top:0}
+.ap-doc > :last-child{margin-bottom:0}
+.ap-doc h1{font-size:27px;line-height:1.32;letter-spacing:-.015em;margin:0 0 16px}
+.ap-doc h2{font-size:21px;line-height:1.38;margin:34px 0 10px;padding-top:4px}
+.ap-doc h3{font-size:17.5px;margin:26px 0 8px}
+.ap-doc h4{font-size:16px;margin:20px 0 6px}
+.ap-doc h5,.ap-doc h6{font-size:15px;margin:18px 0 6px;color:var(--ap-muted)}
+.ap-doc p{margin:0 0 15px}
+.ap-doc ul,.ap-doc ol{margin:0 0 15px;padding-left:24px}
+.ap-doc li{margin:4px 0}
+.ap-doc li > ul,.ap-doc li > ol{margin:4px 0 2px}
+.ap-doc li::marker{color:var(--ap-muted)}
+.ap-doc blockquote{
+  margin:14px 0;padding:2px 16px;border-left:3px solid var(--ap-line);color:var(--ap-muted);
+}
+.ap-doc blockquote > :last-child{margin-bottom:0}
+.ap-doc hr{border:0;border-top:1px solid var(--ap-line);margin:26px 0}
+.ap-doc strong{font-weight:650}
+.ap-doc del{color:var(--ap-muted)}
+.ap-doc a{text-underline-offset:3px}
 
-.callout{border-left:3px solid var(--ap-accent);background:color-mix(in srgb,var(--ap-accent) 8%,transparent);padding:10px 14px;border-radius:0 8px 8px 0;margin:12px 0}
-.callout.warn{border-color:var(--ap-warn);background:color-mix(in srgb,var(--ap-warn) 12%,transparent)}
-.callout.ok{border-color:var(--ap-ok);background:color-mix(in srgb,var(--ap-ok) 12%,transparent)}
-.diff{background:var(--ap-code);border:1px solid var(--ap-line);border-radius:10px;padding:12px 14px;overflow:auto;font-family:ui-monospace,Menlo,monospace;font-size:13px}
-.diff .add{color:var(--ap-ok)}
-.diff .del{color:var(--ap-bad)}
-.diff .hunk{color:var(--ap-muted)}
-.card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:12px 0}
-.card{border:1px solid var(--ap-line);border-radius:10px;padding:12px 14px;background:var(--ap-card)}
-.card b{display:block;margin-bottom:4px}
-table{border-collapse:collapse;width:100%;margin:12px 0;font-size:14px}
-blockquote{border-left:3px solid var(--ap-line);margin:12px 0;padding:4px 14px;color:var(--ap-muted)}
-hr{border:0;border-top:1px solid var(--ap-line);margin:22px 0}
-th,td{border:1px solid var(--ap-line);padding:7px 10px;text-align:left}
-figure{margin:14px 0;text-align:center}
-figcaption{font-size:12.5px;color:var(--ap-muted);margin-top:6px}
+/* code */
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.9em}
+code{background:var(--ap-code);padding:.12em .38em;border-radius:5px}
+pre{
+  margin:0 0 15px;padding:14px 16px;border-radius:10px;overflow:auto;
+  background:var(--ap-code);border:1px solid var(--ap-line);line-height:1.55;
+}
+pre code{background:none;padding:0;font-size:.9em}
+
+/* table */
+.ap-doc table{border-collapse:collapse;width:100%;margin:0 0 15px;font-size:14.5px}
+.ap-doc th,.ap-doc td{border:1px solid var(--ap-line);padding:7px 11px;text-align:left;vertical-align:top}
+.ap-doc th{background:var(--ap-code);font-weight:650}
+.ap-doc .ta-c{text-align:center}
+.ap-doc .ta-r{text-align:right}
+.ap-doc .ap-task{color:var(--ap-muted);margin-right:2px}
 
 /* ── anchorable content ─────────────────────────────── */
-/* Underline hugs the text (not the box), so a clickable paragraph never
-   looks like a full-width section divider. */
+/* Underline hugs the text (not the box), so a clickable paragraph never looks
+   like a full-width section divider. Headings shrink to their text. */
 .ap-anchorable{
   cursor:pointer;border-radius:4px;
   text-decoration:underline;
-  text-decoration-color:color-mix(in srgb,var(--ap-accent) 45%,transparent);
+  text-decoration-color:color-mix(in srgb,var(--ap-accent) 42%,transparent);
   text-decoration-thickness:1px;
   text-underline-offset:4px;
   transition:background .12s;
 }
-/* Headings shrink to their text so the hover highlight reads as a target. */
-h2.ap-anchorable,h3.ap-anchorable{display:inline-block}
-/* Dense blocks: underlining every line is noise, hover is enough. */
-pre.ap-anchorable,table.ap-anchorable,.diff.ap-anchorable,code.ap-anchorable{text-decoration:none}
+h1.ap-anchorable,h2.ap-anchorable,h3.ap-anchorable,h4.ap-anchorable{display:inline-block}
+/* Dense or structural blocks: underlining every line is noise, hover is enough. */
+pre.ap-anchorable,table.ap-anchorable,blockquote.ap-anchorable,
+li.ap-anchorable,code.ap-anchorable{text-decoration:none}
 .ap-anchorable:hover{background:var(--ap-accent-soft)}
-.ap-anchored{background:color-mix(in srgb,var(--ap-warn) 18%,transparent);text-decoration-color:var(--ap-warn)}
-
-/* ── option list ────────────────────────────────────── */
-.ap-opt{margin:14px 0;max-width:660px}
-.ap-opt-prompt{font-size:13.5px;font-weight:600;margin-bottom:6px}
-.ap-opt-list{display:flex;flex-direction:column;gap:2px}
-
-/* shared by every choice */
-.ap-opt-item{position:relative;cursor:pointer;transition:background .12s,border-color .12s,box-shadow .12s}
-.ap-opt-item:focus-visible{outline:2px solid var(--ap-accent);outline-offset:2px}
-
-/* shape 1: generated rows */
-.ap-opt-list .ap-opt-item{
-  display:flex;align-items:flex-start;gap:10px;width:100%;text-align:left;
-  font:inherit;font-size:14px;line-height:1.55;padding:8px 12px;border-radius:9px;
-  border:1px solid transparent;background:transparent;color:inherit;
-}
-.ap-opt-list .ap-opt-item:hover{background:var(--ap-accent-soft)}
-.ap-opt-mark{
-  flex:none;width:15px;height:15px;margin-top:2px;border-radius:50%;position:relative;
-  border:1.5px solid color-mix(in srgb,var(--ap-fg) 30%,transparent);
-  transition:border-color .12s;
-}
-.ap-opt[data-multiple="true"] .ap-opt-mark{border-radius:4px}
-.ap-opt-list .ap-opt-item[aria-checked="true"]{
-  border-color:color-mix(in srgb,var(--ap-accent) 40%,transparent);
-  background:var(--ap-accent-soft);
-}
-.ap-opt-item[aria-checked="true"] .ap-opt-mark{border-color:var(--ap-accent)}
-.ap-opt-item[aria-checked="true"] .ap-opt-mark::after{
-  content:"";position:absolute;inset:2.5px;border-radius:50%;background:var(--ap-accent);
-}
-.ap-opt[data-multiple="true"] .ap-opt-item[aria-checked="true"] .ap-opt-mark::after{border-radius:1.5px}
-
-/* shape 2: your own markup (cards) */
-.ap-opt[data-layout="content"]{
-  display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
-  gap:10px;max-width:100%;
-}
-.ap-opt[data-layout="content"] .ap-opt-prompt{grid-column:1/-1;margin-bottom:0}
-.ap-opt[data-layout="content"] .ap-opt-item{padding-right:42px}
-.ap-opt[data-layout="content"] .ap-opt-mark{position:absolute;right:14px;top:14px;margin:0}
-.ap-opt[data-layout="content"] .ap-opt-item[aria-checked="true"]{
-  border-color:var(--ap-accent);
-  box-shadow:0 0 0 1.5px var(--ap-accent);
-}
-.ap-opt[data-layout="content"] .ap-opt-item:not([aria-checked="true"]):hover{
-  border-color:color-mix(in srgb,var(--ap-accent) 45%,transparent);
-}
+.ap-anchored{background:color-mix(in srgb,var(--ap-warn) 16%,transparent);text-decoration-color:var(--ap-warn)}
+li.ap-anchored{box-shadow:inset 3px 0 0 var(--ap-warn)}
 
 /* ── side panel ─────────────────────────────────────── */
 aside.ap-side{position:sticky;top:18px;display:flex;flex-direction:column;gap:14px}
 .ap-panel{background:var(--ap-card);border:1px solid var(--ap-line);border-radius:14px;padding:14px 16px}
 .ap-panel-head{font-size:13px;font-weight:700;display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
 .ap-panel-head .ap-count{font-weight:400;color:var(--ap-muted)}
-.ap-empty{color:var(--ap-muted);font-size:13px;line-height:1.5}
+.ap-empty{color:var(--ap-muted);font-size:13px;line-height:1.55}
 
 .ap-comment{border-left:3px solid var(--ap-accent);padding:2px 0 2px 10px;margin:0 0 14px}
 .ap-comment:last-child{margin-bottom:0}

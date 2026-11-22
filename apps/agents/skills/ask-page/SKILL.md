@@ -1,67 +1,78 @@
 ---
 name: ask-page
 description: >
-  把内容做成一份本机 HTML 页面给用户审阅：逐条批注，点「复制结果」粘回对话继续。
-  用户要求"上网页确认 / 评审 / 批注 / 用 ask-page 问一下"时使用。
+  把一份纯 Markdown 文档变成可逐条批注的本机 HTML：用户点段落写意见，点「复制结果」粘回对话。
+  只在需要用户审阅一段 Markdown 内容时使用。
 ---
 
-# ask-page：把内容搬到网页上，让用户批注后粘回来
+# ask-page：审阅一份 Markdown
 
-agent 写正文 → 脚本拼成一份**自包含 HTML** → 打开浏览器 → 用户逐条批注 →
-点「复制结果」（按钮上方弹出预览）→ 粘回对话 → agent 解析继续。
+agent 写 Markdown → 脚本渲染成**一份自包含 HTML** → 浏览器打开 → 用户逐条批注 →
+点「复制结果」→ 粘回对话 → agent 解析继续。
 
-**没有服务进程、没有端口、没有后台任务、没有需要清理的东西。** 产物就是一份
-单文件 HTML，可以随便拷贝、邮件、归档。
+没有服务进程、没有端口、没有后台任务。产物就是一份单文件 HTML。
 
 ## 1 什么时候用
 
 | 场景 | 用什么 |
 |---|---|
-| 方案 / 计划 / 文档 / diff / 报告要用户拍板 | **ask-page** |
-| 用户要逐条写批注、圈重点 | **ask-page** |
-| 内容长、有代码块 / 表格，TUI 里塞不下 | **ask-page** |
+| 方案 / 计划 / 文档 / 报告要用户逐条提意见 | **ask-page** |
+| 内容长、有表格或代码块，TUI 里塞不下 | **ask-page** |
+| 已经写成一份 Markdown，想让人在上面圈重点 | **ask-page** |
 | "要么 A 要么 B，选一个" | `ask_user` |
-| 需要用户提供一小段文字 / 一个文件名 | 直接问，或 `ask_user` |
+| 需要用户提供一小段文字 / 一个文件名 | 直接问 |
 
-不要为了用而用：一句话能问清楚，就别开网页。
+**只喂纯 Markdown。** 这个页面没有任何内置组件：没有选项列表、没有 callout / diff /
+卡片，也不接受原始 HTML（正文里的标签会被转义成文本）。它擅长的事情只有一件——
+把一份 Markdown 排版好、让每一块都能被点开批注。
 
-## 2 四步流程
+一句话能问清的，不要开网页。
+
+## 2 三步
 
 ```bash
 SKILL=~/.pi/agent/skills/ask-page     # 本 SKILL.md 所在目录
 ASK="python3 $SKILL/scripts/ask_page.py"
 ```
 
-产物落在 **`.pi/ask-pages/<session-id>/`**，`<session-id>` 取自当前 session
-（`sha1($PI_SESSION_ID)[:8]`，读不到就退回 `default`）。所以同一个项目里开两个
-session，各自的 `plan.html` 和草稿互不干扰。
-
-**① 写正文**（不是整页 HTML，只写要展示的内容）
+**① 写 Markdown**（就是你要给人看的那份文档本身）
 
 ```bash
-$ASK new plan --title "方案确认" --open --body - <<'HTML'
-<section>
-  <h2 data-pi-anchor="plan-1">第一段</h2>
-  <p>…</p>
-</section>
-HTML
+$ASK new plan --open --body - <<'MD'
+# 方案确认
+
+## 1 背景
+现在 `submit()` 拷贝失败时会静默返回。
+
+## 2 改动
+| 路径 | 现在 | 改后 |
+|---|---|---|
+| clipboard | `"clipboard"` | `{ok: true}` |
+
+## 3 待确认
+- [ ] 表格结构够不够清楚
+MD
 ```
 
-heredoc 把①②合成一步；脚本会把正文**同时存一份**到 `<session-id>/plan.body.html`，第二轮改那个文件。
+正文第一个 `# ` 会被取走当页面标题（原位置不再重复显示），所以**通常不用传
+`--title`**；传了就用 `--title`，文档里的 h1 则留在正文里。
 
-**② 生成并打开**（就是上面那条命令；也可以先把正文写成文件再 `new`，见下）
+heredoc 把 ①② 合成一步；脚本会把 Markdown **同时存一份**到
+`.pi/ask-pages/<session-id>/plan.md`，第二轮改这个文件（见 §5）。
+
+**② 生成并打开**（就是上面那条命令；也可以先把 `.md` 写好再 `new`）
 
 ```bash
 $ASK dir                     # → {"session":"3f9a1c2e","dir":"…/.pi/ask-pages/3f9a1c2e"}
-$ASK new plan --title "方案确认" --open      # 不给 --body 时读 <session-id>/plan.body.html
+$ASK new plan --open                        # 不给 --body 时读 <session>/plan.md
 ```
 
 stdout 只有一行 JSON，第二轮要用的路径都在里面：
 
 ```json
 {"status":"built","session":"3f9a1c2e","sessionSource":"pi_session","pageId":"plan",
- "dir":"…/.pi/ask-pages/3f9a1c2e","bodyPath":"…/plan.body.html",
- "path":"…/plan.html","url":"file://…","bytes":27431,"opened":true}
+ "dir":"…/.pi/ask-pages/3f9a1c2e","bodyPath":"…/plan.md",
+ "path":"…/plan.html","url":"file://…","bytes":38206,"opened":true}
 ```
 
 stderr 是进度，别当结果。
@@ -70,95 +81,77 @@ stderr 是进度，别当结果。
 
 > 页面已经打开了。看完点右下角「复制结果」，确认预览内容后粘回来说一声。
 
-**④ 用户粘回来** → 按 §4 解析 → 继续干活。
-
 > ⚠️ 不要试图等待或轮询：这里没有任何进程在跑，"等"就是结束本轮。
 
-## 3 正文怎么写
+## 3 Markdown 支持范围
 
-只写 `<main>` 里的内容（样式和脚本由脚本负责注入），推荐用 `<section>` 分块。
-
-| 想要的效果 | 写法 |
+| 支持 | 说明 |
 |---|---|
-| 让某块内容可被点击批注 | `<h2 data-pi-anchor="plan-3">…</h2>`（**anchor 唯一、英文短横线、跨轮次稳定**） |
-| 让用户从几个选项里选一个 | `<div data-pi-option="priority" data-pi-prompt="发布优先级" data-pi-options="low,medium,high" data-pi-labels="低 \| 中 \| 高"></div>` |
-| 多选 | 同上加 `data-pi-multiple="true"`；默认值 `data-pi-default="low,high"` |
-| 卡片式选项（能放标题、说明、代码） | 自己写内容，给每一项加 `data-pi-value`：`<div data-pi-option="plan" data-pi-prompt="选一个方案"><div class="card" data-pi-value="a"><b>方案 A</b>只加索引</div>…</div>` |
-| 不想写 HTML | `<script type="text/markdown">…</script>`，会被就地渲染（标题、列表、代码块、表格、引用） |
+| `#` ~ `######` | 第一个 `# ` 变成页面标题（见 §2） |
+| 段落、`**粗**`、`*斜*`、`~~删~~`、`` `code` ``、`[链接](url)` | |
+| `-` / `1.` 列表 | 缩进即嵌套；`- [ ]` / `- [x]` 渲染成勾选框 |
+| `\| 表格 \|` | 支持 `:---` / `:---:` / `---:` 对齐 |
+| ``` 围栏代码块 ``` | 会带上 `language-*` 类，不做高亮 |
+| `>` 引用、`---` 分割线、`![](相对路径)` 图片 | |
 
-现成的例子：`assets/example.html` 覆盖了全部预置组件，直接
-
-```bash
-$ASK new demo --title "组件清单" --body "$SKILL/assets/example.html" --open
-```
-
-可用的样式类（已内置，直接用）：
-
-- `.callout` / `.callout.warn` / `.callout.ok` —— 提示块
-- `.diff` + `.add` / `.del` / `.hunk` —— diff 着色
-- `.card-grid` + `.card` —— 卡片（也可以直接当选项用）
-- 普通 `<pre><code>`、`<table>`、`<img>` 都有统一观感
-
-关于卡片式选项：导出时的名称取该项**第一个子元素**的文字（比如 `<b>方案 A</b>`），太长会截断；
-想自己定就用 `data-pi-label="方案 A"`。卡片里的链接/按钮不会被选项的点击吃掉。
+**不支持**：原始 HTML、内联样式、脚本、脚注、定义列表、任务以外的扩展语法。
+需要超出这些的表达，就写成代码块里的文字，或者单独用 `ask_user` 问。
 
 约定：
 
 - **离线**：页面在 `file://` 下打开，不要引用 CDN、外部字体或远程图片。
-  图片和 `plan.html` 放同一目录（`.pi/ask-pages/<session-id>/`），用相对路径引用。
-- 页面标题用 `--title`，不要在正文里重复写 `<h1>`。
-- 正文只管内容，不要写 `<style>` / `<script>`（会被当成内容渲染）。
+  图片和 `<id>.html` 放同一目录（`.pi/ask-pages/<session-id>/`），用相对路径引用。
+- 页面标题只出现一次：要么正文第一行 `# `，要么 `--title`，不要两处都写。
 
-## 4 解析用户粘回来的结果
+## 4 锚点是自动的，不要手写
 
-用户粘回来的是一段带哨兵的 Markdown：
+脚本给每个标题、段落、列表项、代码块、表格算一个锚点（**按块自身的文本哈希**），
+所以正文里不需要 `data-pi-anchor`，也不需要给段落起名字。
+
+这带来一个要记住的代价：**你把某段文字改写了，挂在它上面的旧批注就变成「位置已失效」**。
+这是对的——说明那段已经处理过。反过来，只调整顺序、不改进文字，锚点不会变。
+
+## 5 用户粘回来的是什么
 
 ```text
 <!-- ask-page-result · pageId=plan · session=3f9a1c2e · 2026-05-01T12:00Z -->
 
-## 选择
-
-- 发布优先级（priority）：中（medium）
-
 ## 批注（2 条）
 
-### [plan-3] 方案要点 3 · 回滚
-这里要加回滚步骤
+### [p-c313e5] 现在 submit() 拷贝失败时会静默返回。
+这里要补一句失败时的用户可见提示
 
-> 圈选原文：提交后直接切流量
+> 圈选原文：拷贝失败
 
-### [summary] 摘要
-这段没问题，但建议补一句适用范围
+### [li-7fd219] 回归 file:// 下的三条降级路径
+这条我来跑，你先按 plan 改
 
 <!-- /ask-page-result -->
 ```
 
-解析规则只有三条：
+解析规则只有两条：
 
 1. 取 `<!-- ask-page-result` 与 `<!-- /ask-page-result -->` 之间的内容
-2. `## 选择` 小节：每行 `- 名称（id）：标签（值）` 是一道题的答案；**没有这一小节 = 用户没选**
-3. 每个 `### [锚点] 标签` 起一条批注：**下一行到下一个 `>` 行 / 下一个 `### [` / 哨兵** 之间是批注正文，
-   `> 圈选原文：` 是用户圈中的原文（可能没有）
+2. 每个 `### [锚点] 标签` 起一条批注：**下一行到下一个 `>` 行 / 下一个 `### [` / 哨兵**
+   之间是批注正文，`> 圈选原文：` 是用户圈中的原文（可能没有）
 
 补充：
 
-- `session=` 可能没有（老页面）：有的话建议跟自己 `$ASK dir` 得到的 session 对一下，
-  不一致说明用户粘错窗口了（另一个 session 的页面），先问一句再解析。
-- 选项的 `（值）` 部分可能省略（当标签和值相同时）；多选的值用 `, ` 分隔、标签用 `、` 分隔。
-- 选项可以**不回答**：点了又点一下就能取消。只导出用户真正选了的题。
-- 标题里出现 `⚠ 位置已失效` 表示这一轮的页面里已经没有该 anchor（用户批注时的那段被删了），
-  按标签推断指的是哪里，不确定就问一句。
+- `session=` 可能没有（老页面）：有的话跟 `$ASK dir` 得到的 session 对一下，不一致说明
+  用户粘错窗口了（另一个 session 的页面），先问一句再解析。
+- 标题里出现 `⚠ 位置已失效` 表示这一轮的页面里已经没有该锚点（那段被改写了），
+  按标签内容推断指的是哪里，不确定就问一句。
 - 批注是**增量反馈**，不是全量清单：用户可能保留了上一轮未解决的批注，按内容判断，
   已改好的不用重复处理。
 
 拿到结果后**必须继续干活**，不要只把结果复述一遍。
 
-## 5 多轮迭代
+## 6 多轮迭代
 
 用户提了修改意见、你改完之后，想让他在**同一个页面**上再看一遍：
 
 ```bash
-# 只改 <session-id>/plan.body.html（路径见上一轮 JSON 的 bodyPath），然后：
+# 只改 <session-id>/plan.md（路径见上一轮 JSON 的 bodyPath），然后：
 $ASK new plan --title "方案确认（v2）" --open
 ```
 
@@ -166,37 +159,32 @@ $ASK new plan --title "方案确认（v2）" --open
 
 两条硬约束：
 
-1. **`<id>` 跨轮次不变**：不要生成 `plan-v2.html`。pageId 变了，用户上一轮的草稿就丢了。
-   也**不要**手工搬目录或换 `--session`：session 变了，草稿同样丢，而且新目录等于新页面。
-2. **anchor 命名跨轮次稳定**：`plan-3` 永远是同一段话。改了 anchor，用户的旧批注会变成「位置已失效」。
+1. **`<id>` 跨轮次不变**：不要生成 `plan-v2.html`，pageId 变了用户上一轮的草稿就丢了。
+   也不要手工搬目录或换 `--session`：session 变了草稿同样丢。
+2. **改写过的段落会丢锚点**，用户的旧批注会被标成「位置已失效」——不是 bug。
+   所以每轮改完，提醒用户删掉已解决的批注。
 
-## 6 草稿存在哪
+## 7 草稿存在哪
 
-- 存在浏览器的 localStorage 里，key 是 **`ask-page:<session-id>:<pageId>`**。
-- **`file://` 下所有本地页面共用一个 origin**，所以 key 里同时带 session 和 pageId：
-  session 隔离不同会话（两个 session 都叫 `plan` 也不串），pageId 隔离同一会话里的不同页面。
-- 页面正文里的 `data-page-session` 是 key 的来源，由脚本注入；没有它的老页面继续用老 key
-  `ask-page:<pageId>`，行为不变。
-- ⚠️ **升级到分目录存储的那一轮，旧页面的草稿不会自动跟过来**：老页面把草稿存在
-  `ask-page:<pageId>`，重建后的新页面读 `ask-page:<session-id>:<pageId>`，看起来就是"草稿突然空了"。
-  不做自动迁移是故意的（迁移就可能读到另一个 session 的草稿）。所以升级那一刻，如果想
-  留住正在写的草稿，先让用户在旧页面上点一次「复制结果」，再重建页面。
-- 草稿**跨轮次保留**：用户改好的自己删，没改好的留着再提交一次。页面上有「清空草稿」。
-- 选择题的答案和批注存在同一份草稿里；页面里已经不存在的那道题，它的旧答案不会被导出。
+- 存在浏览器 localStorage 里，key 是 **`ask-page:<session-id>:<pageId>`**。
+- `file://` 下所有本地页面共用一个 origin，所以 key 里同时带 session 和 pageId：
+  session 隔离不同会话，pageId 隔离同一会话里的不同页面。
+- 草稿跨轮次保留；页面有「清空草稿」。
 - 提交过的批注会打上「已提交」标记，但**仍然会被再次导出** —— 提醒用户删掉已解决的。
 - 浏览器禁用本地存储时（隐私模式等），页面会提示「草稿无法保存」，导出仍然可用。
-- 手动跑脚本（没有 `PI_SESSION_ID`，比如在 opencode 里）会落到 `default/`，JSON 里
-  `sessionSource` 为 `fallback`。想自己指定就用 `--session <名字>` 或 `ASK_PAGE_SESSION=<名字>`。
+- 手动跑脚本（没有 `PI_SESSION_ID`，比如在 opencode 里）会落到 `default/`，
+  JSON 里 `sessionSource` 为 `fallback`。想自己指定就用 `--session <名字>` 或
+  `ASK_PAGE_SESSION=<名字>`。
 
-## 7 收尾
+## 8 收尾
 
 页面会留在 `.pi/ask-pages/<session-id>/`，方便用户事后回看：
 
 ```
 .pi/ask-pages/
 ├── 3f9a1c2e/          ← 本次 session
-│   ├── plan.body.html   你写的正文（下一轮改这个）
-│   └── plan.html        生成的页面（单文件，可直接打开 / 拷贝）
+│   ├── plan.md         你写的 Markdown（下一轮改这个）
+│   └── plan.html       生成的页面（单文件，可直接打开 / 拷贝）
 └── 8b21d0aa/          ← 另一个 session，互不影响
 ```
 
@@ -209,15 +197,15 @@ $ASK prune --older-than 3     # 真删；永远跳过当前 session 和 default/
 
 不要把它加进 git（`.pi/` 已在 `.gitignore` 里，除非用户要求）。
 
-## 8 坑
+## 9 坑
 
 - **stdout 只有一行 JSON**，解析它；别把 stderr 当结果。
+- 正文里写 HTML 会被**转义成文本**显示，不是"悄悄生效"——别试。
 - 图片/截图**不在页面上传**：请用户在对话里直接贴图。
 - 页面不会自动刷新（没有服务端），改完必须让用户点「↻ 载入最新内容」。
-- `new` 会覆盖旧的 `plan.html`，但**不会**动 localStorage 里的草稿。
+- `new` 会覆盖旧的 `<id>.html`，但**不会**动 localStorage 里的草稿。
 - 用户可能一条批注都没写就关掉页面 —— 那说明他没意见或不想说，别追问。
-- `list` 只列当前 session；要找别的 session 的页面用 `list --all`。
-- 2026-11 之前的旧目录 `.pi/ask-page/`（单数、平铺）不再被识别：不迁移、不出现在 `list` 里，
-  需要时让用户手动删。
+- 2026-11 之前的旧目录 `.pi/ask-page/`（单数、平铺）不再被识别；旧版 `<id>.body.html`
+  也不再读取。需要时让用户手动删。
 - `prune` 只删名字是 8 位 hex 的 session 目录，不碰当前 session 和 `default/`；先 `--dry-run` 看一眼。
 - 页面 URL 是普通 `file://` 路径，不含 token，但仍不建议提交进仓库。

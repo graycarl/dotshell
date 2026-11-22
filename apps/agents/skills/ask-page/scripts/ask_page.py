@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""ask-page — build a self-contained review page and open it in the browser.
+"""ask-page — turn a Markdown document into a self-contained review page.
 
 No server, no port, no daemon. The output is a single HTML file: styles and
 behaviour are inlined, comments live in the browser's localStorage, and the
 page's "复制结果" button copies a Markdown block that the user pastes back
 into the chat.
+
+The body is Markdown and nothing else. It is rendered here, at build time, and
+every block gets a `data-pi-anchor` derived from its own text — the agent does
+not write HTML and does not name anchors. Only a small subset of Markdown is
+supported (headings, paragraphs, nested lists, task items, tables, fenced
+code, blockquotes, rules, images); raw HTML in the body is escaped on purpose.
 
 Usage:
     ask_page.py new  <id> [--body FILE|-] [--title T] [--root DIR] [--session S] [--open]
@@ -14,7 +20,7 @@ Usage:
     ask_page.py prune [--older-than DAYS] [--dry-run] [--root DIR] [--session S]
 
 Layout (default base: <cwd>/.pi/ask-pages):
-    <session>/<id>.body.html   the body the agent writes (kept, so round 2 edits this file)
+    <session>/<id>.md          the Markdown the agent writes (kept, so round 2 edits this file)
     <session>/<id>.html        the built page: one file, self-contained, safe to email
 
 <session> isolates concurrent agent sessions from each other, because the body
@@ -139,7 +145,7 @@ def sanitize_id(raw: str) -> str:
 
 
 def body_path(session_dir: Path, page_id: str) -> Path:
-    return session_dir / f"{page_id}.body.html"
+    return session_dir / f"{page_id}.md"
 
 
 def page_path(session_dir: Path, page_id: str) -> Path:
@@ -177,6 +183,283 @@ def dir_mtime(path: Path) -> float:
             except OSError:
                 pass
     return newest
+
+
+# ─── markdown ────────────────────────────────────────────────────────────────
+# A deliberately small subset, in the spirit of the project: no third-party
+# parser, no extensions, no surprises. Anything richer than this belongs in a
+# plain code block (which is also what a diff or a config snippet is).
+
+FENCE = re.compile(r"^\s*(`{3,}|~{3,})\s*([A-Za-z0-9_+.-]*)\s*$")
+HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
+RULE = re.compile(r"^\s*([-*_])(?:\s*\1){2,}\s*$")
+QUOTE = re.compile(r"^\s*>\s?(.*)$")
+LIST_ITEM = re.compile(r"^(\s*)([-*+]|\d+[.)])\s+(.*)$")
+TABLE_ROW = re.compile(r"^\s*\|(.+)\|\s*$")
+TABLE_SEP = re.compile(r"^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$")
+TASK = re.compile(r"^\[( |x|X)\]\s+(.*)$")
+
+CODE_SPAN = re.compile(r"`([^`]+)`")
+AUTOLINK = re.compile(r"<(https?://[^>\s]+)>")
+
+
+class Anchorer:
+    """Hands out stable, human-greppable anchors: `<kind>-<hash6>`.
+
+    Text-derived so that reordering a document does not invalidate comments;
+    duplicates get a `-2` suffix in document order. A comment whose block text
+    was rewritten by the agent legitimately becomes stale — that block is gone.
+    """
+
+    KINDS = {"p": "p", "pre": "c", "blockquote": "q", "table": "t", "li": "li", "list": "l"}
+
+    def __init__(self) -> None:
+        self.seen: dict[str, int] = {}
+
+    def of(self, kind: str, text: str) -> str:
+        norm = " ".join(text.split())
+        anchor = f"{kind}-{hashlib.sha1(norm.encode('utf-8')).hexdigest()[:6]}"
+        count = self.seen.get(anchor, 0) + 1
+        self.seen[anchor] = count
+        return anchor if count == 1 else f"{anchor}-{count}"
+
+
+def with_anchor(fragment: str, anchor: str) -> str:
+    """Inject data-pi-anchor into the first (and only) opening tag."""
+    return re.sub(r"^<([A-Za-z][A-Za-z0-9]*)", lambda m: f'<{m.group(1)} data-pi-anchor="{anchor}"', fragment, count=1)
+
+
+def inline(text: str) -> str:
+    """Inline Markdown. Code spans and autolinks are stashed first so that no
+    later rule can touch their contents."""
+    stash: list[str] = []
+
+    def keep(fragment: str) -> str:
+        stash.append(fragment)
+        return f"\x00{len(stash) - 1}\x00"
+
+    text = CODE_SPAN.sub(lambda m: keep(f"<code>{html.escape(m.group(1), quote=False)}</code>"), text)
+    text = AUTOLINK.sub(
+        lambda m: keep(
+            f'<a href="{html.escape(m.group(1), quote=True)}">{html.escape(m.group(1), quote=False)}</a>'
+        ),
+        text,
+    )
+    text = html.escape(text, quote=False)
+    text = re.sub(r"!\[([^\]]*)\]\(([^)\s]+)\)", r'<img src="\2" alt="\1">', text)
+    text = re.sub(r"\[([^\]]+)\]\(([^)\s]+)\)", r'<a href="\2">\1</a>', text)
+    text = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", text)
+    text = re.sub(r"(?<![\w_])__([^_]+)__(?![\w_])", r"<strong>\1</strong>", text)
+    text = re.sub(r"(?<![\w*])\*([^*\n]+)\*(?!\*)", r"<em>\1</em>", text)
+    text = re.sub(r"(?<![\w_])_([^_\n]+)_(?![\w_])", r"<em>\1</em>", text)
+    text = re.sub(r"~~([^~]+)~~", r"<del>\1</del>", text)
+    return re.sub(r"\x00(\d+)\x00", lambda m: stash[int(m.group(1))], text)
+
+
+def starts_block(line: str) -> bool:
+    return bool(
+        HEADING.match(line)
+        or FENCE.match(line)
+        or RULE.match(line)
+        or QUOTE.match(line)
+        or LIST_ITEM.match(line)
+        or TABLE_ROW.match(line)
+    )
+
+
+def cells(line: str) -> list[str]:
+    match = TABLE_ROW.match(line)
+    return [c.strip() for c in (match.group(1) if match else "").split("|")]
+
+
+def align_of(cell: str) -> str:
+    cell = cell.strip()
+    if cell.startswith(":") and cell.endswith(":"):
+        return "c"
+    if cell.endswith(":"):
+        return "r"
+    return "l"
+
+
+def render_blockquote(lines: list[str], i: int, marks: Anchorer) -> tuple[str, int]:
+    buf: list[str] = []
+    while i < len(lines) and QUOTE.match(lines[i]):
+        buf.append(QUOTE.match(lines[i]).group(1))
+        i += 1
+    inner = "".join(render_blocks(buf, marks))
+    return with_anchor(f"<blockquote>{inner}</blockquote>", marks.of("q", " ".join(buf))), i
+
+
+def render_table(lines: list[str], i: int, marks: Anchorer) -> tuple[str, int]:
+    head = cells(lines[i])
+    aligns = [align_of(c) for c in cells(lines[i + 1])]
+    i += 2
+    rows: list[list[str]] = []
+    while i < len(lines) and TABLE_ROW.match(lines[i]):
+        rows.append(cells(lines[i]))
+        i += 1
+
+    def cell(tag: str, text: str, index: int) -> str:
+        align = aligns[index] if index < len(aligns) else "l"
+        attr = f' class="ta-{align}"' if align != "l" else ""
+        return f"<{tag}{attr}>{inline(text)}</{tag}>"
+
+    out = ["<table><thead><tr>"]
+    out.extend(cell("th", text, k) for k, text in enumerate(head))
+    out.append("</tr></thead><tbody>")
+    for row in rows:
+        out.append("<tr>" + "".join(cell("td", text, k) for k, text in enumerate(row)) + "</tr>")
+    out.append("</tbody></table>")
+    return with_anchor("".join(out), marks.of("t", " ".join(head))), i
+
+
+def collect_items(lines: list[str], i: int) -> tuple[list[dict], int]:
+    """Flatten a list run into (indent, ordered, text) records.
+
+    Continuation lines are folded into the item's text; a blank line only keeps
+    the list alive when another item follows. Blocks nested inside an item
+    (paragraphs, code fences) are out of scope — use a top-level block instead.
+    """
+    items: list[dict] = []
+    while i < len(lines):
+        line = lines[i]
+        match = LIST_ITEM.match(line)
+        if match:
+            items.append(
+                {
+                    "indent": len(match.group(1).expandtabs(2)),
+                    "ordered": match.group(2)[0].isdigit(),
+                    "text": match.group(3).strip(),
+                }
+            )
+            i += 1
+            continue
+        if not line.strip():
+            j = i
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+            if j < len(lines) and LIST_ITEM.match(lines[j]):
+                i = j
+                continue
+            break
+        if items and (len(line) - len(line.lstrip())) > items[-1]["indent"]:
+            items[-1]["text"] += " " + line.strip()
+            i += 1
+            continue
+        break
+    return items, i
+
+
+def render_list(items: list[dict], pos: int, indent: int, ordered: bool, marks: Anchorer) -> tuple[str, int]:
+    out = ["<ol>" if ordered else "<ul>"]
+    # Only this level's own items feed the list anchor: hashing the whole run
+    # would make every nested level collide into `-2`, `-3` suffixes.
+    own: list[str] = []
+    while pos < len(items) and items[pos]["indent"] == indent:
+        item = items[pos]
+        own.append(item["text"])
+        pos += 1
+        inner = ""
+        if pos < len(items) and items[pos]["indent"] > indent:
+            inner, pos = render_list(items, pos, items[pos]["indent"], items[pos]["ordered"], marks)
+
+        task = TASK.match(item["text"])
+        if task:
+            box = "☑" if task.group(1).lower() == "x" else "☐"
+            body = f'<span class="ap-task">{box}</span> {inline(task.group(2))}'
+            label = task.group(2)
+        else:
+            body = inline(item["text"])
+            label = item["text"]
+        anchor = marks.of("li", label)
+        out.append(f'<li data-pi-anchor="{anchor}">{body}{inner}</li>')
+    out.append("</ol>" if ordered else "</ul>")
+    anchor = marks.of("l", " ".join(own))
+    return with_anchor("".join(out), anchor), pos
+
+
+def render_blocks(lines: list[str], marks: Anchorer) -> list[str]:
+    out: list[str] = []
+    i = 0
+    n = len(lines)
+    while i < n:
+        line = lines[i]
+        if not line.strip():
+            i += 1
+            continue
+
+        fence = FENCE.match(line)
+        if fence:
+            marker, lang = fence.group(1), fence.group(2)
+            close = re.compile(r"^\s*" + re.escape(marker[0]) + "{" + str(len(marker)) + r",}\s*$")
+            i += 1
+            buf: list[str] = []
+            while i < n and not close.match(lines[i]):
+                buf.append(lines[i])
+                i += 1
+            i += 1  # the closing fence, or the end of the document
+            code = html.escape("\n".join(buf), quote=False)
+            cls = f' class="language-{lang}"' if lang else ""
+            out.append(with_anchor(f"<pre{cls}><code>{code}</code></pre>", marks.of("c", "\n".join(buf))))
+            continue
+
+        heading = HEADING.match(line)
+        if heading:
+            level = len(heading.group(1))
+            text = heading.group(2)
+            tag = f"h{level}"
+            out.append(with_anchor(f"<{tag}>{inline(text)}</{tag}>", marks.of("h", text)))
+            i += 1
+            continue
+
+        if RULE.match(line):
+            # A rule carries no text, so it gets no anchor: there is nothing to
+            # comment on, and a hash of "" would collide across documents.
+            out.append("<hr>")
+            i += 1
+            continue
+
+        if QUOTE.match(line):
+            fragment, i = render_blockquote(lines, i, marks)
+            out.append(fragment)
+            continue
+
+        if LIST_ITEM.match(line):
+            items, i = collect_items(lines, i)
+            fragment, _ = render_list(items, 0, items[0]["indent"], items[0]["ordered"], marks)
+            out.append(fragment)
+            continue
+
+        if TABLE_ROW.match(line) and i + 1 < n and TABLE_SEP.match(lines[i + 1]):
+            fragment, i = render_table(lines, i, marks)
+            out.append(fragment)
+            continue
+
+        # Paragraphs, and the fallback for anything unclaimed above: consuming
+        # the first line unconditionally is what guarantees the loop advances.
+        buf = [line.strip()]
+        i += 1
+        while i < n and lines[i].strip() and not starts_block(lines[i]):
+            buf.append(lines[i].strip())
+            i += 1
+        out.append(with_anchor(f"<p>{inline(' '.join(buf))}</p>", marks.of("p", " ".join(buf))))
+    return out
+
+
+def render_markdown(source: str) -> tuple[str, str, str]:
+    """(body html, leading h1 html, leading h1 text).
+
+    The h1 is returned separately because a Markdown document almost always
+    opens with its own title, and the page header already shows that title —
+    the caller drops the duplicate (see cmd_new).
+    """
+    lines = source.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    blocks = render_blocks(lines, Anchorer())
+    head, title = "", ""
+    if blocks and re.match(r"<h1\b", blocks[0]):
+        head = blocks[0]
+        title = html.unescape(re.sub(r"<[^>]+>", "", head)).strip()
+    return "\n".join(blocks), head, title
 
 
 # ─── build ───────────────────────────────────────────────────────────────────
@@ -249,7 +532,7 @@ def read_body(args: argparse.Namespace, session_dir: Path, page_id: str) -> str:
         path = body_path(session_dir, page_id)
         if not path.is_file():
             raise Failure(
-                f"没有 --body，也找不到 {path}。先把正文写到 {path}，或使用 --body - 从 stdin 读。"
+                f"没有 --body，也找不到 {path}。先把 Markdown 写到 {path}，或使用 --body - 从 stdin 读。"
             )
         content = path.read_text(encoding="utf-8")
 
@@ -264,19 +547,21 @@ def cmd_new(args: argparse.Namespace) -> int:
     page_id = sanitize_id(args.id)
 
     content = read_body(args, session_dir, page_id)
-    title = args.title or page_id
 
-    # Always keep the body next to the page, even when it came from stdin or
+    # Always keep the Markdown next to the page, even when it came from stdin or
     # from some file elsewhere: round 2 edits this copy.
     body = body_path(session_dir, page_id)
     if not body.is_file() or body.read_text(encoding="utf-8") != content:
         body.write_text(content, encoding="utf-8")
 
-    out = page_path(session_dir, page_id)
-    out.write_text(build_page(page_id, session, title, content), encoding="utf-8")
+    rendered, head, doc_title = render_markdown(content)
+    title = args.title.strip() or doc_title or page_id
+    if not args.title.strip() and head:
+        # The header shows the title; repeating it at the top of the page is noise.
+        rendered = rendered.replace(head, "", 1)
 
-    if "data-pi-anchor" not in content:
-        log("提示：正文里没有任何 data-pi-anchor，用户将无法添加批注")
+    out = page_path(session_dir, page_id)
+    out.write_text(build_page(page_id, session, title, rendered), encoding="utf-8")
 
     opened = open_in_browser(out) if args.open else False
     log(f"built {out} ({out.stat().st_size} bytes)" + (" · opened" if opened else ""))
@@ -339,6 +624,8 @@ def cmd_dir(args: argparse.Namespace) -> int:
 def page_rows(session_dir: Path) -> list[dict]:
     rows = []
     for entry in sorted(session_dir.glob("*.html")):
+        # `<id>.body.html` is the pre-Markdown body format; those files are kept
+        # on disk but are neither readable as a body nor listed as a page.
         if entry.name.endswith(".body.html"):
             continue
         stat = entry.stat()
@@ -453,8 +740,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_new = sub.add_parser("new", help="由正文生成自包含页面")
     p_new.add_argument("id", help="页面 id（= pageId = 草稿命名空间，同一 session 内跨轮次不变）")
-    p_new.add_argument("--body", default="", help="正文 HTML 文件，'-' 表示 stdin（默认读 <id>.body.html）")
-    p_new.add_argument("--title", default="", help="页面标题（默认用 id）")
+    p_new.add_argument("--body", default="", help="Markdown 文件，'-' 表示 stdin（默认读 <id>.md）")
+    p_new.add_argument("--title", default="", help="页面标题（默认取正文第一个 # 标题，再退回 id）")
     p_new.add_argument("--open", action="store_true", help="生成后立刻在浏览器打开")
     add_common(p_new)
     p_new.set_defaults(func=cmd_new)
