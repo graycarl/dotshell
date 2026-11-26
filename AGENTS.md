@@ -259,3 +259,13 @@ bash scripts/check.sh --setup
 2. 编写 `SKILL.md`（参考已有 skill 的格式）
 3. 如果有 API Key，使用 `auth.json` + `auth.json.tpl` 模式
 4. 在 pi 和 opencode 的 setup 中会自动链接
+5. 需要附带脚本时放 `scripts/`（如 `plan/scripts/open-plan.sh`）
+
+### plan 模式的产出文档
+
+`plan` skill 会把方案落盘为 `<project-root>/.pi/plans/<YYYY-MM-DD>/plan-<slug>.md`，
+并在 Marked 可用时自动打开（Marked 监听文件变化，边聊边写会实时刷新）。
+
+- 写在当前项目内、按日期分目录，`.pi/` 已被 `.gitignore` 忽略，**不入库**
+- plan 模式下 agent 的唯一写权限就是这些文档，其余文件仍只读
+- 想让 agent 产出一份可 review 的方案：消息以 `plan` 开头即可
