@@ -1,6 +1,11 @@
 ---
 name: agent-browser
-description: 用 agent-browser CLI 驱动本机浏览器：打开导航、可访问性快照 + @eN ref、点击/填表/取文本、截图/PDF、多标签、登录态复用、Electron 桌面应用、Slack。用于打开网站、填表单、点按钮、截图、抓取页面内容、登录站点、测试或调试 Web 应用，以及任何需要程序化操作浏览器的任务。Browser automation CLI: open pages, fill forms, click, screenshot, scrape data, log in, test web apps.
+description: >-
+  用 agent-browser CLI 驱动本机浏览器：打开导航、可访问性快照 + @eN ref、点击/填表/取文本、
+  截图/PDF、多标签、登录态复用、Electron 桌面应用、Slack。用于打开网站、填表单、点按钮、
+  截图、抓取页面内容、登录站点、测试或调试 Web 应用，以及任何需要程序化操作浏览器的任务。
+  Browser automation CLI: open pages, fill forms, click, screenshot, scrape data, log in,
+  test web apps.
 allowed-tools: Bash(agent-browser:*), Bash(npx agent-browser:*)
 ---
 
