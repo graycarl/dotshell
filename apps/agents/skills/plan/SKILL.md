@@ -63,6 +63,19 @@ bash ~/.pi/agent/skills/plan/scripts/open-plan.sh "$PLAN_FILE"
 ## 7 任务拆解        <!-- - [ ] 可执行条目，含文件路径 -->
 ```
 
+### 用内联 SVG 画图
+
+架构、决策树、时序、状态机优先用**内联 `<svg>` 手绘**，不引入 mermaid 等依赖。
+已实测 Marked 2 全部正常：`<style>` 类选择器（且不泄漏到正文）、`marker` 箭头、
+`foreignObject`、`<details>` 折叠内 SVG、`currentColor` 继承、表格单元格内 SVG、
+仅给 `viewBox` 的自适应宽度。
+
+- 每个 `<svg>` 必带 `xmlns="http://www.w3.org/2000/svg"` 与 `viewBox="0 0 W H"`
+- 同一文档内多个 SVG 的 `id`（渐变 / marker）加用例前缀（如 `d1-grad`），避免互相覆盖
+- 宽度优先用 `viewBox` 自适应；小图（< 300px）再写死 `width`/`height`
+- 文字颜色用 `fill="currentColor"`，保证 Marked 暗色主题下仍然可读；填充色写死在 `fill`
+- 图里只写结论、不写步骤编号；小图控制在视口 600×200 以内，否则 Marked 预览里读不清
+
 ## 三、交互要求
 
 ### 一次一问
