@@ -13,8 +13,8 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { relative, isAbsolute } from "node:path";
-import { execCodegraph } from "./utils.js";
+import { isAbsolute, relative, resolve } from "node:path";
+import { ensureIndexFresh, execCodegraph, findCodeGraphRoot } from "./utils.js";
 
 // ── Shared schemas ──────────────────────────────────────────────────
 
@@ -69,6 +69,20 @@ function toRelativePath(value: string, ctx: ExtensionContext): string {
   return value;
 }
 
+/**
+ * Pre-query catch-up: sync the project this call will hit, if it has an index.
+ * `path` (when passed) wins over the session cwd, matching CLI resolution; it
+ * may name a file, since the root search walks up from wherever it lands.
+ */
+async function refreshIndex(
+  pi: ExtensionAPI,
+  pathArg: string | undefined,
+  ctx: ExtensionContext,
+): Promise<void> {
+  const root = findCodeGraphRoot(pathArg ? resolve(ctx.cwd, pathArg) : ctx.cwd);
+  if (root) await ensureIndexFresh(pi, root);
+}
+
 // ── codegraph_explore ───────────────────────────────────────────────
 
 export function registerExploreTool(pi: ExtensionAPI): void {
@@ -94,6 +108,8 @@ export function registerExploreTool(pi: ExtensionAPI): void {
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      await refreshIndex(pi, params.path, ctx);
+
       const args = ["explore", ...params.query.trim().split(/\s+/)];
       if (params.path) args.push("--path", toRelativePath(params.path, ctx));
       if (params.maxFiles != null) args.push("--max-files", String(params.maxFiles));
@@ -155,6 +171,8 @@ export function registerNodeTool(pi: ExtensionAPI): void {
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      await refreshIndex(pi, params.path, ctx);
+
       const args: string[] = ["node"];
       // Note: includeCode and line are MCP-level features — the CLI always
       // returns full output and doesn't expose these as flags. Keep them in
@@ -224,6 +242,8 @@ export function registerSearchTool(pi: ExtensionAPI): void {
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      await refreshIndex(pi, params.path, ctx);
+
       const args = ["query", params.query];
       if (params.path) args.push("--path", toRelativePath(params.path, ctx));
       if (params.limit != null) args.push("--limit", String(params.limit));

@@ -16,7 +16,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { isCodegraphInstalled, isProjectInitialized } from "./utils.js";
+import { ensureIndexFresh, findCodeGraphRoot, isCodegraphInstalled } from "./utils.js";
 import { registerAllTools, MANAGED_TOOL_NAMES } from "./tools.js";
 
 let registered = false;
@@ -35,8 +35,16 @@ export default function (pi: ExtensionAPI) {
     // This handles session switches where one project may be initialised and another not.
     const currentTools = pi.getActiveTools().filter((n) => !MANAGED_TOOL_NAMES.has(n));
 
-    if (isProjectInitialized(ctx.cwd)) {
+    // Resolve the index root the same way the CLI does, so a session started in
+    // a subdirectory of an initialised project still gets the tools.
+    const root = findCodeGraphRoot(ctx.cwd);
+    if (root) {
       pi.setActiveTools([...currentTools, ...MANAGED_TOOL_NAMES]);
+
+      // Warm the index in the background so the first query only waits for what
+      // is left of the sync budget. Fire-and-forget: `ensureIndexFresh` never
+      // rejects, and a locked index must not break session start.
+      void ensureIndexFresh(pi, root);
     } else {
       pi.setActiveTools(currentTools);
     }
